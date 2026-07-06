@@ -9,6 +9,17 @@ import { selectModel, requestAvailableModels } from "../lib/agent-actions.js";
 import { useAgentStore } from "../lib/agent-store.js";
 
 const EMPTY_MODELS: string[] = [];
+const EMPTY_HIDDEN_MODELS: string[] = []; // stable fallback for useShallow selector
+const HERMAN_PROVIDER_ID = 'herman';
+
+function getEnabledProviders(settings: { providers: { herman: { enabled: boolean }; custom: Record<string, { enabled?: boolean } | undefined> } }): Set<string> {
+  const enabled = new Set<string>();
+  if (settings.providers.herman.enabled) enabled.add(HERMAN_PROVIDER_ID);
+  for (const [id, config] of Object.entries(settings.providers.custom)) {
+    if (config?.enabled) enabled.add(id);
+  }
+  return enabled;
+}
 
 type GroupedModels = {
   provider: string;
@@ -44,13 +55,15 @@ function groupModels(models: string[]): GroupedModels[] {
 export function ModelSelector() {
   const open = useAgentStore((s) => s.ui.modelSelectorOpen);
   const setModelSelectorOpen = useAgentStore((s) => s.setModelSelectorOpen);
-  const { tabId, models, currentModel } = useAgentStore(
+  const { tabId, models, currentModel, hiddenModels, settings } = useAgentStore(
     useShallow((s) => {
       const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
       return {
         tabId: tab?.id,
         models: tab?.availableModels ?? EMPTY_MODELS,
         currentModel: tab?.currentModel,
+        hiddenModels: s.settings.models.hiddenModels ?? EMPTY_HIDDEN_MODELS,
+        settings: s.settings,
       };
     }),
   );
@@ -60,9 +73,21 @@ export function ModelSelector() {
   const [search, setSearch] = useState("");
 
   const query = search.trim().toLowerCase();
+  const enabledProviders = useMemo(
+    () => getEnabledProviders(settings),
+    [settings],
+  );
+  const visibleModels = useMemo(
+    () => models.filter((id) => {
+      if (hiddenModels.includes(id)) return false;
+      const [provider] = id.split('/');
+      return enabledProviders.has(provider ?? 'unknown');
+    }),
+    [models, hiddenModels, enabledProviders],
+  );
   const filteredModels = useMemo(
-    () => models.filter((id) => id.toLowerCase().includes(query)),
-    [models, query],
+    () => visibleModels.filter((id) => id.toLowerCase().includes(query)),
+    [visibleModels, query],
   );
   const grouped = useMemo(() => groupModels(filteredModels), [filteredModels]);
   const flatIds = useMemo(() => {
@@ -145,8 +170,11 @@ export function ModelSelector() {
 
   async function handleSelect(modelId: string) {
     if (!tabId) return;
-    await selectModel(tabId, modelId);
+    // Optimistically update the UI so the model changes immediately.
+    // The async models_sync event will confirm it later.
+    useAgentStore.getState().setModels(tabId, modelId);
     setModelSelectorOpen(false);
+    await selectModel(tabId, modelId);
   }
 
   return (
@@ -192,7 +220,11 @@ export function ModelSelector() {
             <div className="max-h-[320px] overflow-y-auto p-2" onKeyDown={handleListKeyDown}>
               {filteredModels.length === 0 ? (
                 <div className="text-dim px-3 py-6 text-center text-xs">
-                  {models.length === 0 ? "No models available." : "No models match your search."}
+                  {models.length === 0
+                    ? "No models available."
+                    : visibleModels.length === 0
+                      ? "All models are hidden. Manage visibility in Settings → Models."
+                      : "No models match your search."}
                 </div>
               ) : (
                 (() => {

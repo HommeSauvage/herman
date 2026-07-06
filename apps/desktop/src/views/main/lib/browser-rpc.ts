@@ -210,7 +210,10 @@ function createBrowserRpc(): DesktopRpc {
       installSkill: async ({ name }: { name: string; content: string }) => ({
         path: `/tmp/herman/skills/${name}/SKILL.md`,
       }),
+      searchSkills: async () => ({ results: [] }),
+      installSkillFromCommand: async () => ({ path: "/tmp/herman/skills/skill/SKILL.md", name: "skill" }),
       removeSkill: async () => {},
+      setSkillEnabled: async () => {},
       focusWindow: async () => {},
       showNativeNotification: async () => {},
     },

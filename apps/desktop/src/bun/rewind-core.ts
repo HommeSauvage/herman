@@ -16,6 +16,8 @@ import { join } from "path";
 // ============================================================================
 
 export const ZEROS = "0".repeat(40);
+/** SHA-1 of the empty tree — used as the baseline diff ref when a repo has no commits. */
+export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf899c9e164a4361e";
 export const REF_BASE = "refs/pi-checkpoints";
 
 /** Maximum size for untracked files to include in snapshot (10 MiB) */

@@ -21,6 +21,7 @@ export function defaultSettings(): DesktopSettings {
       custom: {},
     },
     models: {},
+    disabledSkills: [],
     // mode is intentionally undefined by default so we can detect first-launch
   };
 }

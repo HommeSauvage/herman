@@ -27,7 +27,7 @@ import { clearAllTabHistory } from "./tab-history.js";
 import { loadTemplates, getTemplateSourceDir } from "./templates.js";
 import { startDevServer, stopDevServer, getDevServerStatus } from "./preview-server.js";
 import { readProjectManifest } from "./project-manifest.js";
-import { listAllSkills, installSkill, removeSkill } from "./skills.js";
+import { listAllSkills, installSkill, removeSkill, searchSkills, installSkillFromCommand, setSkillEnabled as toggleSkill } from "./skills.js";
 import {
   loadWindowState,
   saveWindowState,
@@ -550,14 +550,30 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         return readProjectManifest(folderPath);
       },
       getSkills: async ({ projectDir }) => {
-        const skills = listAllSkills(projectDir);
+        const { loadSettings } = await import("./settings.js");
+        const settings = await loadSettings();
+        const skills = listAllSkills(projectDir, settings.disabledSkills);
         return { skills };
       },
       installSkill: async ({ name, content }) => {
         return installSkill(name, content);
       },
+      searchSkills: async ({ query }) => {
+        const results = await searchSkills(query);
+        return { results };
+      },
+      installSkillFromCommand: async ({ command }) => {
+        return installSkillFromCommand(command);
+      },
       removeSkill: async ({ name }) => {
         removeSkill(name);
+      },
+      setSkillEnabled: async ({ name, enabled }) => {
+        const { loadSettings, saveSettings } = await import("./settings.js");
+        const settings = await loadSettings();
+        const current = settings.disabledSkills ?? [];
+        settings.disabledSkills = toggleSkill(name, enabled, current);
+        await saveSettings(settings);
       },
     },
     messages: {

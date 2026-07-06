@@ -186,21 +186,37 @@ async function selectDefaultModel(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   hermanModels: HermanModel[],
-): Promise<string | undefined> {
+) : Promise<string | undefined> {
   const current = ctx.model;
+  const available = ctx.modelRegistry.getAvailable();
+
+  // When Herman is enabled and has models, prefer the first Herman model
+  // over whatever pi defaulted to (e.g. anthropic).  But never override an
+  // already-active herman model — the user may have selected it explicitly.
+  if (hermanModels.length > 0) {
+    const alreadyHerman = current?.provider === HERMAN_PROVIDER;
+    if (!alreadyHerman) {
+      const preferred = available.find(
+        (model) =>
+          model.provider === HERMAN_PROVIDER &&
+          model.id === hermanModels[0]!.id,
+      );
+      if (preferred) {
+        await pi.setModel(preferred);
+        return `${preferred.provider}/${preferred.id}`;
+      }
+    }
+  }
+
+  // Fall back to whatever pi already set (e.g. from a custom configured provider).
   if (current) {
     return `${current.provider}/${current.id}`;
   }
 
-  const available = ctx.modelRegistry.getAvailable();
-  const preferred =
-    hermanModels.length > 0
-      ? available.find((model) => model.provider === HERMAN_PROVIDER)
-      : available[0];
-
-  if (preferred) {
-    await pi.setModel(preferred);
-    return `${preferred.provider}/${preferred.id}`;
+  // Last resort: pick the first available model.
+  if (available[0]) {
+    await pi.setModel(available[0]);
+    return `${available[0].provider}/${available[0].id}`;
   }
 
   return undefined;

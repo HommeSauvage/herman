@@ -12,6 +12,8 @@ import { getLogger } from "@logtape/logtape";
 
 import type { FileDiff, Message, TabId } from "../shared/rpc.js";
 import {
+  ZEROS,
+  EMPTY_TREE,
   isGitRepo,
   createCheckpoint,
   restoreCheckpoint,
@@ -269,6 +271,15 @@ export class RewindManager {
   // Diff methods for the changes panel
   // -----------------------------------------------------------------------
 
+  /** Return the correct baseline ref for diffing, falling back to the empty tree on fresh repos. */
+  private baselineRef(state: TabRewindState): string {
+    // If the earliest checkpoint was created when the repo had no commits,
+    // HEAD doesn't exist yet — use the empty tree SHA as the baseline.
+    const first = state.checkpoints[0];
+    if (first && first.headSha === ZEROS) return EMPTY_TREE;
+    return "HEAD";
+  }
+
   /** Diff for changes introduced in the last turn. */
   async getTurnDiff(tabId: TabId): Promise<FileDiff[]> {
     await this.reload(tabId);
@@ -277,34 +288,34 @@ export class RewindManager {
 
     const last = state.checkpoints[state.checkpoints.length - 1]!;
     // Diff between the penultimate checkpoint and the last one.
-    // For the very first turn, diff HEAD against the first checkpoint.
+    // For the very first turn, diff the baseline (HEAD or empty tree) against the first checkpoint.
     const prev = state.checkpoints.length >= 2
       ? state.checkpoints[state.checkpoints.length - 2]
       : undefined;
 
     return this.diffTrees(
       state.repoRoot,
-      prev ? prev.worktreeTreeSha : "HEAD",
+      prev ? prev.worktreeTreeSha : this.baselineRef(state),
       last.worktreeTreeSha,
     );
   }
 
-  /** Diff for all changes since the session started (HEAD → last checkpoint). */
+  /** Diff for all changes since the session started. */
   async getFullDiff(tabId: TabId): Promise<FileDiff[]> {
     await this.reload(tabId);
     const state = this.states.get(tabId);
     if (!state?.gitAvailable || state.checkpoints.length === 0) return [];
 
     const last = state.checkpoints[state.checkpoints.length - 1]!;
-    return this.diffTrees(state.repoRoot, "HEAD", last.worktreeTreeSha);
+    return this.diffTrees(state.repoRoot, this.baselineRef(state), last.worktreeTreeSha);
   }
 
-  /** Diff for working-tree changes (staged + unstaged vs HEAD). */
+  /** Diff for working-tree changes (staged + unstaged vs HEAD or empty tree). */
   async getWorkingTreeDiff(tabId: TabId): Promise<FileDiff[]> {
     const state = this.states.get(tabId);
     if (!state?.gitAvailable) return [];
 
-    return this.diffTrees(state.repoRoot, "HEAD", "");
+    return this.diffTrees(state.repoRoot, this.baselineRef(state), "");
   }
 
   // -----------------------------------------------------------------------

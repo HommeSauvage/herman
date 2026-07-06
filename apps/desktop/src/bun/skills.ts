@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
 
+import type { SkillSearchResult } from "../shared/rpc.js";
 import { skillsDir } from "./app-paths.js";
 
 const logger = getLogger(["herman-desktop", "skills"]);
@@ -22,6 +23,8 @@ export type SkillInfo = {
   baseDir: string;
   /** Where the skill came from. */
   source: "herman" | "user" | "project";
+  /** Whether the skill is currently disabled (excluded from agent prompts). */
+  disabled?: boolean;
 };
 
 type Frontmatter = {
@@ -164,14 +167,16 @@ function getUserSkillsDir(): string {
 /**
  * List all available skills from all configured directories.
  * Deduplicates by name (first found wins): herman > user > project.
+ * Merges with disabledSkills to set the disabled flag.
  */
-export function listAllSkills(projectDir?: string): SkillInfo[] {
+export function listAllSkills(projectDir?: string, disabledSkills?: string[]): SkillInfo[] {
   const skillMap = new Map<string, SkillInfo>();
+  const disabled = new Set(disabledSkills ?? []);
 
   // Desktop-managed skills take highest priority.
   for (const skill of scanSkillsDir(sd(), "herman", true)) {
     if (!skillMap.has(skill.name)) {
-      skillMap.set(skill.name, skill);
+      skillMap.set(skill.name, { ...skill, disabled: disabled.has(skill.name) });
     }
   }
 
@@ -179,7 +184,7 @@ export function listAllSkills(projectDir?: string): SkillInfo[] {
   const userDir = getUserSkillsDir();
   for (const skill of scanSkillsDir(userDir, "user", false)) {
     if (!skillMap.has(skill.name)) {
-      skillMap.set(skill.name, skill);
+      skillMap.set(skill.name, { ...skill, disabled: disabled.has(skill.name) });
     }
   }
 
@@ -188,7 +193,7 @@ export function listAllSkills(projectDir?: string): SkillInfo[] {
     const projectSkillsDir = join(projectDir, ".agents", "skills");
     for (const skill of scanSkillsDir(projectSkillsDir, "project", false)) {
       if (!skillMap.has(skill.name)) {
-        skillMap.set(skill.name, skill);
+        skillMap.set(skill.name, { ...skill, disabled: disabled.has(skill.name) });
       }
     }
   }
@@ -220,6 +225,101 @@ export function removeSkill(name: string): boolean {
 }
 
 /**
+ * Strip ANSI escape codes from a string.
+ */
+function stripAnsi(str: string): string {
+  return str.replace(/\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+}
+
+/**
+ * Search for skills using the public `skills` registry CLI.
+ * Converts terminal output into structured results.
+ */
+export async function searchSkills(query: string): Promise<SkillSearchResult[]> {
+  const proc = Bun.spawn(
+    ["bun", "x", "skills", "find", query],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+
+  const [exitCode, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+
+  if (exitCode !== 0) {
+    throw new Error(stderr.trim() || "Failed to search skills");
+  }
+
+  const clean = stripAnsi(stdout);
+  const lines = clean
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const results: SkillSearchResult[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Match lines like: owner/repo@skill  1.9K installs
+    const match = line.match(/^(\S+)\s+(.+\s+installs)$/);
+    if (match && i + 1 < lines.length && lines[i + 1].startsWith("└ ")) {
+      results.push({
+        package: match[1],
+        installs: match[2],
+        url: lines[i + 1].replace(/^└\s+/, "").trim(),
+      });
+      i++;
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Install a skill from a CLI command such as `npx skills add owner/repo@skill`.
+ * Only `npx skills add <package>` or `bunx skills add <package>` commands are
+ * supported. `npx` is converted to `bun x` on the fly and the skill is
+ * installed globally so Herman can discover it in ~/.agents/skills.
+ */
+export async function installSkillFromCommand(command: string): Promise<{ path: string; name: string }> {
+  const tokens = command.trim().split(/\s+/);
+  if (tokens.length < 4) {
+    throw new Error("Invalid command. Expected: npx skills add <package>");
+  }
+
+  const [runner, tool, subcommand, ...rest] = tokens;
+  if (tool !== "skills" || subcommand !== "add") {
+    throw new Error("Only 'skills add' commands are supported");
+  }
+  if (runner !== "npx" && runner !== "bunx") {
+    throw new Error("Only npx or bunx commands are supported");
+  }
+
+  const packageArg = rest[0];
+  if (!packageArg) {
+    throw new Error("Missing package argument");
+  }
+
+  const proc = Bun.spawn(
+    ["bun", "x", "skills", "add", packageArg, "-g", "-y"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+
+  const [exitCode, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+
+  if (exitCode !== 0) {
+    throw new Error(stderr.trim() || stdout.trim() || "Failed to install skill");
+  }
+
+  const name = packageArg.split("/").pop()?.split("@").shift() || packageArg;
+  return { path: join(getUserSkillsDir(), name), name };
+}
+
+/**
  * Read the raw content of a SKILL.md file.
  */
 export function readSkillContent(name: string): string | null {
@@ -229,4 +329,22 @@ export function readSkillContent(name: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Enable or disable a skill by name. Returns the updated disabled skills list.
+ * The caller should persist this and restart the agent.
+ */
+export function setSkillEnabled(
+  name: string,
+  enabled: boolean,
+  currentDisabled: string[],
+): string[] {
+  if (enabled) {
+    return currentDisabled.filter((n) => n !== name);
+  }
+  if (!currentDisabled.includes(name)) {
+    return [...currentDisabled, name];
+  }
+  return currentDisabled;
 }

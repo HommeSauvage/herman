@@ -67,7 +67,7 @@ export class AgentBridge {
       packageDir,
       cwd: this.folderPath,
       env,
-      args: ["--skill", skillsDir()],
+      args: [],
     });
 
     this.process.rpc.onEvent((event) => {
@@ -221,6 +221,16 @@ async function prepareAgentDir(
     };
   }
   writeAgentConfigFile(join(baseDir, "models.json"), modelsJson);
+
+  // Write agent settings.json with skills discovery path and disable patterns.
+  // Pi auto-discovers skills from the skillsDir() path and applies !name patterns
+  // to exclude disabled skills.
+  const disabledSkills = settings.disabledSkills ?? [];
+  const skillsPatterns: string[] = [skillsDir()];
+  for (const name of disabledSkills) {
+    skillsPatterns.push(`!${name}`);
+  }
+  writeAgentConfigFile(join(baseDir, "settings.json"), { skills: skillsPatterns });
 
   return baseDir;
 }

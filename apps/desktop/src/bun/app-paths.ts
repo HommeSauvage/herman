@@ -67,5 +67,10 @@ export function credentialsPath(): string {
 
 /** Desktop-managed skills (SKILL.md directories). */
 export function skillsDir(): string {
-  return join(hermanDir(), "skills");
+  return join(agentDir(), "skills");
+}
+
+/** CLI / headless agent runtime directory (sessions, extensions, etc.). */
+export function agentDir(): string {
+  return join(hermanDir(), "agent");
 }

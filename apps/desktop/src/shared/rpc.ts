@@ -72,6 +72,14 @@ export type SkillInfo = {
   filePath: string;
   baseDir: string;
   source: "herman" | "user" | "project";
+  /** Whether the skill is currently disabled (excluded from agent prompts). */
+  disabled?: boolean;
+};
+
+export type SkillSearchResult = {
+  package: string;
+  installs: string;
+  url: string;
 };
 
 export type DesktopSettings = {
@@ -84,6 +92,8 @@ export type DesktopSettings = {
   settingsActiveTab?: "providers" | "models" | "general" | "skills";
   /** Transient error from the credential store; not persisted to disk. */
   credentialStoreError?: string;
+  /** Skill names that should not be sent to the agent. */
+  disabledSkills?: string[];
 };
 
 export type SessionUser = {
@@ -444,8 +454,20 @@ export type HermanDesktopRPC = {
         params: { name: string; content: string };
         response: { path: string };
       };
+      searchSkills: {
+        params: { query: string };
+        response: { results: SkillSearchResult[] };
+      };
+      installSkillFromCommand: {
+        params: { command: string };
+        response: { path: string; name: string };
+      };
       removeSkill: {
         params: { name: string };
+        response: undefined;
+      };
+      setSkillEnabled: {
+        params: { name: string; enabled: boolean };
         response: undefined;
       };
     };

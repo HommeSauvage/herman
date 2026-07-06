@@ -200,6 +200,39 @@ describe("hermanExtension", () => {
     });
   });
 
+  it("selects the first herman model as default regardless of registry order", async () => {
+    // The Herman server returns glm-4.5 first, then kimi-k2.7-code.
+    // selectDefaultModel should pick glm-4.5 (the first in hermanModels).
+    globalThis.fetch = mockFetch([
+      { id: "glm-4.5", name: "GLM 4.5" },
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+    ]) as unknown as typeof fetch;
+    const { default: hermanExtension } = await import("./herman-extension.js");
+    const { mockApi, mockUi } = createMockApi();
+
+    await hermanExtension(mockApi as never);
+
+    // getAvailable() returns kimi first to prove we follow hermanModels order, not registry order
+    const kimiModel = { id: "kimi-k2.7-code", provider: "herman" };
+    const glmModel = { id: "glm-4.5", provider: "herman" };
+    const ctx = {
+      model: undefined,
+      ui: mockUi,
+      modelRegistry: {
+        find: (_provider: string, id: string) => (id === "kimi-k2.7-code" ? kimiModel : id === "glm-4.5" ? glmModel : undefined),
+        getAvailable: () => [kimiModel, glmModel],
+      },
+    };
+
+    const handlers = mockApi._handlers.get("session_start") ?? [];
+    expect(handlers).toHaveLength(1);
+    await handlers[0]({}, ctx);
+
+    // Should choose glm-4.5 (first in hermanModels) even though kimi comes first in getAvailable()
+    expect(mockApi._setModelCalls).toContainEqual(glmModel);
+    expect(mockApi._setModelCalls).not.toContainEqual(kimiModel);
+  });
+
   it("does not change model on session_start when a herman model is already active", async () => {
     globalThis.fetch = mockFetch([
       { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },

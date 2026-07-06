@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 
+import type { Message } from "../../../shared/rpc.js";
 import { useAutoScroll } from "../hooks/use-auto-scroll.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { useIsHermanProvider } from "../lib/model-utils.js";
@@ -12,6 +13,8 @@ import { MessageList } from "./message-list.js";
 import { ProgressBar } from "./progress-bar.js";
 import { RevertDock } from "./revert-dock.js";
 import { ThinkingBanner } from "./thinking-banner.js";
+
+const EMPTY_MESSAGES: Message[] = []; // stable fallback for useShallow selector
 
 /**
  * Auto-scrolls to the bottom while streaming, but respects when the user has
@@ -35,7 +38,7 @@ export function ChatView() {
       const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
       return {
         activeTabId: s.activeTabId,
-        messages: tab?.messages ?? [],
+        messages: tab?.messages ?? EMPTY_MESSAGES,
         revertMessageId: tab?.revertMessageId,
         revertDiffSummary: tab?.revertDiffSummary,
         isThinking: tab?.isThinking ?? false,
