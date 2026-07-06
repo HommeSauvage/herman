@@ -1,0 +1,20 @@
+diff --git a/bin/electrobun.cjs b/bin/electrobun.cjs
+index ad104296a1b6835218983f9d959184b66683fd57..83f7605a3eba2cf8f09320d11ffbae527e08b2f4 100755
+--- a/bin/electrobun.cjs
++++ b/bin/electrobun.cjs
+@@ -151,6 +151,15 @@ async function main() {
+       cwd: process.cwd()
+     });
+ 
++    // Keep this wrapper alive while the real CLI shuts down. Node's default
++    // SIGINT/SIGTERM handlers would terminate the shim immediately and can
++    // leave the dev server/app orphaned in the background. The real CLI stays
++    // in the same process group, so it receives the signal directly and exits
++    // on its own; we just wait for that to happen.
++    for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
++      process.on(sig, () => {});
++    }
++
+     child.on('exit', (code) => {
+       process.exit(code || 0);
+     });

@@ -1,0 +1,68 @@
+{
+  "id": "online-store",
+  "title": "Online Store",
+  "icon": "🏪",
+  "description": "Sell products online with a shopping cart, product pages, and checkout",
+  "longDescription": "A full-featured online store where customers can browse products, add items to their cart, and check out. Includes product catalog, shopping cart, and a clean modern design.",
+  "questions": [
+    {
+      "id": "business",
+      "question": "What products or services are you selling?",
+      "placeholder": "I sell handmade ceramic mugs and pottery...",
+      "hint": "Describe what you sell — this helps us design the right product pages."
+    },
+    {
+      "id": "name",
+      "question": "What's your business or store called?",
+      "placeholder": "Clay & Craft Studio"
+    },
+    {
+      "id": "details",
+      "question": "Any special features you need?",
+      "placeholder": "Size variants, gift wrapping option, newsletter signup...",
+      "hint": "Optional — leave blank if you're not sure yet."
+    }
+  ],
+  "styleOptions": [
+    {
+      "id": "minimal",
+      "title": "Clean & Minimal",
+      "icon": "🌿",
+      "description": "White space, subtle shadows, neutral palette with one accent color. Scandinavian-inspired."
+    },
+    {
+      "id": "bold",
+      "title": "Bold & Modern",
+      "icon": "🖤",
+      "description": "Dark backgrounds, vibrant gradients, large typography. Makes a strong impression."
+    },
+    {
+      "id": "warm",
+      "title": "Warm & Cozy",
+      "icon": "🕯️",
+      "description": "Earthy tones, soft rounded corners, serif headings. Feels handmade and personal."
+    },
+    {
+      "id": "classic",
+      "title": "Classic & Trustworthy",
+      "icon": "🏛️",
+      "description": "Traditional layout, navy and gold accents, professional typography. Builds trust."
+    }
+  ],
+  "features": [
+    "Product catalog with images and descriptions",
+    "Shopping cart with quantity controls",
+    "Checkout page with order summary",
+    "About page with your story",
+    "Contact page with a form",
+    "Mobile-friendly responsive design"
+  ],
+  "deployment": {
+    "target": "cloudflare-pages",
+    "devCommand": "npm run dev",
+    "buildCommand": "npm run build",
+    "outputDir": "dist",
+    "devPort": 4321
+  },
+  "systemPromptHint": "You are building an online store. Use Astro with Tailwind CSS. Keep the code clean and well-organized. The store should have a home page with featured products, individual product pages, a cart system using localStorage, a checkout summary page, an about page, and a contact page with a form."
+}

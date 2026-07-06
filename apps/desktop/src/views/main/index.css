@@ -1,0 +1,409 @@
+@import "@herman/ui/styles/base.css";
+@import "@fontsource-variable/inter";
+
+@source "./**/*.{ts,tsx,html}";
+
+@theme inline {
+  --font-sans: "Inter Variable", sans-serif;
+  --font-heading: var(--font-sans);
+
+  /* Clique / Herman palette */
+  --color-void: #0a0a0b;
+  --color-surface: #111113;
+  --color-ridge: #161618;
+  --color-peak: #1a1a1c;
+  --color-mist: rgba(255, 255, 255, 0.06);
+  --color-mist-strong: rgba(255, 255, 255, 0.1);
+  --color-fog: rgba(255, 255, 255, 0.04);
+  --color-signal: #22c55e;
+  --color-signal-dim: #16a34a;
+  --color-signal-glow: rgba(34, 197, 94, 0.25);
+  --color-signal-glow-soft: rgba(34, 197, 94, 0.12);
+  --color-warning: #f59e0b;
+  --color-text: #f2f2f2;
+  --color-body: #e5e5e5;
+  --color-dim: #a0a0a0;
+  --color-faint: #737373;
+  --color-ghost: #525252;
+
+  /* shadcn-compatible aliases */
+  --color-background: var(--color-void);
+  --color-card: var(--color-surface);
+  --color-border: var(--color-mist);
+  --color-primary: var(--color-signal);
+  --color-primary-foreground: #052e16;
+  --color-muted: var(--color-dim);
+  --color-muted-foreground: var(--color-faint);
+  --radius: 1rem;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-void);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ElectroBun drag-region markers. The framework's preload script detects
+   these class names and starts/stops native window moves on mousedown/up. */
+.electrobun-webkit-app-region-drag {
+  -webkit-app-region: drag;
+  cursor: default;
+  user-select: none;
+}
+
+.electrobun-webkit-app-region-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Subtle breathing pulse for Herman's signal moments */
+@keyframes signal-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--color-signal-glow-soft);
+  }
+  50% {
+    box-shadow: 0 0 20px 4px var(--color-signal-glow);
+  }
+}
+
+.animate-signal-pulse {
+  animation: signal-pulse 3s ease-in-out infinite;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.35s cubic-bezier(0.2, 0, 0, 1) forwards;
+}
+
+/* Tab chrome animations */
+@keyframes tab-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tab-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.animate-tab-enter {
+  animation: tab-enter 0.15s cubic-bezier(0.2, 0, 0, 1) forwards;
+}
+
+.animate-tab-exit {
+  animation: tab-exit 0.12s cubic-bezier(0.2, 0, 0, 1) forwards;
+}
+
+@keyframes switcher-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-switcher-enter {
+  animation: switcher-enter 0.2s cubic-bezier(0.2, 0, 0, 1) forwards;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Hide scrollbar for horizontally scrolling tab strips */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Utility: prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-signal-pulse,
+  .animate-fade-in-up,
+  .animate-tab-enter,
+  .animate-tab-exit,
+  .animate-switcher-enter {
+    animation: none;
+  }
+}
+
+/* ---------- Streaming UI primitives ---------- */
+
+/* Layout containment on streaming messages prevents parent re-layout.
+   Adapted from OpenChamber's CONTAIN_LAYOUT_STYLE approach. */
+[data-component="assistant-message"][data-streaming="true"] {
+  contain: layout style;
+}
+
+/* Streaming cursor blink */
+@keyframes cursor-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+
+[data-slot="streaming-cursor"] {
+  animation: cursor-blink 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="streaming-cursor"] {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+@keyframes pulse-opacity {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-opacity-dim {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+[data-component="spinner"] {
+  flex-shrink: 0;
+  width: 14px;
+  aspect-ratio: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-component="spinner"] rect {
+    animation: none !important;
+    opacity: 0.6;
+  }
+}
+
+/* Text shimmer — two layers with a moving gradient clipped to text */
+:root {
+  --text-shimmer-step: 45ms;
+  --text-shimmer-duration: 1200ms;
+  --text-shimmer-swap: 220ms;
+  --text-shimmer-index: 0;
+  --text-shimmer-angle: 90deg;
+  --text-shimmer-spread: 5.2ch;
+  --text-shimmer-size: 360%;
+  --text-shimmer-peak-color: var(--color-text);
+  --text-shimmer-sweep: linear-gradient(
+    var(--text-shimmer-angle),
+    transparent calc(50% - var(--text-shimmer-spread)),
+    var(--text-shimmer-peak-color) 50%,
+    transparent calc(50% + var(--text-shimmer-spread))
+  );
+  --text-shimmer-base: linear-gradient(var(--color-faint), var(--color-faint));
+}
+
+[data-component="text-shimmer"] {
+  display: inline-flex;
+  align-items: baseline;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+[data-component="text-shimmer"] [data-slot="text-shimmer-char"] {
+  display: inline-grid;
+  white-space: pre;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+[data-component="text-shimmer"] [data-slot="text-shimmer-char-base"],
+[data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
+  grid-area: 1 / 1;
+  white-space: pre;
+  transition: opacity var(--text-shimmer-swap) ease-out;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+[data-component="text-shimmer"] [data-slot="text-shimmer-char-base"] {
+  color: inherit;
+  opacity: 1;
+}
+
+[data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
+  color: var(--color-faint);
+  opacity: 0;
+}
+
+[data-component="text-shimmer"][data-active="true"] [data-slot="text-shimmer-char-shimmer"] {
+  opacity: 1;
+}
+
+[data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"][data-run="true"] {
+  animation-name: text-shimmer-sweep;
+  animation-duration: var(--text-shimmer-duration);
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-delay: calc(var(--text-shimmer-step) * var(--text-shimmer-index) * -1);
+  will-change: background-position;
+}
+
+@keyframes text-shimmer-sweep {
+  0% {
+    background-position:
+      100% 0,
+      0 0;
+  }
+  100% {
+    background-position:
+      0% 0,
+      0 0;
+  }
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  [data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    background-image: var(--text-shimmer-sweep), var(--text-shimmer-base);
+    background-size:
+      var(--text-shimmer-size) 100%,
+      100% 100%;
+    background-position:
+      100% 0,
+      0 0;
+    background-repeat: no-repeat;
+    -webkit-background-clip: text;
+    background-clip: text;
+  }
+
+  [data-component="text-shimmer"][data-active="true"] [data-slot="text-shimmer-char-base"] {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-component="text-shimmer"] [data-slot="text-shimmer-char-base"],
+  [data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
+    transition-duration: 0ms;
+  }
+
+  [data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
+    animation: none !important;
+    color: inherit;
+    -webkit-text-fill-color: currentColor;
+    background-image: none;
+  }
+
+  [data-component="text-shimmer"] [data-slot="text-shimmer-char-base"] {
+    opacity: 1 !important;
+  }
+}
+
+/* Session progress bar — the indefinite whip that signals work in progress */
+@keyframes session-progress-whip {
+  0% {
+    clip-path: inset(0 100% 0 0 round 999px);
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  48% {
+    clip-path: inset(0 0 0 0 round 999px);
+    animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+  }
+  100% {
+    clip-path: inset(0 0 0 100% round 999px);
+  }
+}
+
+[data-component="session-progress"] {
+  transition: opacity 220ms ease-out;
+  opacity: 1;
+  pointer-events: none;
+}
+
+[data-component="session-progress"][data-state="hiding"] {
+  opacity: 0;
+}
+
+[data-component="session-progress-bar"] {
+  background: currentColor;
+  will-change: clip-path;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-component="session-progress-bar"] {
+    animation: none !important;
+    clip-path: inset(0 0 0 0 round 999px) !important;
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "extends": "@herman/tsconfig/base.json",
+  "compilerOptions": {
+    "types": ["bun"],
+    "paths": {
+      "#/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

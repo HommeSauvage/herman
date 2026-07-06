@@ -1,0 +1,62 @@
+{
+  "id": "blog",
+  "title": "Blog or Personal Site",
+  "icon": "📝",
+  "description": "A beautiful blog or personal website to share your writing and ideas",
+  "longDescription": "A content-focused blog with article listings, category pages, an about page, and RSS feed. Perfect for writers, journalists, or anyone who wants to share their thoughts online.",
+  "questions": [
+    {
+      "id": "topic",
+      "question": "What do you plan to write about?",
+      "placeholder": "I write about sustainable living, urban gardening, and eco-friendly home tips...",
+      "hint": "This helps us design the right sections and categories."
+    },
+    {
+      "id": "name",
+      "question": "What should we call your blog?",
+      "placeholder": "Green Living Daily"
+    },
+    {
+      "id": "details",
+      "question": "Any specific pages or features?",
+      "placeholder": "Newsletter signup, photo gallery, reading list page...",
+      "hint": "Optional — you can always add more later."
+    }
+  ],
+  "styleOptions": [
+    {
+      "id": "minimal",
+      "title": "Clean & Minimal",
+      "icon": "🌿",
+      "description": "Lots of white space, elegant typography, let the content breathe."
+    },
+    {
+      "id": "editorial",
+      "title": "Editorial",
+      "icon": "📰",
+      "description": "Magazine-style layout, serif headings, classic newspaper feel."
+    },
+    {
+      "id": "dark",
+      "title": "Dark & Moody",
+      "icon": "🌙",
+      "description": "Dark background, warm accents, cozy reading experience."
+    }
+  ],
+  "features": [
+    "Article listing with featured posts",
+    "Individual article pages with beautiful typography",
+    "Category and tag pages",
+    "About the author page",
+    "RSS feed for subscribers",
+    "Mobile-friendly reading experience"
+  ],
+  "deployment": {
+    "target": "cloudflare-pages",
+    "devCommand": "npm run dev",
+    "buildCommand": "npm run build",
+    "outputDir": "dist",
+    "devPort": 4321
+  },
+  "systemPromptHint": "You are building a blog. Use Astro with Tailwind CSS, with Markdown or MDX for blog posts. The blog should have a home page listing articles, individual article pages with good typography, category pages, an about page, and an RSS feed. Focus on readability and content presentation."
+}

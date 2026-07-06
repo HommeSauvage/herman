@@ -1,0 +1,267 @@
+import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+
+import { config } from "../env.js";
+import type { AgentCommand, AgentEvent } from "../shared/agent-protocol.js";
+import { parseAdEventFromNotify, parseHermanEventFromNotify } from "../shared/agent-protocol.js";
+import type { TabId } from "../shared/rpc.js";
+import { agentConfigsDir, skillsDir } from "./app-paths.js";
+import { AgentProcess } from "./agent-process.js";
+import { refreshAllOAuthCredentials } from "./credentials.js";
+import { writeFileAtomically } from "./fs-utils.js";
+
+export type AgentBridgeState = "idle" | "starting" | "running" | "crashed";
+
+export class AgentBridge {
+  private process?: AgentProcess;
+  private messageBuffer: AgentEvent[] = [];
+  private folderPath?: string;
+  private agentDir?: string;
+
+  constructor(
+    private tabId: TabId,
+    private sendToRenderer: (tabId: TabId, event: AgentEvent) => void,
+    private onStatusChange: (tabId: TabId, state: AgentBridgeState, stderr?: string) => void,
+    private onEvent?: (tabId: TabId, event: AgentEvent) => void,
+  ) {}
+
+  get state(): AgentBridgeState {
+    const processState = this.process?.state ?? "idle";
+    if (processState === "stopped") return "idle";
+    return processState;
+  }
+
+  getState(): AgentBridgeState {
+    return this.state;
+  }
+
+  async start(folderPath?: string) {
+    this.folderPath = folderPath || undefined;
+    if (this.process) {
+      await this.stop();
+    }
+
+    const { loadSettings } = await import("./settings.js");
+    const settings = await loadSettings();
+    const hermanEnabled = settings.providers.herman.enabled;
+
+    const binaryPath = config.agentPath || resolveAgentCliPath();
+    const packageDir = resolve(realpathSync(binaryPath), "..", "..");
+    const agentDir = await prepareAgentDir(this.tabId, settings);
+    this.agentDir = agentDir;
+
+    const env: Record<string, string> = {
+      HERMAN_AGENT_DIR: agentDir,
+      HERMAN_CLIENT_VERSION: "0.0.1",
+      HERMAN_TAB_ID: this.tabId,
+    };
+
+    if (hermanEnabled) {
+      env.HERMAN_SERVER_URL = config.serverUrl;
+      env.HERMAN_SESSION_TOKEN = (await this.getSessionToken()) ?? "";
+      env.HERMAN_PINNED_PROVIDERS = await this.getPinnedProvidersJson();
+    }
+
+    this.process = new AgentProcess({
+      binaryPath,
+      packageDir,
+      cwd: this.folderPath,
+      env,
+      args: ["--skill", skillsDir()],
+    });
+
+    this.process.rpc.onEvent((event) => {
+      const enriched = enrichExtensionUiEvent(event);
+
+      // A new agent turn has started.  Events from previous turns are no
+      // longer relevant to the renderer's polling fallback, and replaying
+      // stale lifecycle events (especially agent_start) can flip the UI back
+      // into a working state after a turn has ended or been stopped.  Reset
+      // the buffer so it only holds events for the current turn.
+      if (event.type === "agent_start") {
+        this.messageBuffer = [enriched];
+      } else {
+        this.messageBuffer.push(enriched);
+        if (this.messageBuffer.length > 500) {
+          this.messageBuffer = this.messageBuffer.slice(-250);
+        }
+      }
+
+      this.sendToRenderer(this.tabId, enriched);
+      this.onEvent?.(this.tabId, enriched);
+
+      // After a turn completes, clear the buffer so stale events are never
+      // replayed to a renderer that reloads (the polling fallback fetches
+      // from this buffer).  We keep agent_start for the next turn, which
+      // resets the buffer anyway.
+      if (event.type === "agent_end" || event.type === "agent_complete") {
+        this.messageBuffer = [];
+      }
+    });
+
+    this.process.rpc.onExit((code) => {
+      const state = code === 0 ? "idle" : "crashed";
+      this.notifyStatus(state, this.process?.stderr);
+    });
+
+    this.process.rpc.onError((error) => {
+      this.notifyStatus("crashed", error.message);
+    });
+
+    await this.process.start();
+    this.notifyStatus("running");
+  }
+
+  async stop() {
+    await this.process?.stop();
+    this.process = undefined;
+    if (this.agentDir) {
+      try {
+        rmSync(this.agentDir, { recursive: true, force: true });
+      } catch {
+        // Directory may not exist or be locked; ignore cleanup failures.
+      }
+      this.agentDir = undefined;
+    }
+    this.notifyStatus("idle");
+  }
+
+  async restart(folderPath?: string) {
+    await this.start(folderPath ?? this.folderPath);
+  }
+
+  async sendCommand(command: AgentCommand) {
+    if (!this.process) {
+      throw new Error("Agent is not running");
+    }
+    return this.process.rpc.sendCommand(command);
+  }
+
+  sendRaw(command: AgentCommand) {
+    if (!this.process) return;
+    this.process.rpc.sendRaw(command);
+  }
+
+  getRecentEvents(): AgentEvent[] {
+    return [...this.messageBuffer];
+  }
+
+  getStderr(): string {
+    return this.process?.stderr ?? "";
+  }
+
+  private notifyStatus(state: AgentBridgeState, stderr?: string) {
+    this.onStatusChange(this.tabId, state, stderr);
+  }
+
+  private async getSessionToken(): Promise<string | undefined> {
+    const { loadState } = await import("./session.js");
+    const state = await loadState();
+    return state.session?.token;
+  }
+
+  private async getPinnedProvidersJson(): Promise<string> {
+    try {
+      const { getPinnedProviders } = await import("./persistence.js");
+      return JSON.stringify(getPinnedProviders(this.tabId));
+    } catch {
+      // Pinned providers are an optimization; don't block agent startup if
+      // the DB is locked or the table doesn't exist yet.
+      return "{}";
+    }
+  }
+}
+
+async function prepareAgentDir(
+  tabId: TabId,
+  settings: Awaited<ReturnType<typeof import("./settings.js").loadSettings>>,
+): Promise<string> {
+  const { loadCredentials } = await import("./credentials.js");
+  const baseDir = resolve(agentConfigsDir(), tabId);
+  mkdirSync(baseDir, { recursive: true });
+
+  const credentials = await loadCredentials();
+  await refreshAllOAuthCredentials();
+  const authJson: Record<string, unknown> = {};
+  for (const [providerId, credential] of Object.entries(credentials)) {
+    if (credential.type === "apiKey") {
+      authJson[providerId] = {
+        type: "api_key",
+        key: credential.key,
+        ...(credential.metadata ? { env: credential.metadata } : {}),
+      };
+    } else if (credential.type === "oauth") {
+      authJson[providerId] = {
+        type: "oauth",
+        access: credential.accessToken,
+        refresh: credential.refreshToken,
+        expires: credential.expiresAt,
+      };
+    }
+  }
+  writeAgentConfigFile(join(baseDir, "auth.json"), authJson);
+
+  const modelsJson: Record<string, unknown> = { providers: {} };
+  const modelsProviders = modelsJson.providers as Record<string, unknown>;
+  for (const [providerId, providerSettings] of Object.entries(settings.providers.custom)) {
+    if (!providerSettings?.enabled) continue;
+    const options = (providerSettings as { options?: Record<string, string> }).options;
+    if (!options?.baseUrl) continue;
+
+    modelsProviders[providerId] = {
+      baseUrl: options.baseUrl,
+      api: "openai-completions",
+      apiKey: options.apiKey,
+      models: {
+        default: {
+          id: "default",
+          name: options.name || providerId,
+        },
+      },
+    };
+  }
+  writeAgentConfigFile(join(baseDir, "models.json"), modelsJson);
+
+  return baseDir;
+}
+
+function writeAgentConfigFile(path: string, data: Record<string, unknown>) {
+  writeFileAtomically(path, JSON.stringify(data, null, 2));
+}
+
+function resolveAgentCliPath(): string {
+  const envPath = config.agentPath;
+  if (envPath) return envPath;
+
+  // Production bundle: app/bun/index.js -> app/packages/agent/dist/cli.js
+  const bundledPath = resolve(import.meta.dir, "..", "packages", "agent", "dist", "cli.js");
+  if (existsSync(bundledPath)) return bundledPath;
+
+  // Local dev from apps/herman-desktop/src/bun
+  const devPath = resolve(
+    import.meta.dir,
+    "..",
+    "..",
+    "..",
+    "..",
+    "packages",
+    "agent",
+    "dist",
+    "cli.js",
+  );
+  if (existsSync(devPath)) return devPath;
+
+  return join(process.cwd(), "node_modules", ".bin", "herman");
+}
+
+function enrichExtensionUiEvent(event: AgentEvent): AgentEvent {
+  if (event.type !== "extension_ui_request" || event.method !== "notify") return event;
+
+  const adEvent = parseAdEventFromNotify(event.message);
+  if (adEvent) return adEvent;
+
+  const hermanEvent = parseHermanEventFromNotify(event.message);
+  if (hermanEvent) return hermanEvent;
+
+  return event;
+}

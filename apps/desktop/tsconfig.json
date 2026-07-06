@@ -1,0 +1,20 @@
+{
+  "extends": "@herman/tsconfig/base.json",
+  "compilerOptions": {
+    "types": ["bun", "node"],
+    "paths": {
+      "#/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.d.ts",
+    "web/**/*.ts",
+    "web/**/*.tsx",
+    "web/**/*.d.ts",
+    "vite.config.ts",
+    "scripts/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "build"]
+}

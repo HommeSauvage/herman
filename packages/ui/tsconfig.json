@@ -1,0 +1,10 @@
+{
+  "extends": "@herman/tsconfig/base.json",
+  "compilerOptions": {
+    "paths": {
+      "@herman/ui/*": ["./*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,62 @@
+{
+  "id": "portfolio",
+  "title": "Portfolio Gallery",
+  "icon": "🎨",
+  "description": "Showcase your creative work with a stunning visual portfolio",
+  "longDescription": "A visually-driven portfolio site with a project grid, individual project pages with image galleries, and an about page. Perfect for designers, photographers, artists, and creative professionals.",
+  "questions": [
+    {
+      "id": "work",
+      "question": "What kind of work do you want to showcase?",
+      "placeholder": "I'm a UX designer and I want to show my case studies, wireframes, and final product screenshots...",
+      "hint": "This determines the layout — image-heavy vs text-heavy projects."
+    },
+    {
+      "id": "name",
+      "question": "What's your name or studio name?",
+      "placeholder": "Alex Chen Design Studio"
+    },
+    {
+      "id": "details",
+      "question": "Any special sections you need?",
+      "placeholder": "Client testimonials, services/pricing page, downloadable resume...",
+      "hint": "Optional — leave blank for a standard portfolio layout."
+    }
+  ],
+  "styleOptions": [
+    {
+      "id": "minimal",
+      "title": "Clean Gallery",
+      "icon": "🌿",
+      "description": "White space, large images, minimal chrome. Let the work speak."
+    },
+    {
+      "id": "bold",
+      "title": "Bold & Creative",
+      "icon": "🎨",
+      "description": "Playful layouts, bright accents, creative typography. Stand out."
+    },
+    {
+      "id": "dark",
+      "title": "Dark & Cinematic",
+      "icon": "🎬",
+      "description": "Dark background, dramatic image presentation, film-like quality."
+    }
+  ],
+  "features": [
+    "Project grid with hover previews",
+    "Individual project pages with image galleries",
+    "About page with your bio and photo",
+    "Contact page with form",
+    "Testimonials section",
+    "Mobile-friendly responsive design"
+  ],
+  "deployment": {
+    "target": "cloudflare-pages",
+    "devCommand": "npm run dev",
+    "buildCommand": "npm run build",
+    "outputDir": "dist",
+    "devPort": 4321
+  },
+  "systemPromptHint": "You are building a portfolio site. Use Astro with Tailwind CSS. The portfolio should have a home page with a project grid, individual project pages with image galleries, an about page, and a contact page. Focus on visual presentation and letting the work stand out."
+}
