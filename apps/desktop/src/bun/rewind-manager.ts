@@ -5,12 +5,21 @@
  * automatically at turn boundaries.  This manager loads those checkpoints
  * from the git ref store and maps them to message positions so the
  * desktop UI can restore files on revert.
+ *
+ * When multiple Herman tabs work on the same git repo concurrently, each
+ * tab's pi agent gets its own session UUID.  pi-rewind tags every
+ * checkpoint with that UUID.  RewindManager reads the pi session UUID
+ * deterministically from the agent's session storage on disk so that
+ * diffs and reverts are always scoped to a single tab.
  */
 
 import { randomUUIDv7 } from "bun";
+import { readdirSync, existsSync } from "node:fs";
+import { join, resolve as resolvePath } from "node:path";
 import { getLogger } from "@logtape/logtape";
 
 import type { FileDiff, Message, TabId } from "../shared/rpc.js";
+import { agentConfigsDir } from "./app-paths.js";
 import {
   ZEROS,
   EMPTY_TREE,
@@ -41,6 +50,66 @@ export function getUserMessageIds(messages: Message[]): string[] {
   return ids;
 }
 
+/**
+ * Encode a folder path the same way pi's SessionManager encodes its cwd.
+ *
+ * pi uses:
+ *   resolvedCwd  = resolvePath(cwd)
+ *   safePath     = "--" + resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-") + "--"
+ *   sessionDir   = join(agentDir, "sessions", safePath)
+ *
+ * We mirror this to find the exact session subdirectory for a tab.
+ */
+function encodePiCwd(folderPath: string): string {
+  const resolvedCwd = resolvePath(folderPath);
+  const safe = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+  return safe;
+}
+
+/**
+ * Read pi's session UUID from the most recent session JSONL file.
+ *
+ * Pi stores sessions as `{timestamp}_{uuid}.jsonl` inside
+ * `{agentDir}/sessions/{encodedCwd}/`.  Herman sets PI_CODING_AGENT_DIR
+ * to `~/.herman/agent-configs/<tabId>/`.
+ *
+ * We compute the exact encoded-cwd subdirectory from the tab's folder
+ * path so we never pick up a session from a different working directory.
+ *
+ * Returns undefined if no session file exists yet (agent hasn't started).
+ */
+function readPiSessionId(tabId: TabId, folderPath: string): string | undefined {
+  try {
+    const cwdDir = join(agentConfigsDir(), tabId, "sessions", encodePiCwd(folderPath));
+    if (!existsSync(cwdDir)) return undefined;
+
+    const names = readdirSync(cwdDir);
+    if (names.length === 0) return undefined;
+
+    // Session files are named `{timestamp}_{uuid}.jsonl`.  ISO-8601
+    // timestamps sort lexicographically, so sorting descending by name
+    // brings the newest file first.
+    names.sort((a, b) => b.localeCompare(a));
+
+    for (const name of names) {
+      if (!name.endsWith(".jsonl")) continue;
+      const stem = name.slice(0, -".jsonl".length);
+      const idx = stem.lastIndexOf("_");
+      if (idx < 0) continue;
+
+      const uuid = stem.slice(idx + 1);
+      // Quick sanity check: UUIDs are 36 chars with dashes.
+      if (uuid.length < 20) continue;
+
+      return uuid;
+    }
+
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -51,7 +120,16 @@ type TabRewindState = {
   gitAvailable: boolean;
   /** Absolute path to the git repo root. */
   repoRoot: string;
-  /** Cached checkpoints for this repo, sorted oldest-first by timestamp. */
+  /** The tab's working folder (pi's cwd).  Used to locate session files. */
+  folderPath: string;
+  /**
+   * pi-rewind's internal session UUID, read from the agent's session
+   * storage on disk.  Once discovered, only checkpoints tagged with
+   * this sessionId are loaded — isolating this tab from concurrent
+   * sessions on the same repo.
+   */
+  sessionId?: string;
+  /** Cached checkpoints for this tab, sorted oldest-first by timestamp. */
   checkpoints: CheckpointData[];
   /**
    * Turn index → checkpoint lookup.
@@ -84,15 +162,27 @@ export class RewindManager {
       const { getRepoRoot } = await import("./rewind-core.js");
       const repoRoot = await getRepoRoot(folderPath);
 
-      const { checkpoints, byTurn } = this.indexCheckpoints(
-        await loadAllCheckpoints(repoRoot),
-      );
+      // Read pi's session UUID from disk so we can scope checkpoints.
+      // At init time the agent process may not have started yet — we
+      // retry on every reload() until the session file appears.
+      const sessionId = readPiSessionId(tabId, folderPath);
 
-      this.states.set(tabId, { gitAvailable: true, repoRoot, checkpoints, byTurn });
+      const all = await loadAllCheckpoints(repoRoot, sessionId);
+      const { checkpoints, byTurn } = this.indexCheckpoints(all);
+
+      this.states.set(tabId, {
+        gitAvailable: true,
+        repoRoot,
+        folderPath,
+        sessionId,
+        checkpoints,
+        byTurn,
+      });
 
       logger.info("Rewind initialized", {
         tabId,
         repoRoot,
+        sessionId,
         checkpointCount: checkpoints.length,
       });
       return true;
@@ -110,15 +200,32 @@ export class RewindManager {
     this.states.delete(tabId);
   }
 
-  /** Reload checkpoints from git refs.  Must be awaited before find/diff. */
+  /**
+   * Reload checkpoints from git refs scoped to this tab's pi session.
+   * Must be awaited before find / diff.
+   *
+   * Re-reads the session UUID from disk on every call.  This handles:
+   * 1. Initial startup race (agent hasn't started yet on first call).
+   * 2. Agent restarts (e.g. after a crash) which produce a new session.
+   *
+   * Once the UUID is known it rarely changes; the readdirSync overhead
+   * on a tiny session directory is negligible.
+   */
   async reload(tabId: TabId): Promise<void> {
     const state = this.states.get(tabId);
     if (!state?.gitAvailable) return;
 
+    // Re-read session UUID every time — handles agent restarts and the
+    // initial race where the agent hasn't started yet.
+    const latestUuid = readPiSessionId(tabId, state.folderPath);
+    if (latestUuid && latestUuid !== state.sessionId) {
+      state.sessionId = latestUuid;
+      logger.debug("Rewind session UUID updated", { tabId, sessionId: latestUuid });
+    }
+
     try {
-      const { checkpoints, byTurn } = this.indexCheckpoints(
-        await loadAllCheckpoints(state.repoRoot),
-      );
+      const all = await loadAllCheckpoints(state.repoRoot, state.sessionId);
+      const { checkpoints, byTurn } = this.indexCheckpoints(all);
       state.checkpoints = checkpoints;
       state.byTurn = byTurn;
     } catch (err) {
@@ -273,8 +380,6 @@ export class RewindManager {
 
   /** Return the correct baseline ref for diffing, falling back to the empty tree on fresh repos. */
   private baselineRef(state: TabRewindState): string {
-    // If the earliest checkpoint was created when the repo had no commits,
-    // HEAD doesn't exist yet — use the empty tree SHA as the baseline.
     const first = state.checkpoints[0];
     if (first && first.headSha === ZEROS) return EMPTY_TREE;
     return "HEAD";
@@ -287,8 +392,6 @@ export class RewindManager {
     if (!state?.gitAvailable || state.checkpoints.length === 0) return [];
 
     const last = state.checkpoints[state.checkpoints.length - 1]!;
-    // Diff between the penultimate checkpoint and the last one.
-    // For the very first turn, diff the baseline (HEAD or empty tree) against the first checkpoint.
     const prev = state.checkpoints.length >= 2
       ? state.checkpoints[state.checkpoints.length - 2]
       : undefined;
