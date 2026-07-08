@@ -66,7 +66,7 @@ describe("hermanExtension", () => {
     return { mockApi, mockUi };
   }
 
-  function mockFetch(models: { id: string; name: string; api?: string }[], ok = true) {
+  function mockFetch(models: { id: string; name: string; api?: string; contextWindow?: number; maxTokens?: number }[], ok = true) {
     return vi.fn().mockResolvedValue({
       ok,
       status: ok ? 200 : 500,
@@ -309,5 +309,41 @@ describe("hermanExtension", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(mockApi._registered).toHaveLength(2);
     expect(mockApi._registered[1].config.models?.[0].api).toBe("openai-completions");
+  });
+
+  it("includes model metadata in models_sync when contextWindow is available", async () => {
+    globalThis.fetch = mockFetch([
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", api: "openai-completions", contextWindow: 128000, maxTokens: 8192 },
+    ]) as unknown as typeof fetch;
+    const { default: hermanExtension } = await import("./herman-extension.js");
+    const { mockApi, mockUi } = createMockApi();
+
+    await hermanExtension(mockApi as never);
+
+    const ctx = {
+      model: undefined,
+      ui: mockUi,
+      modelRegistry: {
+        find: vi.fn(),
+        getAvailable: () => [
+          { id: "kimi-k2.7-code", provider: "herman", contextWindow: 128000, maxTokens: 8192 },
+        ],
+      },
+    };
+
+    const handlers = mockApi._handlers.get("session_start") ?? [];
+    await handlers[0]({}, ctx);
+
+    const notifications = mockApi._notifications
+      .filter((n): n is string => typeof n === "string")
+      .map((n) => JSON.parse(n));
+    expect(notifications).toContainEqual({
+      type: "models_sync",
+      models: ["herman/kimi-k2.7-code"],
+      currentModel: "herman/kimi-k2.7-code",
+      modelMetadata: {
+        "herman/kimi-k2.7-code": { contextWindow: 128000, maxTokens: 8192 },
+      },
+    });
   });
 });

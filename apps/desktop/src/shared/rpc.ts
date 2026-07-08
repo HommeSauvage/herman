@@ -137,6 +137,27 @@ export type QueuedFollowUp = {
   text: string;
 };
 
+export type Usage = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  reasoning?: number;
+  totalTokens: number;
+  cost?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+};
+
+export type ModelMetadata = {
+  contextWindow: number;
+  maxTokens?: number;
+};
+
 export type Message =
   | { id: string; role: "user"; content: string }
   | {
@@ -148,6 +169,7 @@ export type Message =
       errorMessage?: string;
       model?: string;
       provider?: string;
+      usage?: Usage;
     }
   | {
       id: string;
@@ -168,6 +190,25 @@ export type PersistedSession = {
   updatedAt: number;
   /** Revert point: messages at or after this ID are considered reverted. */
   revertMessageId?: string;
+};
+
+/** Aggregated token / context / cost statistics for a tab. */
+export type ContextStats = {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  estimatedCost: number;
+  contextLimit: number;
+  messageCount: number;
+  userMessageCount: number;
+  assistantMessageCount: number;
+  toolMessageCount: number;
+  modelId?: string;
+  providerId?: string;
+  updatedAt: number;
 };
 
 /** A single file's diff information, used by the changes panel. */
@@ -202,6 +243,8 @@ export type Tab = {
   revertMessageId?: string;
   /** Diff summary shown in the revert dock (populated by file-level rewind). */
   revertDiffSummary?: string;
+  /** Estimated token / context / cost statistics for the session. */
+  contextStats?: ContextStats;
 };
 
 export type OutgoingMessages = {

@@ -1,9 +1,10 @@
 import { useCallback, useRef } from "react";
-import { GitCompare } from "lucide-react";
+import { Gauge, GitCompare } from "lucide-react";
 
 import { useAgentStore } from "../lib/agent-store.js";
 import { AdSidebar } from "./ad-sidebar.js";
 import { ChangesPanel } from "./changes-panel.js";
+import { ContextPanel } from "./context-panel.js";
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 600;
@@ -27,6 +28,19 @@ function SidebarTabs() {
       >
         <GitCompare size={12} />
         Changes
+      </button>
+      <button
+        type="button"
+        onClick={() => setSidebarTab("context")}
+        className={`flex flex-1 items-center justify-center gap-1.5 px-3 py-1.5 text-[10px] font-medium transition-colors ${
+          sidebarTab === "context"
+            ? "text-text border-b-2 border-signal pb-[calc(0.375rem-2px)]"
+            : "text-dim hover:text-text pb-1.5"
+        }`}
+        title="Context and token usage"
+      >
+        <Gauge size={12} />
+        Context
       </button>
     </div>
   );
@@ -90,7 +104,7 @@ export function RightSidebar() {
 
         {/* Tab content */}
         <div className="flex-1 overflow-hidden">
-          {sidebarTab === "changes" ? <ChangesPanel /> : null}
+          {sidebarTab === "changes" ? <ChangesPanel /> : sidebarTab === "context" ? <ContextPanel /> : null}
         </div>
       </div>
     </div>

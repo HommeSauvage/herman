@@ -953,3 +953,62 @@ describe("native ads", () => {
     expect(tab.sidebarAd).toBeUndefined();
   });
 });
+
+
+describe("context stats", () => {
+  it("computes context stats when messages arrive", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().appendUserMessage(id, "hello");
+    useAgentStore.getState().startAssistantMessage(id);
+    useAgentStore.getState().appendAssistantDelta(id, "Hi there");
+    useAgentStore.getState().finalizeAssistantMessage(id);
+
+    const stats = useAgentStore.getState().tabs[id]?.contextStats;
+    expect(stats).toBeDefined();
+    expect(stats?.messageCount).toBe(2);
+    expect(stats?.userMessageCount).toBe(1);
+    expect(stats?.assistantMessageCount).toBe(1);
+    expect(stats?.totalTokens).toBeGreaterThan(0);
+  });
+
+  it("updates context stats from message usage", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().recordAgentEvent(id, {
+      type: "message_start",
+      message: { role: "assistant" },
+    });
+    useAgentStore.getState().recordAgentEvent(id, {
+      type: "message_update",
+      message: {},
+      assistantMessageEvent: { type: "text_delta", delta: "Hello" },
+    });
+    useAgentStore.getState().recordAgentEvent(id, {
+      type: "message_end",
+      message: {
+        stopReason: "stop",
+        usage: {
+          input: 100,
+          output: 50,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 150,
+        },
+      },
+    });
+
+    const stats = useAgentStore.getState().tabs[id]?.contextStats;
+    expect(stats?.totalTokens).toBe(150);
+    expect(stats?.inputTokens).toBe(100);
+    expect(stats?.outputTokens).toBe(50);
+  });
+
+  it("resets context stats when the tab is cleared", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().appendUserMessage(id, "hello");
+    useAgentStore.getState().clearTab(id);
+
+    const stats = useAgentStore.getState().tabs[id]?.contextStats;
+    expect(stats?.totalTokens).toBe(0);
+    expect(stats?.messageCount).toBe(0);
+  });
+});

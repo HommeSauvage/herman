@@ -10,12 +10,15 @@ import {
   isAgentEndCurrent,
   syncMessageCounter,
 } from "../../../shared/apply-agent-event.js";
+import { computeContextStats } from "../../../shared/context-stats.js";
 import type {
   AgentStatus,
+  ContextStats,
   DesktopSettings,
   DiffScope,
   FileDiff,
   Message,
+  ModelMetadata,
   PersistedSession,
   QueuedFollowUp,
   Session,
@@ -55,6 +58,8 @@ export type Tab = {
   revertMessageId?: string;
   /** Diff summary shown in the revert dock (populated by file-level rewind). */
   revertDiffSummary?: string;
+  /** Estimated token / context / cost statistics for the session. */
+  contextStats?: ContextStats;
   /** Auto-retry state when the agent crashes or errors during a turn. */
   retryState?: {
     attempt: number;
@@ -78,14 +83,16 @@ export type AgentState = {
     selectedMessageId?: string;
     view: "home" | "session" | "settings";
     selectedProject: string | null;
-    /** Currently active sidebar tab ("changes" | "ads") */
-    sidebarTab: "changes" | "ads";
+    /** Currently active sidebar tab ("changes" | "context" | "ads") */
+    sidebarTab: "changes" | "context" | "ads";
     /** Selected diff scope */
     diffScope: "last-message" | "everything" | "working-tree";
     /** Current diff results, keyed by tab ID */
     diffFiles: Record<TabId, FileDiff[]>;
     /** Whether a diff fetch is in progress, keyed by tab ID */
     diffLoading: Record<TabId, boolean>;
+    /** Optional per-model metadata keyed by "provider/modelId". */
+    modelMetadata: Record<string, ModelMetadata>;
   };
   settings: DesktopSettings;
   ads: {
@@ -155,7 +162,7 @@ export type AgentActions = {
   unrevertTab: (tabId: TabId) => void;
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
-  setSidebarTab: (tab: "changes" | "ads") => void;
+  setSidebarTab: (tab: "changes" | "context" | "ads") => void;
   setDiffScope: (scope: DiffScope) => void;
   fetchDiff: (tabId: TabId, scope: DiffScope) => Promise<void>;
   setModelSelectorOpen: (open: boolean) => void;
@@ -253,6 +260,21 @@ function deriveSession(activeTab: Tab | undefined): AgentState["session"] {
   };
 }
 
+function parseCurrentModel(currentModel?: string): { providerId?: string; modelId?: string } {
+  if (!currentModel) return {};
+  const [providerId, modelId] = currentModel.split("/", 2);
+  return { providerId, modelId: modelId ?? providerId };
+}
+
+function computeTabContextStats(
+  tab: Tab,
+  modelMetadata?: Record<string, ModelMetadata>,
+): Tab["contextStats"] {
+  const { providerId, modelId } = parseCurrentModel(tab.currentModel);
+  const contextLimit = modelMetadata?.[tab.currentModel ?? ""]?.contextWindow;
+  return computeContextStats(tab.messages, modelId, providerId, contextLimit);
+}
+
 function deriveConnection(activeTab: Tab | undefined): AgentState["connection"] {
   return {
     state: activeTab?.connectionState ?? "idle",
@@ -317,7 +339,11 @@ function computeRetryState(attempt: number, message: string): Tab["retryState"] 
   };
 }
 
-function applyAgentEvent(tab: Tab, event: AgentEvent): Tab {
+function applyAgentEvent(
+  tab: Tab,
+  event: AgentEvent,
+  modelMetadata?: Record<string, ModelMetadata>,
+): Tab {
   const now = Date.now();
   let next: Tab = tab;
   let changed = false;
@@ -436,6 +462,19 @@ function applyAgentEvent(tab: Tab, event: AgentEvent): Tab {
     }
   }
 
+  // Recompute context stats whenever the conversation or active model changes
+  // so the UI always reflects the latest token / context / cost estimate.
+  if (
+    next.messages !== tab.messages ||
+    next.currentModel !== tab.currentModel ||
+    next.contextStats === undefined
+  ) {
+    const nextContextStats = computeTabContextStats(next, modelMetadata);
+    if (nextContextStats !== next.contextStats) {
+      withPatch({ contextStats: nextContextStats });
+    }
+  }
+
   if (!changed) return tab;
   return next;
 }
@@ -457,6 +496,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     diffScope: "last-message",
     diffFiles: {},
     diffLoading: {},
+    modelMetadata: {},
   },
   settings: {
     providers: { herman: { enabled: false }, custom: {} },
@@ -481,7 +521,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     const tab = makeTab(path, title);
 
     set((state) => {
-      const tabs = { ...state.tabs, [tab.id]: tab };
+      const tabs = { ...state.tabs, [tab.id]: { ...tab, contextStats: computeTabContextStats(tab, state.ui.modelMetadata) } };
       const tabOrder = [...state.tabOrder, tab.id];
       const nextState: AgentState = { ...state, tabs, tabOrder, activeTabId: tab.id };
       return { ...nextState, ...rebuildDerived(nextState, tabs) };
@@ -552,7 +592,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     set((state) => {
       const tabs = state.tabs[tab.id]
         ? state.tabs
-        : { ...state.tabs, [tab.id]: { ...tab, nativeAds: tab.nativeAds ?? [] } };
+        : { ...state.tabs, [tab.id]: { ...tab, nativeAds: tab.nativeAds ?? [], contextStats: computeTabContextStats(tab, state.ui.modelMetadata) } };
       const tabOrder = state.tabs[tab.id] ? state.tabOrder : [...state.tabOrder, tab.id];
       const persistedSession: PersistedSession = {
         id: tab.id,
@@ -644,6 +684,13 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       const tab = state.tabs[id];
       if (!tab) return state;
       const updated = { ...tab, ...partial, updatedAt: Date.now() };
+      // Recompute context stats when messages or the active model change.
+      if (partial.messages !== undefined || partial.currentModel !== undefined) {
+        const nextStats = computeTabContextStats(updated, state.ui.modelMetadata);
+        if (nextStats !== updated.contextStats) {
+          updated.contextStats = nextStats;
+        }
+      }
       const tabs = { ...state.tabs, [id]: updated };
       return {
         tabs,
@@ -695,6 +742,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         title,
         updatedAt: Date.now(),
       };
+      updated.contextStats = computeTabContextStats(updated, state.ui.modelMetadata);
       const tabs = { ...state.tabs, [tabId]: updated };
       return {
         tabs,
@@ -703,6 +751,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       };
     });
   },
+
 
   startAssistantMessage: (tabId) => {
     set((state) => {
@@ -717,6 +766,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         isThinking: false,
         updatedAt: Date.now(),
       };
+      updated.contextStats = computeTabContextStats(updated, state.ui.modelMetadata);
       const tabs = { ...state.tabs, [tabId]: updated };
       return { tabs, ...rebuildDerived({ ...state, tabs }, tabs) };
     });
@@ -747,6 +797,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         last.isStreaming = false;
       }
       const updated = { ...tab, messages, isThinking: false, updatedAt: Date.now() };
+      updated.contextStats = computeTabContextStats(updated, state.ui.modelMetadata);
       const tabs = { ...state.tabs, [tabId]: updated };
       return { tabs, ...rebuildDerived({ ...state, tabs }, tabs) };
     });
@@ -834,6 +885,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         nativeAds: [],
         thinkingBanner: undefined,
         sidebarAd: undefined,
+        contextStats: computeTabContextStats({ ...tab, messages: [] }, state.ui.modelMetadata),
         updatedAt: Date.now(),
       };
       const tabs = { ...state.tabs, [id]: updated };
@@ -956,7 +1008,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
 
   setSidebarWidth: (width) => set((state) => ({ ui: { ...state.ui, sidebarWidth: width } })),
 
-  setSidebarTab: (tab) => set((state) => ({ ui: { ...state.ui, sidebarTab: tab } })),
+  setSidebarTab: (tab: "changes" | "context" | "ads") => set((state) => ({ ui: { ...state.ui, sidebarTab: tab } })),
 
   setDiffScope: (scope) =>
     set((state) => ({ ui: { ...state.ui, diffScope: scope } })),
@@ -1075,7 +1127,14 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     const tab = get().tabs[tabId];
     if (!tab) return;
 
-    const updated = applyAgentEvent(tab, event);
+    // Merge any incoming model metadata so context stats can be computed
+    // against the latest known context-window limits.
+    const mergedModelMetadata =
+      (event.type === "models_sync" || event.type === "herman/models_sync") && event.modelMetadata
+        ? { ...get().ui.modelMetadata, ...event.modelMetadata }
+        : get().ui.modelMetadata;
+
+    const updated = applyAgentEvent(tab, event, mergedModelMetadata);
 
     // Build the final tab with UI-side effects.
     let nextUpdated = updated;
@@ -1156,6 +1215,9 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       let ui = state.ui;
       if (shouldAutoOpen) {
         ui = { ...state.ui, sidebarOpen: true };
+      }
+      if ((event.type === "models_sync" || event.type === "herman/models_sync") && event.modelMetadata) {
+        ui = { ...ui, modelMetadata: { ...ui.modelMetadata, ...event.modelMetadata } };
       }
 
       // Auto-refresh diffs when a turn completes and the sidebar is showing changes.
@@ -1239,7 +1301,10 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         // Backfill queuedMessages for sessions saved before that field existed.
         const queuedMessages = tab.queuedMessages ?? [];
         // Native ads and retry state are ephemeral and must not be restored from disk.
-        record[tab.id] = { ...tab, messages, queuedMessages, nativeAds: [], retryState: undefined };
+        const { providerId, modelId } = parseCurrentModel(tab.currentModel);
+        const contextLimit = state.ui.modelMetadata[tab.currentModel ?? ""]?.contextWindow;
+        const contextStats = computeContextStats(tab.messages, modelId, providerId, contextLimit);
+        record[tab.id] = { ...tab, messages, queuedMessages, nativeAds: [], retryState: undefined, contextStats };
       }
       // Sync the local counter past the maximum ID from restored messages so
       // new streaming events don't produce colliding ids.

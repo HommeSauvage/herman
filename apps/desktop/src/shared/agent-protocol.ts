@@ -1,5 +1,6 @@
 import { isAdPlacement } from "@herman/rpc/ads";
 import type { AdCampaign, AdEvent, AdPlacement } from "@herman/rpc/ads";
+import type { ModelMetadata } from "./rpc.js";
 
 export type AgentCommand =
   | { id?: string; type: "prompt"; message: string }
@@ -65,8 +66,20 @@ export type AgentEvent =
       method: string;
       [key: string]: unknown;
     }
-  | { type: "models_sync"; models: string[]; currentModel?: string }
-  | { type: "herman/models_sync"; models: string[]; currentModel?: string }
+  | {
+      type: "models_sync";
+      models: string[];
+      currentModel?: string;
+      /** Optional per-model metadata keyed by "provider/modelId". */
+      modelMetadata?: Record<string, ModelMetadata>;
+    }
+  | {
+      type: "herman/models_sync";
+      models: string[];
+      currentModel?: string;
+      /** Optional per-model metadata keyed by "provider/modelId". */
+      modelMetadata?: Record<string, ModelMetadata>;
+    }
   | { type: "herman/provider_pinned"; modelName: string; providerId: string }
   | { type: "herman/agent_proxy_error"; error: string; code: string }
   | AdEvent;
@@ -125,10 +138,12 @@ export function parseHermanEventFromNotify(payload: unknown): AgentEvent | undef
     const models = Array.isArray(event.models)
       ? event.models.filter((m): m is string => typeof m === "string")
       : [];
+    const modelMetadata = parseModelMetadata(event.modelMetadata);
     return {
       type: "models_sync",
       models,
       currentModel: typeof event.currentModel === "string" ? event.currentModel : undefined,
+      modelMetadata,
     };
   }
 
@@ -151,6 +166,23 @@ export function parseHermanEventFromNotify(payload: unknown): AgentEvent | undef
   }
 
   return undefined;
+}
+
+type ModelMetadataMap = Record<string, ModelMetadata>;
+
+function parseModelMetadata(value: unknown): ModelMetadataMap | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const input = value as Record<string, unknown>;
+  const output: ModelMetadataMap = {};
+  for (const [key, meta] of Object.entries(input)) {
+    if (!meta || typeof meta !== "object") continue;
+    const m = meta as Record<string, unknown>;
+    const contextWindow = typeof m.contextWindow === "number" ? m.contextWindow : undefined;
+    if (contextWindow === undefined || !Number.isFinite(contextWindow)) continue;
+    const maxTokens = typeof m.maxTokens === "number" ? m.maxTokens : undefined;
+    output[key] = { contextWindow, ...(maxTokens !== undefined && Number.isFinite(maxTokens) ? { maxTokens } : {}) };
+  }
+  return Object.keys(output).length > 0 ? output : undefined;
 }
 
 function parseNotifyJson(payload: unknown): Record<string, unknown> | undefined {

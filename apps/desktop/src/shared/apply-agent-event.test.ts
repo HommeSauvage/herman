@@ -501,6 +501,61 @@ describe("applyAgentEventToMessages", () => {
     });
   });
 
+  it("extracts usage on message_end", () => {
+    const messages = applyAll(
+      [],
+      [
+        { type: "message_start", message: { role: "assistant" } },
+        {
+          type: "message_update",
+          message: {},
+          assistantMessageEvent: { type: "text_delta", delta: "Hello" },
+        },
+      ],
+    );
+
+    const next = applyAgentEventToMessages(messages, {
+      type: "message_end",
+      message: {
+        stopReason: "stop",
+        model: "claude-3-5-sonnet",
+        provider: "anthropic",
+        usage: {
+          input: 100,
+          output: 50,
+          cacheRead: 10,
+          cacheWrite: 5,
+          reasoning: 20,
+          totalTokens: 185,
+          cost: {
+            input: 0.001,
+            output: 0.002,
+            cacheRead: 0.0001,
+            cacheWrite: 0.0002,
+            total: 0.0033,
+          },
+        },
+      },
+    });
+
+    expect(next[0]).toMatchObject({
+      role: "assistant",
+      isStreaming: false,
+      stopReason: "stop",
+      model: "claude-3-5-sonnet",
+      provider: "anthropic",
+      usage: {
+        input: 100,
+        output: 50,
+        cacheRead: 10,
+        cacheWrite: 5,
+        reasoning: 20,
+        totalTokens: 185,
+        cost: { total: 0.0033 },
+      },
+    });
+  });
+
   it("isAgentEndCurrent treats agent toolResult as tab tool", () => {
     const messages: Message[] = [
       { id: "msg-1", role: "assistant", content: "old", isStreaming: false },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAdEventFromNotify } from "./agent-protocol.js";
+import { parseAdEventFromNotify, parseHermanEventFromNotify } from "./agent-protocol.js";
 
 describe("parseAdEventFromNotify", () => {
   const validCampaign = {
@@ -86,5 +86,40 @@ describe("parseAdEventFromNotify", () => {
     });
     const event = parseAdEventFromNotify(payload);
     expect(event?.campaign).not.toHaveProperty("extra");
+  });
+});
+
+
+describe("parseHermanEventFromNotify", () => {
+  it("parses models_sync with model metadata", () => {
+    const payload = JSON.stringify({
+      type: "herman/models_sync",
+      models: ["herman/kimi-k2.7-code"],
+      currentModel: "herman/kimi-k2.7-code",
+      modelMetadata: {
+        "herman/kimi-k2.7-code": { contextWindow: 128000, maxTokens: 8192 },
+      },
+    });
+    const event = parseHermanEventFromNotify(payload);
+    expect(event).toEqual({
+      type: "models_sync",
+      models: ["herman/kimi-k2.7-code"],
+      currentModel: "herman/kimi-k2.7-code",
+      modelMetadata: {
+        "herman/kimi-k2.7-code": { contextWindow: 128000, maxTokens: 8192 },
+      },
+    });
+  });
+
+  it("ignores invalid model metadata entries", () => {
+    const payload = JSON.stringify({
+      type: "models_sync",
+      models: ["herman/bad"],
+      modelMetadata: {
+        "herman/bad": { contextWindow: "lots" },
+      },
+    });
+    const event = parseHermanEventFromNotify(payload);
+    expect(event?.type === "models_sync" && event.modelMetadata).toBeUndefined();
   });
 });

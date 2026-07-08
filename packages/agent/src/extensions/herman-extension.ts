@@ -67,6 +67,8 @@ type HermanModel = {
   name: string;
   api?: "openai-completions" | "anthropic-messages";
   providerId?: string;
+  contextWindow?: number;
+  maxTokens?: number;
   compat?: {
     supportsStore?: boolean;
     supportsDeveloperRole?: boolean;
@@ -133,8 +135,8 @@ function buildProviderConfig(models: HermanModel[]): ProviderConfig {
       reasoning: true,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 1_000_000,
-      maxTokens: 128_000,
+      contextWindow: model.contextWindow ?? 1_000_000,
+      maxTokens: model.maxTokens ?? 128_000,
       compat: model.compat ?? {},
     })),
   };
@@ -142,17 +144,28 @@ function buildProviderConfig(models: HermanModel[]): ProviderConfig {
 
 function sendModelsSync(
   ui: ExtensionUIContext,
-  available: { provider: string; id: string }[],
+  available: { provider: string; id: string; contextWindow: number; maxTokens?: number }[],
   currentModelId?: string,
 ) {
-  ui.notify(
-    JSON.stringify({
-      type: "models_sync",
-      models: available.map((model) => `${model.provider}/${model.id}`),
-      currentModel: currentModelId,
-    }),
-    "info",
-  );
+  const modelMetadata: Record<string, { contextWindow: number; maxTokens?: number }> = {};
+  for (const model of available) {
+    if (typeof model.contextWindow !== "number" || !Number.isFinite(model.contextWindow) || model.contextWindow <= 0) {
+      continue;
+    }
+    modelMetadata[`${model.provider}/${model.id}`] = {
+      contextWindow: model.contextWindow,
+      ...(typeof model.maxTokens === "number" && Number.isFinite(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
+    };
+  }
+  const payload: Record<string, unknown> = {
+    type: "models_sync",
+    models: available.map((model) => `${model.provider}/${model.id}`),
+    currentModel: currentModelId,
+  };
+  if (Object.keys(modelMetadata).length > 0) {
+    payload.modelMetadata = modelMetadata;
+  }
+  ui.notify(JSON.stringify(payload), "info");
 }
 
 async function fetchAdCampaign(placement: AdPlacement): Promise<AdCampaign | undefined> {
@@ -268,6 +281,8 @@ export default async function hermanExtension(pi: ExtensionAPI) {
     const available = ctx.modelRegistry.getAvailable().map((model) => ({
       provider: model.provider,
       id: model.id,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
     }));
 
     const currentModelId = await selectDefaultModel(pi, ctx, hermanModels);
@@ -313,6 +328,8 @@ export default async function hermanExtension(pi: ExtensionAPI) {
     const available = ctx.modelRegistry.getAvailable().map((model) => ({
       provider: model.provider,
       id: model.id,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
     }));
     sendModelsSync(
       ctx.ui,
@@ -433,6 +450,8 @@ export default async function hermanExtension(pi: ExtensionAPI) {
         const available = ctx.modelRegistry.getAvailable().map((model) => ({
           provider: model.provider,
           id: model.id,
+          contextWindow: model.contextWindow,
+          maxTokens: model.maxTokens,
         }));
         sendModelsSync(
           ctx.ui,

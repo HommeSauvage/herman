@@ -8,6 +8,7 @@ import { closeTab, activateTab } from "../lib/agent-actions.js";
 import { useAgentStore, useTabSummaries } from "../lib/agent-store.js";
 import { getShortcutLabelForCommand, type CommandId } from "../lib/commands.js";
 import { CommandButton } from "./command-button.js";
+import { FuelGauge } from "./fuel-gauge.js";
 import { ProjectIcon } from "./project-icon.js";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
@@ -72,6 +73,32 @@ function SidebarToggle() {
       {sidebarOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
     </CommandButton>
   );
+}
+
+function ContextUsageGauge() {
+  const activeTabId = useAgentStore((s) => s.activeTabId);
+  const stats = useAgentStore((s) =>
+    s.activeTabId ? s.tabs[s.activeTabId]?.contextStats : undefined,
+  );
+  const sidebarOpen = useAgentStore((s) => s.ui.sidebarOpen);
+  const setSidebarTab = useAgentStore((s) => s.setSidebarTab);
+  const toggleSidebar = useAgentStore((s) => s.toggleSidebar);
+  const view = useAgentStore((s) => s.ui.view);
+  const hermanEnabled = useAgentStore((s) => s.settings.providers.herman.enabled);
+  const mode = useAgentStore((s) => s.settings.mode);
+
+  // Only show in normal-mode sessions where the right sidebar exists.
+  if (view !== "session" || !hermanEnabled || mode === "rookie") return null;
+
+  const handleClick = () => {
+    if (!activeTabId) return;
+    if (!sidebarOpen) {
+      toggleSidebar();
+    }
+    setSidebarTab("context");
+  };
+
+  return <FuelGauge stats={stats} onClick={handleClick} />;
 }
 
 function TabItem({
@@ -222,6 +249,7 @@ export function TabBar() {
       </motion.div>
 
       <div className="electrobun-webkit-app-region-no-drag flex h-full shrink-0 items-center gap-1 pr-3">
+        <ContextUsageGauge />
         <SidebarToggle />
       </div>
     </div>

@@ -1,6 +1,62 @@
 import type { AgentEvent } from "./agent-protocol.js";
 import { isContextTool } from "./context-tools.js";
-import type { Message } from "./rpc.js";
+import type { Message, Usage } from "./rpc.js";
+
+function isValidNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function parseCost(value: unknown): Usage["cost"] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const c = value as Record<string, unknown>;
+  return {
+    input: isValidNumber(c.input) ? c.input : 0,
+    output: isValidNumber(c.output) ? c.output : 0,
+    cacheRead: isValidNumber(c.cacheRead) ? c.cacheRead : 0,
+    cacheWrite: isValidNumber(c.cacheWrite) ? c.cacheWrite : 0,
+    total: isValidNumber(c.total) ? c.total : 0,
+  };
+}
+
+function parseUsage(value: unknown): Usage | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const u = value as Record<string, unknown>;
+  const input = isValidNumber(u.input) ? u.input : 0;
+  const output = isValidNumber(u.output) ? u.output : 0;
+  const cacheRead = isValidNumber(u.cacheRead) ? u.cacheRead : 0;
+  const cacheWrite = isValidNumber(u.cacheWrite) ? u.cacheWrite : 0;
+  const reasoning = isValidNumber(u.reasoning) ? u.reasoning : undefined;
+  const totalTokens = isValidNumber(u.totalTokens)
+    ? u.totalTokens
+    : input + output + cacheRead + cacheWrite;
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    reasoning,
+    totalTokens,
+    cost: parseCost(u.cost),
+  };
+}
+
+function usagesEqual(a: Usage | undefined, b: Usage | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.input === b.input &&
+    a.output === b.output &&
+    a.cacheRead === b.cacheRead &&
+    a.cacheWrite === b.cacheWrite &&
+    a.reasoning === b.reasoning &&
+    a.totalTokens === b.totalTokens &&
+    a.cost?.input === b.cost?.input &&
+    a.cost?.output === b.cost?.output &&
+    a.cost?.cacheRead === b.cost?.cacheRead &&
+    a.cost?.cacheWrite === b.cost?.cacheWrite &&
+    a.cost?.total === b.cost?.total
+  );
+}
 
 let messageCounter = 0;
 
@@ -162,6 +218,7 @@ export function applyAgentEventToMessages(messages: Message[], event: AgentEvent
       const model = typeof eventMessage?.model === "string" ? eventMessage.model : undefined;
       const provider =
         typeof eventMessage?.provider === "string" ? eventMessage.provider : undefined;
+      const usage = parseUsage(eventMessage?.usage);
 
       return updateLastAssistant(messages, (m) => {
         if (
@@ -169,11 +226,12 @@ export function applyAgentEventToMessages(messages: Message[], event: AgentEvent
           m.stopReason === stopReason &&
           m.errorMessage === errorMessage &&
           m.model === model &&
-          m.provider === provider
+          m.provider === provider &&
+          usagesEqual(m.usage, usage)
         ) {
           return m;
         }
-        return { ...m, isStreaming: false, stopReason, errorMessage, model, provider };
+        return { ...m, isStreaming: false, stopReason, errorMessage, model, provider, usage };
       });
     }
     case "agent_end":
