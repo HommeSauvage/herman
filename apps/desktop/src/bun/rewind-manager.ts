@@ -15,7 +15,7 @@
 
 import { randomUUIDv7 } from "bun";
 import { readdirSync, existsSync } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { join } from "node:path";
 import { getLogger } from "@logtape/logtape";
 
 import type { FileDiff, Message, TabId } from "../shared/rpc.js";
@@ -51,39 +51,21 @@ export function getUserMessageIds(messages: Message[]): string[] {
 }
 
 /**
- * Encode a folder path the same way pi's SessionManager encodes its cwd.
- *
- * pi uses:
- *   resolvedCwd  = resolvePath(cwd)
- *   safePath     = "--" + resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-") + "--"
- *   sessionDir   = join(agentDir, "sessions", safePath)
- *
- * We mirror this to find the exact session subdirectory for a tab.
- */
-function encodePiCwd(folderPath: string): string {
-  const resolvedCwd = resolvePath(folderPath);
-  const safe = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-  return safe;
-}
-
-/**
  * Read pi's session UUID from the most recent session JSONL file.
  *
- * Pi stores sessions as `{timestamp}_{uuid}.jsonl` inside
- * `{agentDir}/sessions/{encodedCwd}/`.  Herman sets PI_CODING_AGENT_DIR
- * to `~/.herman/agent-configs/<tabId>/`.
- *
- * We compute the exact encoded-cwd subdirectory from the tab's folder
- * path so we never pick up a session from a different working directory.
+ * Herman's agent CLI sets `PI_CODING_AGENT_SESSION_DIR` to
+ * `~/.herman/agent-configs/<tabId>/sessions/`, so pi writes session files
+ * directly into that directory. We read the newest `{timestamp}_{uuid}.jsonl`
+ * file for the tab.
  *
  * Returns undefined if no session file exists yet (agent hasn't started).
  */
-function readPiSessionId(tabId: TabId, folderPath: string): string | undefined {
+function readPiSessionId(tabId: TabId): string | undefined {
   try {
-    const cwdDir = join(agentConfigsDir(), tabId, "sessions", encodePiCwd(folderPath));
-    if (!existsSync(cwdDir)) return undefined;
+    const sessionDir = join(agentConfigsDir(), tabId, "sessions");
+    if (!existsSync(sessionDir)) return undefined;
 
-    const names = readdirSync(cwdDir);
+    const names = readdirSync(sessionDir);
     if (names.length === 0) return undefined;
 
     // Session files are named `{timestamp}_{uuid}.jsonl`.  ISO-8601
@@ -165,9 +147,9 @@ export class RewindManager {
       // Read pi's session UUID from disk so we can scope checkpoints.
       // At init time the agent process may not have started yet — we
       // retry on every reload() until the session file appears.
-      const sessionId = readPiSessionId(tabId, folderPath);
+      const sessionId = readPiSessionId(tabId);
 
-      const all = await loadAllCheckpoints(repoRoot, sessionId);
+      const all = sessionId ? await loadAllCheckpoints(repoRoot, sessionId) : [];
       const { checkpoints, byTurn } = this.indexCheckpoints(all);
 
       this.states.set(tabId, {
@@ -217,14 +199,16 @@ export class RewindManager {
 
     // Re-read session UUID every time — handles agent restarts and the
     // initial race where the agent hasn't started yet.
-    const latestUuid = readPiSessionId(tabId, state.folderPath);
+    const latestUuid = readPiSessionId(tabId);
     if (latestUuid && latestUuid !== state.sessionId) {
       state.sessionId = latestUuid;
       logger.debug("Rewind session UUID updated", { tabId, sessionId: latestUuid });
     }
 
     try {
-      const all = await loadAllCheckpoints(state.repoRoot, state.sessionId);
+      const all = state.sessionId
+        ? await loadAllCheckpoints(state.repoRoot, state.sessionId)
+        : [];
       const { checkpoints, byTurn } = this.indexCheckpoints(all);
       state.checkpoints = checkpoints;
       state.byTurn = byTurn;

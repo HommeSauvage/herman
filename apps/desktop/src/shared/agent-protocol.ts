@@ -81,6 +81,12 @@ export type AgentEvent =
       modelMetadata?: Record<string, ModelMetadata>;
     }
   | { type: "herman/provider_pinned"; modelName: string; providerId: string }
+  | {
+      type: "herman/context_usage";
+      tokens: number | null;
+      contextWindow: number;
+      percent: number | null;
+    }
   | { type: "herman/agent_proxy_error"; error: string; code: string }
   | AdEvent;
 
@@ -163,6 +169,20 @@ export function parseHermanEventFromNotify(payload: unknown): AgentEvent | undef
       error: typeof event.error === "string" ? event.error : "Herman server error",
       code: typeof event.code === "string" ? event.code : "proxy_error",
     };
+  }
+
+  if (event.type === "herman/context_usage") {
+    const tokens = typeof event.tokens === "number" ? event.tokens : null;
+    const contextWindow = typeof event.contextWindow === "number" ? event.contextWindow : 0;
+    const percent = typeof event.percent === "number" ? event.percent : null;
+    if (contextWindow > 0) {
+      return {
+        type: "herman/context_usage",
+        tokens,
+        contextWindow,
+        percent,
+      };
+    }
   }
 
   return undefined;

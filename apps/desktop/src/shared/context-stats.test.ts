@@ -101,6 +101,79 @@ describe("computeContextStats", () => {
     expect(stats.messageCount).toBe(0);
   });
 
+  test("anchors on last authoritative usage when assistant is streaming", () => {
+    // When a completed assistant message has usage data, it becomes the
+    // authoritative anchor — even while a later assistant is streaming.
+    // The agentContextUsage is ignored in favor of provider-reported data.
+    const messages: Message[] = [
+      userMessage("hello"),
+      assistantMessage("first", usage({ input: 10, output: 5, totalTokens: 15 })),
+      userMessage("world"),
+      { ...assistantMessage("streaming"), isStreaming: true },
+    ];
+    const stats = computeContextStats(messages, "gpt-4o", "openai", undefined, {
+      tokens: 999,
+      contextWindow: 256_000,
+    });
+    // 15 (last authoritative) + est("world") + est("streaming")
+    expect(stats.totalTokens).toBe(
+      15 + estimateTextTokens("world") + estimateTextTokens("streaming"),
+    );
+    expect(stats.contextLimit).toBe(256_000);
+    // Breakdown still comes from the last authoritative assistant message.
+    expect(stats.inputTokens).toBe(10);
+    expect(stats.outputTokens).toBe(5);
+  });
+
+  test("uses agent context usage when no assistant message has usage", () => {
+    // Very first turn: no assistant message with usage exists yet, so the
+    // agent's context_usage estimate is the best available data.
+    const messages: Message[] = [
+      userMessage("hello"),
+      { ...assistantMessage("streaming"), isStreaming: true },
+    ];
+    const stats = computeContextStats(messages, "gpt-4o", "openai", undefined, {
+      tokens: 500,
+      contextWindow: 256_000,
+    });
+    expect(stats.totalTokens).toBe(
+      500 + estimateTextTokens("streaming"),
+    );
+    expect(stats.contextLimit).toBe(256_000);
+  });
+
+  test("falls back to estimate when agent tokens are available but assistant is finalized", () => {
+    const messages: Message[] = [
+      userMessage("hello"),
+      assistantMessage("first", usage({ input: 10, output: 5, totalTokens: 15 })),
+      userMessage("world"),
+      assistantMessage("second", usage({ input: 100, output: 50, totalTokens: 150 })),
+    ];
+    const stats = computeContextStats(messages, "gpt-4o", "openai", undefined, {
+      tokens: 999,
+      contextWindow: 256_000,
+    });
+    // The finalized assistant's own usage is more recent than the agent baseline.
+    expect(stats.totalTokens).toBe(150);
+    expect(stats.contextLimit).toBe(256_000);
+    expect(stats.inputTokens).toBe(100);
+    expect(stats.outputTokens).toBe(50);
+  });
+
+  test("falls back to estimate when agent tokens are null", () => {
+    const messages: Message[] = [
+      userMessage("hello"),
+      assistantMessage("first", usage({ input: 10, output: 5, totalTokens: 15 })),
+      userMessage("world"),
+    ];
+    const stats = computeContextStats(messages, "gpt-4o", "openai", undefined, {
+      tokens: null,
+      contextWindow: 256_000,
+    });
+    expect(stats.totalTokens).toBe(15 + estimateTextTokens("world"));
+    expect(stats.contextLimit).toBe(256_000);
+  });
+
   test("infers context limit from known model", () => {
     expect(computeContextStats([], "claude-3-5-sonnet", "anthropic").contextLimit).toBe(
       200_000,

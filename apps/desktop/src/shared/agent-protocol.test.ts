@@ -111,6 +111,31 @@ describe("parseHermanEventFromNotify", () => {
     });
   });
 
+  it("parses context_usage events", () => {
+    const payload = JSON.stringify({
+      type: "herman/context_usage",
+      tokens: 1234,
+      contextWindow: 128000,
+      percent: 0.96,
+    });
+    const event = parseHermanEventFromNotify(payload);
+    expect(event).toEqual({
+      type: "herman/context_usage",
+      tokens: 1234,
+      contextWindow: 128000,
+      percent: 0.96,
+    });
+  });
+
+  it("ignores context_usage with invalid contextWindow", () => {
+    const payload = JSON.stringify({
+      type: "herman/context_usage",
+      tokens: 1234,
+      contextWindow: "large",
+    });
+    expect(parseHermanEventFromNotify(payload)).toBeUndefined();
+  });
+
   it("ignores invalid model metadata entries", () => {
     const payload = JSON.stringify({
       type: "models_sync",

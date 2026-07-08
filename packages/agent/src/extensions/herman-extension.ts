@@ -338,6 +338,27 @@ export default async function hermanExtension(pi: ExtensionAPI) {
     );
   });
 
+  pi.on("context", async (event, ctx) => {
+    const usage = ctx.getContextUsage();
+    if (!usage) return;
+
+    // Report the agent's own context-window estimate to the desktop so the
+    // fuel gauge can anchor on a reliable number instead of the chars/4
+    // heuristic, which jumps around during streaming.
+    ctx.ui.notify(
+      JSON.stringify({
+        type: "herman/context_usage",
+        tokens: usage.tokens,
+        contextWindow: usage.contextWindow,
+        percent: usage.percent,
+      }),
+      "info",
+    );
+
+    // The context event allows message mutation; we only observe.
+    return { messages: event.messages };
+  });
+
   pi.on("message_end", async (event) => {
     const message = event.message as unknown as Record<string, unknown> | undefined;
     if (!message || message.role !== "assistant") return;

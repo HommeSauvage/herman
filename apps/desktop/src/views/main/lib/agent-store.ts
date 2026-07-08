@@ -60,6 +60,8 @@ export type Tab = {
   revertDiffSummary?: string;
   /** Estimated token / context / cost statistics for the session. */
   contextStats?: ContextStats;
+  /** Latest agent-reported context usage (transient, used to anchor estimates). */
+  agentContextUsage?: { tokens?: number | null; contextWindow?: number | null };
   /** Auto-retry state when the agent crashes or errors during a turn. */
   retryState?: {
     attempt: number;
@@ -272,7 +274,13 @@ function computeTabContextStats(
 ): Tab["contextStats"] {
   const { providerId, modelId } = parseCurrentModel(tab.currentModel);
   const contextLimit = modelMetadata?.[tab.currentModel ?? ""]?.contextWindow;
-  return computeContextStats(tab.messages, modelId, providerId, contextLimit);
+  return computeContextStats(
+    tab.messages,
+    modelId,
+    providerId,
+    contextLimit,
+    tab.agentContextUsage,
+  );
 }
 
 function deriveConnection(activeTab: Tab | undefined): AgentState["connection"] {
@@ -446,6 +454,32 @@ function applyAgentEvent(
         currentModel: event.currentModel ?? tab.currentModel,
         availableModels: event.models,
       });
+      break;
+    }
+    case "herman/context_usage": {
+      const { providerId, modelId } = parseCurrentModel(next.currentModel);
+      const contextLimit = modelMetadata?.[next.currentModel ?? ""]?.contextWindow;
+      const agentContextUsage =
+        event.tokens != null || event.contextWindow > 0
+          ? { tokens: event.tokens, contextWindow: event.contextWindow }
+          : undefined;
+      const nextAgentContextUsage =
+        agentContextUsage?.tokens != null || agentContextUsage?.contextWindow
+          ? agentContextUsage
+          : undefined;
+      if (nextAgentContextUsage !== next.agentContextUsage) {
+        withPatch({ agentContextUsage: nextAgentContextUsage });
+      }
+      const nextContextStats = computeContextStats(
+        next.messages,
+        modelId,
+        providerId,
+        contextLimit,
+        agentContextUsage,
+      );
+      if (nextContextStats !== next.contextStats) {
+        withPatch({ contextStats: nextContextStats });
+      }
       break;
     }
     case "herman/agent_proxy_error": {
@@ -885,6 +919,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         nativeAds: [],
         thinkingBanner: undefined,
         sidebarAd: undefined,
+        agentContextUsage: undefined,
         contextStats: computeTabContextStats({ ...tab, messages: [] }, state.ui.modelMetadata),
         updatedAt: Date.now(),
       };
@@ -1304,7 +1339,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         const { providerId, modelId } = parseCurrentModel(tab.currentModel);
         const contextLimit = state.ui.modelMetadata[tab.currentModel ?? ""]?.contextWindow;
         const contextStats = computeContextStats(tab.messages, modelId, providerId, contextLimit);
-        record[tab.id] = { ...tab, messages, queuedMessages, nativeAds: [], retryState: undefined, contextStats };
+        record[tab.id] = { ...tab, messages, queuedMessages, nativeAds: [], retryState: undefined, agentContextUsage: undefined, contextStats };
       }
       // Sync the local counter past the maximum ID from restored messages so
       // new streaming events don't produce colliding ids.

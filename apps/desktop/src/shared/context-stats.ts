@@ -168,6 +168,7 @@ export function computeContextStats(
   modelId?: string,
   providerId?: string,
   contextLimit?: number,
+  agentContextUsage?: { tokens?: number | null; contextWindow?: number | null },
 ): ContextStats {
   const now = Date.now();
   const usageInfo = getLastAssistantUsage(messages);
@@ -200,13 +201,49 @@ export function computeContextStats(
       cacheReadTokens += safeNumber(message.usage.cacheRead);
       cacheWriteTokens += safeNumber(message.usage.cacheWrite);
       estimatedCost += message.usage.cost?.total ?? 0;
-    } else {
-      inputTokens += estimateMessageTokens(message);
     }
+    // User/tool messages and streaming assistants without usage have no authoritative
+    // breakdown yet; they contribute to totalTokens via the estimate, not here.
   }
 
-  const totalTokens = estimateSessionTokens(messages);
-  const resolvedContextLimit = inferContextLimit(modelId, providerId, contextLimit);
+  const totalTokens = (() => {
+    // Always prefer authoritative provider-reported token counts as the
+    // anchor.  This is the ground truth from the LLM API — it includes
+    // every token in the context window at the time of that response.
+    // Messages added after that point (tool results, new user messages,
+    // streaming content) are estimated on top.  This keeps the gauge
+    // monotonic and avoids jumps when the assistant transitions from
+    // streaming to completed.
+    const usageInfo = getLastAssistantUsage(messages);
+    if (usageInfo) {
+      let total = calculateContextTokens(usageInfo.usage);
+      for (let i = usageInfo.index + 1; i < messages.length; i++) {
+        total += estimateMessageTokens(messages[i]!);
+      }
+      return total;
+    }
+
+    // No assistant message has usage data yet (e.g. very first turn).
+    // Fall back to the agent's own context estimate if the extension has
+    // reported one.
+    if (agentContextUsage?.tokens != null) {
+      let total = agentContextUsage.tokens;
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage?.role === "assistant" && lastMessage.isStreaming) {
+        total += estimateTextTokens(lastMessage.content);
+      }
+      return total;
+    }
+
+    // Last resort: estimate every message from scratch.
+    let estimated = 0;
+    for (const message of messages) {
+      estimated += estimateMessageTokens(message);
+    }
+    return estimated;
+  })();
+  const resolvedContextLimit =
+    agentContextUsage?.contextWindow ?? inferContextLimit(modelId, providerId, contextLimit);
   const userMessageCount = messages.filter((m) => m.role === "user").length;
   const assistantMessageCount = messages.filter((m) => m.role === "assistant").length;
   const toolMessageCount = messages.filter((m) => m.role === "tool").length;

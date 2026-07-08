@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { TabId } from "../../../shared/rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
@@ -73,7 +73,7 @@ export function useComposerTextarea({
   );
   const hasTextRef = useRef(hasText);
   const draftValueRef = useRef(composerValue ?? "");
-  const lastStoreValueRef = useRef(composerValue ?? "");
+  const lastStoreValueRef = useRef<string | undefined>(undefined);
 
   // Keep refs for popover hooks (stable across renders for keyboard handler).
   const mentionRef = useRef(mention);
@@ -97,14 +97,16 @@ export function useComposerTextarea({
 
   // --- Store → textarea sync -------------------------------------------
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const storeValue = composerValue ?? "";
     if (storeValue === lastStoreValueRef.current) return;
 
     const textarea = textareaRef.current;
-    if (textarea && storeValue !== textarea.value) {
-      textarea.value = storeValue;
-      draftValueRef.current = storeValue;
+    if (textarea) {
+      if (storeValue !== textarea.value) {
+        textarea.value = storeValue;
+        draftValueRef.current = storeValue;
+      }
       if (storeValue === "") {
         textarea.style.height = "auto";
       } else {

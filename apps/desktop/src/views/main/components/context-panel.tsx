@@ -1,8 +1,9 @@
 import { Badge } from "@herman/ui/components/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@herman/ui/components/card";
 import { Separator } from "@herman/ui/components/separator";
 import { cn } from "@herman/ui/lib/utils";
 import { useShallow } from "zustand/react/shallow";
+
+import { ContextPanelCard } from "./context-panel-card.js";
 
 import {
   formatCost,
@@ -73,36 +74,32 @@ export function ContextPanel() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
-        <Card className="bg-white/[0.03] border-white/[0.06]">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-text text-xs font-medium">
-              {formatTokenCount(stats.totalTokens)} / {formatTokenCount(stats.contextLimit)} tokens
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="h-2 w-full overflow-hidden rounded-full bg-white/[0.08]">
-              <div
-                className={cn(
-                  "h-full rounded-full transition-all duration-500",
-                  isCritical
-                    ? "bg-red-500"
-                    : isHigh
-                      ? "bg-amber-500"
-                      : "bg-signal",
-                )}
-                style={{ width: `${Math.min(percentage, 100)}%` }}
-              />
-            </div>
-            <div className="mt-2 text-faint text-[10px]">
-              Estimated from the latest assistant message usage plus character-count
-              heuristics for newer messages.
-            </div>
-          </CardContent>
-        </Card>
+        <ContextPanelCard>
+          <div className="text-text text-xs font-medium">
+            {formatTokenCount(stats.totalTokens)} / {formatTokenCount(stats.contextLimit)} tokens
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/[0.12]">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-500",
+                isCritical
+                  ? "bg-red-500"
+                  : isHigh
+                    ? "bg-amber-500"
+                    : "bg-signal",
+              )}
+              style={{ width: `${Math.min(percentage, 100)}%` }}
+            />
+          </div>
+          <div className="mt-2 text-faint text-[10px]">
+            Estimated from the latest assistant message usage plus character-count
+            heuristics for newer messages.
+          </div>
+        </ContextPanelCard>
 
         <Separator className="my-3 bg-white/[0.06]" />
 
-        <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-2">
+        <ContextPanelCard>
           <StatRow label="Input tokens" value={formatTokenCount(stats.inputTokens)} />
           <StatRow label="Output tokens" value={formatTokenCount(stats.outputTokens)} />
           {stats.reasoningTokens > 0 && (
@@ -116,24 +113,24 @@ export function ContextPanel() {
           )}
           <Separator className="my-1 bg-white/[0.05]" />
           <StatRow label="Estimated cost" value={formatCost(stats.estimatedCost)} />
-        </div>
+        </ContextPanelCard>
 
         <Separator className="my-3 bg-white/[0.06]" />
 
-        <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-2">
+        <ContextPanelCard>
           <StatRow label="Total messages" value={stats.messageCount} />
           <StatRow label="User messages" value={stats.userMessageCount} />
           <StatRow label="Assistant messages" value={stats.assistantMessageCount} />
           <StatRow label="Tool messages" value={stats.toolMessageCount} />
-        </div>
+        </ContextPanelCard>
 
         {(modelId || providerId) && (
           <>
             <Separator className="my-3 bg-white/[0.06]" />
-            <div className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-2">
+            <ContextPanelCard>
               {providerId && <StatRow label="Provider" value={providerId} />}
               {modelId && <StatRow label="Model" value={modelId} />}
-            </div>
+            </ContextPanelCard>
           </>
         )}
       </div>

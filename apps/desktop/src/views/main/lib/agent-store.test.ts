@@ -1011,4 +1011,18 @@ describe("context stats", () => {
     expect(stats?.totalTokens).toBe(0);
     expect(stats?.messageCount).toBe(0);
   });
+
+  it("uses agent-reported context usage when available", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().recordAgentEvent(id, {
+      type: "herman/context_usage",
+      tokens: 1234,
+      contextWindow: 256_000,
+      percent: 0.48,
+    });
+
+    const stats = useAgentStore.getState().tabs[id]?.contextStats;
+    expect(stats?.totalTokens).toBe(1234);
+    expect(stats?.contextLimit).toBe(256_000);
+  });
 });

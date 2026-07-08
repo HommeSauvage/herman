@@ -81,14 +81,15 @@ function ContextUsageGauge() {
     s.activeTabId ? s.tabs[s.activeTabId]?.contextStats : undefined,
   );
   const sidebarOpen = useAgentStore((s) => s.ui.sidebarOpen);
+  const sidebarTab = useAgentStore((s) => s.ui.sidebarTab);
   const setSidebarTab = useAgentStore((s) => s.setSidebarTab);
   const toggleSidebar = useAgentStore((s) => s.toggleSidebar);
   const view = useAgentStore((s) => s.ui.view);
   const hermanEnabled = useAgentStore((s) => s.settings.providers.herman.enabled);
   const mode = useAgentStore((s) => s.settings.mode);
 
-  // Only show in normal-mode sessions where the right sidebar exists.
-  if (view !== "session" || !hermanEnabled || mode === "rookie") return null;
+  if (view !== "session") return null;
+  if (mode === "normal" && !hermanEnabled) return null;
 
   const handleClick = () => {
     if (!activeTabId) return;
@@ -98,7 +99,17 @@ function ContextUsageGauge() {
     setSidebarTab("context");
   };
 
-  return <FuelGauge stats={stats} onClick={handleClick} />;
+  const isActive = mode === "normal" && sidebarOpen && sidebarTab === "context";
+
+  return (
+    <FuelGauge
+      stats={stats}
+      onClick={mode === "normal" ? handleClick : undefined}
+      isActive={isActive}
+      mode={mode}
+      className="h-8 aspect-[6/5]"
+    />
+  );
 }
 
 function TabItem({
