@@ -107,6 +107,7 @@ Communication between the main process and the agent uses JSON-RPC over stdin/st
 | `dev` | Start Vite + Electrobun in dev mode |
 | `build` | Production build (macOS code sign off by default) |
 | `build:canary` | Canary channel build |
-| `test` | Run all tests |
+| `test` | Run unit tests in `test/` |
+| `test:e2e` | Run e2e tests in `test/e2e/` (requires `HERMAN_RUN_E2E=1` and external services) |
 | `typecheck` | TypeScript check |
 | `inject-dev-session` | Inject a test session for local development |

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "messages": [
+    {
+      "id": "m1",
+      "role": "user",
+      "content": "cached hello"
+    }
+  ],
+  "updatedAt": 1783562687784
+}

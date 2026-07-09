@@ -19,7 +19,5 @@ export {
   useIsActiveTabWorking,
 } from "./agent-store/hooks.js";
 
-export { applyAgentEventToThinkingMessages } from "./agent-store/thinking.js";
-
 // Side-effect: dev-only store mutation logger
 import "./agent-store/dev-logger.js";

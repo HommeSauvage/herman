@@ -36,14 +36,6 @@ const LANGUAGES = [
   yaml,
 ];
 
-const ALIASES: Record<string, string> = {
-  js: "javascript",
-  ts: "typescript",
-  sh: "bash",
-  zsh: "bash",
-  "": "text",
-};
-
 let highlighterPromise: Promise<HighlighterCore> | undefined;
 
 export function getHighlighter(): Promise<HighlighterCore> {
@@ -55,15 +47,4 @@ export function getHighlighter(): Promise<HighlighterCore> {
     });
   }
   return highlighterPromise;
-}
-
-export async function highlightCode(code: string, lang?: string): Promise<string> {
-  const highlighter = await getHighlighter();
-  const normalized = lang ? (ALIASES[lang] ?? lang) : "text";
-  const loadedLangs = highlighter.getLoadedLanguages();
-  const effectiveLang = loadedLangs.includes(normalized) ? normalized : "text";
-  return highlighter.codeToHtml(code.trim(), {
-    lang: effectiveLang,
-    theme: "github-dark",
-  });
 }

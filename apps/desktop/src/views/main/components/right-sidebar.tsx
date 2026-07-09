@@ -6,7 +6,7 @@ import { AdSidebar } from "./ad-sidebar.js";
 import { ChangesPanel } from "./changes-panel.js";
 import { ContextPanel } from "./context-panel.js";
 
-const MIN_WIDTH = 200;
+const MIN_WIDTH = 350;
 const MAX_WIDTH = 600;
 
 /** Thin tab bar rendered between the always-visible ads and the content area. */
@@ -51,7 +51,7 @@ function SidebarTabs() {
  * (diff viewer, etc.).  Only shown in normal mode.
  */
 export function RightSidebar() {
-  const width = useAgentStore((s) => s.ui.sidebarWidth ?? 288);
+  const width = useAgentStore((s) => s.ui.sidebarWidth ?? 350);
   const sidebarTab = useAgentStore((s) => s.ui.sidebarTab);
   const setSidebarWidth = useAgentStore((s) => s.setSidebarWidth);
   const dragStart = useRef<{ x: number; width: number } | null>(null);

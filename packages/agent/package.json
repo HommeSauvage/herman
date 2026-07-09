@@ -12,7 +12,7 @@
   "scripts": {
     "build": "rm -rf dist && bun build src/cli.ts --outdir dist --target bun --minify && mkdir -p dist/modes/interactive/theme && cp src/modes/interactive/theme/dark.json dist/modes/interactive/theme/dark.json && cp src/modes/interactive/theme/light.json dist/modes/interactive/theme/light.json",
     "dev": "bun run --watch src/cli.ts",
-    "test": "bun test src",
+    "test": "bun test test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

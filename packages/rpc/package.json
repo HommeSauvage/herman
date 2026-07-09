@@ -9,6 +9,7 @@
     "./ads": "./src/ads.ts"
   },
   "scripts": {
+    "test": "bun test test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {},
