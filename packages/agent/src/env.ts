@@ -6,6 +6,7 @@ const env = arkenv({
   HERMAN_CLIENT_VERSION: "string = '0.0.1'",
   HERMAN_TAB_ID: "string = ''",
   HERMAN_PINNED_PROVIDERS: "string = '{}'",
+  HERMAN_MODE: "'rookie' | 'normal' | '' = ''",
   HERMAN_AGENT_LOG_LEVEL: "'info' | 'debug' | 'trace' | 'warning' | 'error' | 'fatal' = 'info'",
 });
 
@@ -15,6 +16,7 @@ export const config = {
   clientVersion: env.HERMAN_CLIENT_VERSION,
   tabId: env.HERMAN_TAB_ID,
   pinnedProviders: env.HERMAN_PINNED_PROVIDERS,
+  mode: (env.HERMAN_MODE || undefined) as "rookie" | "normal" | undefined,
   logLevel: env.HERMAN_AGENT_LOG_LEVEL,
 } as const;
 

@@ -425,7 +425,7 @@ export class AgentProcessManager {
 
     const bridge = this.bridges.get(tabId);
     if (bridge) {
-      await bridge.restart(path, { piSessionId: this.resolvePiSessionId(tabId) });
+      await bridge.restart(path, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
     } else {
       this.agentRuntime.schedule(tabId);
     }
@@ -483,7 +483,7 @@ export class AgentProcessManager {
   async refreshSession(): Promise<void> {
     for (const [tabId, bridge] of this.bridges) {
       const folderPath = this.store.tabs.get(tabId)?.folderPath;
-      await bridge.restart(folderPath, { piSessionId: this.resolvePiSessionId(tabId) });
+      await bridge.restart(folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
     }
   }
 
@@ -513,7 +513,7 @@ export class AgentProcessManager {
 
     const bridge = this.bridges.get(tabId);
     if (bridge) {
-      await bridge.restart(tab.folderPath, { piSessionId: this.resolvePiSessionId(tabId) });
+      await bridge.restart(tab.folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
     } else {
       await this.startBridge(tabId, tab.folderPath);
     }
@@ -744,7 +744,7 @@ export class AgentProcessManager {
     );
     this.bridges.set(tabId, bridge);
     try {
-      await bridge.start(folderPath, { piSessionId: this.resolvePiSessionId(tabId) });
+      await bridge.start(folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
       await this.capturePiSessionId(tabId);
     } catch (error) {
       const stderr = error instanceof Error ? error.message : String(error);

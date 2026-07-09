@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -325,6 +327,65 @@ export default async function hermanExtension(pi: ExtensionAPI) {
     if (hasError) return;
 
     await sendAdEvent(ctx.ui, "native");
+  });
+
+  // ── Rookie mode system prompt injection ──────────────────────────
+  // In rookie mode, the user is non-technical. We prepend behavioral
+  // instructions and append any template-specific systemPromptHint
+  // from the project's herman.json.
+
+  const ROOKIE_INSTRUCTIONS = `
+<rookie_mode>
+You are speaking to a non-technical user who may not understand code,
+programming concepts, frameworks, or development terminology (unless they state otherwise).
+
+CRITICAL RULES:
+- NEVER ask the user to choose between technical implementation
+  alternatives (e.g. "should I refactor X or rewrite Y?", "do you
+  prefer CSS modules or styled-components?"). You MUST make ALL
+  technical decisions yourself and pick the best approach.
+- NEVER ask "what do you prefer?" or "which approach?" about
+  implementation details. Just pick the simplest, most reliable
+  solution and do it.
+- When you need to clarify requirements, ask plain, non-technical
+  questions about WHAT they want the site to do or look like, not
+  HOW to build it. Use everyday language.
+- Explain what you're doing in simple terms. Avoid jargon like
+  "component", "refactor", "state management", "bundler", etc.
+  Say "I'll add a section for customer reviews" instead of
+  "I'll create a Testimonials component with a data fetch hook."
+- If something goes wrong, fix it without burdening the user with
+  debugging details or error messages.
+- When multiple valid approaches exist, pick the SIMPLEST and most
+  maintainable one. Optimize for the user's experience, not for
+  technical elegance.
+- The user's time and confidence are more important than technical
+  perfection. Ship something good and iterate.
+- If a db migration is needed, you can run it, to undo, just change 
+  the files needed to migrate and run the migration again.
+</rookie_mode>
+`;
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    if (config.mode !== "rookie") return;
+
+    let systemPrompt = ROOKIE_INSTRUCTIONS + event.systemPrompt;
+
+    // Load template-specific hint from herman.json, if present
+    try {
+      const hermanJsonPath = join(ctx.cwd, "herman.json");
+      if (existsSync(hermanJsonPath)) {
+        const raw = readFileSync(hermanJsonPath, "utf-8");
+        const herman = JSON.parse(raw) as { systemPromptHint?: string };
+        if (herman.systemPromptHint) {
+          systemPrompt += `\n\n<template_instructions>\n${herman.systemPromptHint}\n</template_instructions>`;
+        }
+      }
+    } catch {
+      // herman.json may not exist or be invalid — skip template hint
+    }
+
+    return { systemPrompt };
   });
 
   pi.on("model_select", async (_event, ctx) => {

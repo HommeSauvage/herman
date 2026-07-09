@@ -561,6 +561,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
               buildCommand: manifest.deployment.buildCommand ?? "npm run build",
               outputDir: manifest.deployment.outputDir ?? "dist",
               deployTarget: manifest.deployment.target ?? "cloudflare-pages",
+              ...(manifest.systemPromptHint ? { systemPromptHint: manifest.systemPromptHint } : {}),
             };
             await writeFile(join(projectPath, "herman.json"), JSON.stringify(hermanJson, null, 2));
           }

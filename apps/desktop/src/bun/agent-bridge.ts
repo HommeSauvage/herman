@@ -39,7 +39,7 @@ export class AgentBridge {
     return this.state;
   }
 
-  async start(folderPath?: string, opts?: { piSessionId?: string }) {
+  async start(folderPath?: string, opts?: { piSessionId?: string; mode?: string }) {
     this.folderPath = folderPath || undefined;
     this.piSessionId = opts?.piSessionId;
     if (this.process) {
@@ -59,6 +59,7 @@ export class AgentBridge {
       HERMAN_AGENT_DIR: agentDir,
       HERMAN_CLIENT_VERSION: "0.0.1",
       HERMAN_TAB_ID: this.tabId,
+      ...(opts?.mode ? { HERMAN_MODE: opts.mode } : {}),
     };
 
     if (hermanEnabled) {
@@ -134,9 +135,10 @@ export class AgentBridge {
     cleanupTabAgentDir(this.tabId);
   }
 
-  async restart(folderPath?: string, opts?: { piSessionId?: string }) {
+  async restart(folderPath?: string, opts?: { piSessionId?: string; mode?: string }) {
     await this.start(folderPath ?? this.folderPath, {
       piSessionId: opts?.piSessionId ?? this.piSessionId,
+      mode: opts?.mode,
     });
   }
 
