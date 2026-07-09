@@ -1,15 +1,21 @@
 import { mock } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, afterAll, beforeEach, describe, expect, it } from "vitest";
 
+import {
+  cleanupAllTestTempDirs,
+  clearHermantAppDir,
+  createTestTempDir,
+  setHermantAppDir,
+} from "../helpers/temp-dir.js";
 import type { AgentEvent } from "../../src/shared/agent-protocol.js";
 import type { PersistedSession } from "../../src/bun/window-state.js";
 
 let tempDir: string;
 let mockInstances: MockAgentBridge[] = [];
+const originalFetch = globalThis.fetch;
 const mockSessionMessages = new Map<
   string,
   Array<Record<string, unknown>>
@@ -118,12 +124,12 @@ class MockAgentBridge {
 }
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), "herman-apm-"));
+  tempDir = createTestTempDir("herman-apm-");
   mockInstances = [];
   mockSessionMessages.clear();
   mockGetMessagesDelays.clear();
   mockGetMessagesFailures.clear();
-  process.env.HERMAN_APP_DIR = tempDir;
+  setHermantAppDir(tempDir);
   mock.module("../../src/bun/agent-bridge.js", () => ({
     AgentBridge: MockAgentBridge,
     cleanupTabAgentDir: () => {},
@@ -135,9 +141,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(tempDir, { recursive: true, force: true });
-  delete process.env.HERMAN_APP_DIR;
+  clearHermantAppDir(tempDir);
   mock.restore();
+  globalThis.fetch = originalFetch;
+});
+
+afterAll(() => {
+  cleanupAllTestTempDirs();
 });
 
 async function drainAgent(manager: Awaited<ReturnType<typeof createManager>>): Promise<void> {

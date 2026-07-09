@@ -1,40 +1,18 @@
 import { getTimeRotatingFileSink } from "@logtape/file";
-import { configure, getConsoleSink, getJsonLinesFormatter, Sink } from "@logtape/logtape";
-import { getPrettyFormatter } from "@logtape/pretty";
-import { redactByField } from "@logtape/redaction";
+import { getJsonLinesFormatter, type Sink } from "@logtape/logtape";
 import { join } from "node:path";
 
 import { appDir } from "./bun/app-paths.js";
 import { config } from "./env.js";
+import { configureBaseLogging } from "./logging-shared.js";
 
 export async function configureLogging(): Promise<void> {
-  const consoleSink = redactByField(
-    getConsoleSink({
-      formatter: getPrettyFormatter({ properties: true, timestamp: 'time' }),
-      nonBlocking: true,
-    }),
-    {
-      fieldPatterns: [
-        /token/i,
-        /secret/i,
-        /api[-_]?key/i,
-        /password/i,
-        /authorization/i,
-        /gh_token/i,
-        /telegram_id/i,
-        /email/i,
-      ],
-    },
-  );
-
-  const sinks: Record<string, Sink | (Sink & Disposable) | (Sink & AsyncDisposable)> = {
-    console: consoleSink,
-  };
+  const extraSinks: Record<string, Sink | (Sink & Disposable) | (Sink & AsyncDisposable)> = {};
 
   if (config.logFile) {
     const directory =
       typeof config.logFile === "string" ? config.logFile : join(appDir(), "logs");
-    sinks.file = getTimeRotatingFileSink({
+    extraSinks.file = getTimeRotatingFileSink({
       directory,
       formatter: getJsonLinesFormatter(),
       nonBlocking: true,
@@ -45,12 +23,5 @@ export async function configureLogging(): Promise<void> {
     });
   }
 
-  await configure({
-    sinks,
-    loggers: [
-      { category: ["herman-desktop"], lowestLevel: config.logLevel, sinks: Object.keys(sinks) },
-      { category: ["email"], lowestLevel: config.logLevel, sinks: Object.keys(sinks) },
-      { category: ["logtape", "meta"], lowestLevel: "warning", sinks: Object.keys(sinks) },
-    ],
-  });
+  await configureBaseLogging(config.logLevel, extraSinks);
 }

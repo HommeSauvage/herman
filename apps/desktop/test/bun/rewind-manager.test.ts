@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { execSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+  clearHermantAppDir,
+  createTestTempDir,
+  removeTestTempDir,
+  setHermantAppDir,
+} from "../helpers/temp-dir.js";
 import { createCheckpoint } from "../../src/bun/rewind-core.js";
 import { rewindManager } from "../../src/bun/rewind-manager.js";
 
@@ -14,10 +19,10 @@ describe("rewindManager", () => {
   const originalEnv = process.env.HERMAN_APP_DIR;
 
   beforeEach(() => {
-    appDir = mkdtempSync(join(tmpdir(), "herman-test-"));
-    repoRoot = mkdtempSync(join(tmpdir(), "herman-repo-"));
+    appDir = createTestTempDir("herman-test-");
+    repoRoot = createTestTempDir("herman-repo-");
     tabId = `tab-${Date.now()}`;
-    process.env.HERMAN_APP_DIR = appDir;
+    setHermantAppDir(appDir);
 
     execSync("git init", { cwd: repoRoot });
     execSync("git config user.email test@example.com", { cwd: repoRoot });
@@ -29,13 +34,8 @@ describe("rewindManager", () => {
 
   afterEach(() => {
     rewindManager.dispose(tabId);
-    if (originalEnv === undefined) {
-      delete process.env.HERMAN_APP_DIR;
-    } else {
-      process.env.HERMAN_APP_DIR = originalEnv;
-    }
-    rmSync(appDir, { recursive: true, force: true });
-    rmSync(repoRoot, { recursive: true, force: true });
+    clearHermantAppDir(appDir, originalEnv);
+    removeTestTempDir(repoRoot);
   });
 
   it("scopes checkpoints to the tab's pi session", async () => {

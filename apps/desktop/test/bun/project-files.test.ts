@@ -1,9 +1,9 @@
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 
+import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 import { clearProjectFilesCache, findProjectFiles } from "../../src/bun/project-files.js";
 
 describe("findProjectFiles", () => {
@@ -11,11 +11,11 @@ describe("findProjectFiles", () => {
 
   beforeEach(async () => {
     clearProjectFilesCache();
-    tmpDir = await mkdtemp(path.join(os.tmpdir(), "herman-project-files-"));
+    tmpDir = createTestTempDir("herman-project-files-");
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    removeTestTempDir(tmpDir);
   });
 
   async function createFiles(files: string[]) {

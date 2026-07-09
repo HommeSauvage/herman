@@ -2,11 +2,15 @@ import { createCipheriv, createHash, createDecipheriv, randomBytes } from "node:
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 
+import { getLogger } from "@logtape/logtape";
+
 import type { ProviderCredential } from "../shared/rpc.js";
 import { appDir, credentialsPath as appCredentialsPath } from "./app-paths.js";
 import { ensureDir, writeFileAtomically } from "./fs-utils.js";
 import { removeKey, retrieveKey, storeKey } from "./keychain.js";
 import { refreshOAuthToken } from "./oauth.js";
+
+const logger = getLogger(["herman-desktop", "credentials"]);
 
 function credentialsDir() {
   return appDir();
@@ -130,7 +134,7 @@ export async function loadCredentials(): Promise<Record<string, ProviderCredenti
     if (await file.exists()) {
       credentialStoreError =
         error instanceof Error ? error.message : "Failed to decrypt credentials store";
-      console.warn("[credentials] Failed to decrypt credentials store:", credentialStoreError);
+      logger.warning("Failed to decrypt credentials store", { error: credentialStoreError });
     }
     return {};
   }
@@ -182,11 +186,10 @@ export async function refreshAllOAuthCredentials(): Promise<void> {
         credentials[providerId] = await refreshOAuthToken(providerId, credential);
         changed = true;
       } catch (error) {
-        console.warn(
-          "[credentials] Failed to refresh OAuth token for",
+        logger.warning("Failed to refresh OAuth token", {
           providerId,
-          error instanceof Error ? error.message : String(error),
-        );
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
     if (changed) await saveCredentials(credentials);

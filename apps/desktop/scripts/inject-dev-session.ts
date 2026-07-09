@@ -1,6 +1,11 @@
+import { getLogger } from "@logtape/logtape";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { configureLogging } from "../src/logging.js";
+
+const logger = getLogger(["herman-desktop", "inject-dev-session"]);
 
 const ENV_FILE = "apps/herman-server/.env.development.local";
 const CREATE_SESSION_SCRIPT = "apps/herman-server/scripts/create-test-session.ts";
@@ -23,14 +28,17 @@ async function createSession(): Promise<string> {
 }
 
 async function injectSession() {
+  await configureLogging();
   const token = await createSession();
   mkdirSync(join(STATE_PATH, ".."), { recursive: true });
   await Bun.write(STATE_PATH, JSON.stringify({ session: { token } }, null, 2));
-  console.log(`Injected dev session into ${STATE_PATH}`);
-  console.log(`Token: ${token.slice(0, 16)}...`);
+  logger.info("Injected dev session", { statePath: STATE_PATH });
+  logger.info("Session token prefix", { tokenPrefix: `${token.slice(0, 16)}...` });
 }
 
 injectSession().catch((err) => {
-  console.error(err);
+  logger.error("Failed to inject dev session", {
+    error: err instanceof Error ? err.message : String(err),
+  });
   process.exit(1);
 });

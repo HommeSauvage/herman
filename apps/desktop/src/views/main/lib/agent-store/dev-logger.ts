@@ -1,5 +1,9 @@
+import { getLogger } from "@logtape/logtape";
+
 import { useAgentStore } from "./store.js";
 import type { Tab } from "./types.js";
+
+const logger = getLogger(["herman-desktop", "view", "store"]);
 
 // Dev-only: log every store mutation so we can trace what's causing
 // periodic re-renders after streaming ends.
@@ -32,11 +36,9 @@ if (import.meta.env.DEV) {
       }
     }
 
-    console.log(
-      "[store] mutation:",
-      changed.join(", "),
-      tabDiffs.length > 0 ? `| ${tabDiffs.join(" | ")}` : "",
-      new Date().toISOString(),
-    );
+    logger.debug("Store mutation", {
+      changed: changed.join(", "),
+      tabDiffs: tabDiffs.length > 0 ? tabDiffs.join(" | ") : undefined,
+    });
   });
 }

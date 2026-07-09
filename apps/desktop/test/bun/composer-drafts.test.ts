@@ -1,19 +1,20 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  clearHermantAppDir,
+  createTestTempDir,
+  setHermantAppDir,
+} from "../helpers/temp-dir.js";
 
 let tempDir: string;
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), "herman-composer-drafts-"));
-  process.env.HERMAN_APP_DIR = tempDir;
+  tempDir = createTestTempDir("herman-composer-drafts-");
+  setHermantAppDir(tempDir);
 });
 
 afterEach(() => {
-  rmSync(tempDir, { recursive: true, force: true });
-  delete process.env.HERMAN_APP_DIR;
+  clearHermantAppDir(tempDir);
 });
 
 async function importComposerDrafts() {

@@ -1,5 +1,8 @@
 import { AlertTriangle, RefreshCcw } from "lucide-react";
+import { getLogger } from "@logtape/logtape";
 import { Component, type ErrorInfo, type ReactNode } from "react";
+
+const logger = getLogger(["herman-desktop", "view", "error-boundary"]);
 
 type ErrorBoundaryProps = {
   children: ReactNode;
@@ -19,7 +22,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("ErrorBoundary caught an error:", error, info.componentStack);
+    logger.error("ErrorBoundary caught an error", {
+      error: error.message,
+      componentStack: info.componentStack,
+    });
   }
 
   handleReset = () => {

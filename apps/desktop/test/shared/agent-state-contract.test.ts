@@ -1,10 +1,14 @@
 import { mock } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import {
+  cleanupAllTestTempDirs,
+  clearHermantAppDir,
+  createTestTempDir,
+  setHermantAppDir,
+} from "../helpers/temp-dir.js";
 import { useAgentStore } from "../../src/views/main/lib/agent-store.js";
 import type { AgentEvent } from "../../src/shared/agent-protocol.js";
 import type { Message, Tab } from "../../src/shared/rpc.js";
@@ -87,10 +91,10 @@ function resetStore() {
 }
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), "herman-contract-"));
+  tempDir = createTestTempDir("herman-contract-");
   mockInstances = [];
   resetStore();
-  process.env.HERMAN_APP_DIR = tempDir;
+  setHermantAppDir(tempDir);
   mock.module("../../src/bun/agent-bridge.js", () => ({
     AgentBridge: MockAgentBridge,
     cleanupTabAgentDir: () => {},
@@ -102,9 +106,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(tempDir, { recursive: true, force: true });
-  delete process.env.HERMAN_APP_DIR;
+  clearHermantAppDir(tempDir);
   mock.restore();
+});
+
+afterAll(() => {
+  cleanupAllTestTempDirs();
 });
 
 async function createManager() {

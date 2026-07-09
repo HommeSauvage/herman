@@ -1,6 +1,9 @@
+import { getLogger } from "@logtape/logtape";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { desktopRpc } from "../lib/desktop-rpc.js";
+
+const logger = getLogger(["herman-desktop", "view", "file-mention"]);
 
 type MentionState = {
   open: boolean;
@@ -81,10 +84,9 @@ export function useFileMention(folderPath: string | undefined) {
         });
         setState((s) => ({ ...s, items: paths, activeIndex: 0, loading: false }));
       } catch (error) {
-        console.error(
-          "[file-mention] search failed:",
-          error instanceof Error ? error.message : String(error),
-        );
+        logger.error("File mention search failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
         setState((s) => ({ ...s, items: [], activeIndex: 0, loading: false }));
       }
     },

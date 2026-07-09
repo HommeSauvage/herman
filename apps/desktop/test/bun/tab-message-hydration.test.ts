@@ -3,19 +3,23 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import {
+  clearHermantAppDir,
+  createTestTempDir,
+  setHermantAppDir,
+} from "../helpers/temp-dir.js";
 import { saveTabHistory } from "../../src/bun/tab-history.js";
 import { loadInstantHydration } from "../../src/bun/tab-message-hydration.js";
 
 let tempDir: string;
 
 beforeEach(() => {
-  tempDir = join(import.meta.dir, ".tmp-tab-hydration-" + Math.random().toString(36).slice(2));
-  mkdirSync(tempDir, { recursive: true });
-  process.env.HERMAN_APP_DIR = tempDir;
+  tempDir = createTestTempDir("herman-tab-hydration-");
+  setHermantAppDir(tempDir);
 });
 
 afterEach(() => {
-  delete process.env.HERMAN_APP_DIR;
+  clearHermantAppDir(tempDir);
 });
 
 describe("loadInstantHydration", () => {

@@ -1,5 +1,10 @@
+import { getLogger } from "@logtape/logtape";
 import { $ } from "bun";
 import { parseArgs } from "node:util";
+
+import { configureLogging } from "../src/logging.js";
+
+const logger = getLogger(["herman-desktop", "prebuild"]);
 
 const { values } = parseArgs({
   args: process.argv.slice(2),
@@ -11,12 +16,14 @@ const { values } = parseArgs({
 
 const isDev = values.dev ?? false;
 
+await configureLogging();
+
 if (isDev) {
-  console.log("Herman dev prebuild complete (renderer handled by electrobun dev).");
+  logger.info("Herman dev prebuild complete (renderer handled by electrobun dev).");
 } else {
-  console.log("Building Herman agent…");
+  logger.info("Building Herman agent…");
   await $`bun run --filter=@herman/agent build`;
-  console.log("Building Herman renderer…");
+  logger.info("Building Herman renderer…");
   await $`bun node_modules/vite/dist/node/cli.js build`;
-  console.log("Herman prebuild complete.");
+  logger.info("Herman prebuild complete.");
 }

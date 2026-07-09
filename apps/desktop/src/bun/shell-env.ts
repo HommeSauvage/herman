@@ -6,6 +6,10 @@
  * or other shell-configured managers won't be found.
  */
 
+import { getLogger } from "@logtape/logtape";
+
+const logger = getLogger(["herman-desktop", "shell-env"]);
+
 let cachedShellEnv: Record<string, string> | null | undefined;
 
 function detectShell(): string {
@@ -32,7 +36,9 @@ function extractShellEnv(): Record<string, string> | null {
       });
 
       if (retryResult.exitCode !== 0) {
-        console.warn(`[ShellEnv] Login shell exited with code ${retryResult.exitCode}`);
+        logger.warning("Login shell exited with non-zero code", {
+          exitCode: retryResult.exitCode,
+        });
         return null;
       }
 
@@ -41,7 +47,9 @@ function extractShellEnv(): Record<string, string> | null {
 
     return parseNullDelimitedEnv(result.stdout.toString());
   } catch (err) {
-    console.warn("[ShellEnv] Failed to spawn login shell:", err);
+    logger.warning("Failed to spawn login shell", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -76,22 +84,22 @@ export function resolveShellEnv(): boolean {
     currentPath.includes("/.bun/");
 
   if (hasUserPaths) {
-    console.log("[ShellEnv] PATH already contains user paths, skipping resolution");
+    logger.debug("PATH already contains user paths, skipping resolution");
     cachedShellEnv = null;
     return false;
   }
 
-  console.log("[ShellEnv] Resolving shell environment...");
+  logger.info("Resolving shell environment");
   const shellEnv = extractShellEnv();
 
   if (!shellEnv || !shellEnv.PATH) {
-    console.warn("[ShellEnv] Could not extract PATH from login shell");
+    logger.warning("Could not extract PATH from login shell");
     cachedShellEnv = null;
     return false;
   }
 
   cachedShellEnv = shellEnv;
   process.env.PATH = shellEnv.PATH;
-  console.log(`[ShellEnv] Resolved PATH: ${shellEnv.PATH}`);
+  logger.info("Resolved shell PATH", { path: shellEnv.PATH });
   return true;
 }

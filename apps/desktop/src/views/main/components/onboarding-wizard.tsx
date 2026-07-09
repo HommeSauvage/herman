@@ -1,10 +1,13 @@
 import { motion, AnimatePresence } from "motion/react";
 import { ArrowRight, ArrowLeft, Check, Sparkles, Loader2, Store, Rocket, Palette, FileText } from "lucide-react";
+import { getLogger } from "@logtape/logtape";
 import { useCallback, useEffect, useState, useRef } from "react";
 
 import type { TemplateManifest, Question, StyleOption } from "../../../shared/templates.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
+
+const logger = getLogger(["herman-desktop", "view", "onboarding-wizard"]);
 
 type Step = "templates" | "questions" | "style" | "plan" | "building";
 
@@ -313,7 +316,7 @@ export function OnboardingWizard({ onComplete }: { onComplete: (folderPath: stri
       setIsLoadingTemplates(false);
     }).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[OnboardingWizard] Failed to load templates:", msg, err);
+      logger.error("Failed to load templates", { error: msg });
       setTemplateError(msg);
       setIsLoadingTemplates(false);
     });
@@ -378,7 +381,9 @@ export function OnboardingWizard({ onComplete }: { onComplete: (folderPath: stri
 
       onComplete(folderPath);
     } catch (err) {
-      console.error("Failed to create project from template:", err);
+      logger.error("Failed to create project from template", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       setIsBuilding(false);
     }
   }, [selectedTemplate, answers, onComplete]);

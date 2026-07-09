@@ -1,9 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
+import { cleanupAllTestTempDirs, createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 import { git } from "../../src/bun/rewind-core.js";
 import {
   applySessionToMainProject,
@@ -15,15 +15,19 @@ import {
 const createdDirs: string[] = [];
 
 function makeProject(name: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `herman-${name}-`));
+  const dir = createTestTempDir(`herman-${name}-`);
   createdDirs.push(dir);
   return dir;
 }
 
 afterEach(() => {
   for (const dir of createdDirs.splice(0, createdDirs.length)) {
-    rmSync(dir, { recursive: true, force: true });
+    removeTestTempDir(dir);
   }
+});
+
+afterAll(() => {
+  cleanupAllTestTempDirs();
 });
 
 describe("worktree helpers", () => {

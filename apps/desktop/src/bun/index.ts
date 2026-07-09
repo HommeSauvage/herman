@@ -519,7 +519,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       getTemplates: async () => {
         const templates = await loadTemplates();
-        console.log("[main] getTemplates returning", templates.length, "templates");
+        logger.debug("Returning templates", { count: templates.length });
         return templates;
       },
       createProjectFromTemplate: async ({ templateId, projectName, parentDir }) => {

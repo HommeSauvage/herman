@@ -1,8 +1,11 @@
+import { getLogger } from "@logtape/logtape";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 
 import type { TemplateManifest } from "../shared/templates.js";
+
+const logger = getLogger(["herman-desktop", "templates"]);
 
 /**
  * Resolves the templates directory path.
@@ -25,16 +28,19 @@ export function getTemplatesDir(): string {
  */
 export async function loadTemplates(): Promise<TemplateManifest[]> {
   const templatesDir = getTemplatesDir();
-  console.log("[templates] Loading from:", templatesDir);
+  logger.debug("Loading templates", { templatesDir });
   let entries: string[] = [];
 
   try {
     entries = await readdir(templatesDir, { withFileTypes: true }).then((dirents) =>
       dirents.filter((d) => d.isDirectory()).map((d) => d.name),
     );
-    console.log("[templates] Found directories:", entries);
+    logger.debug("Found template directories", { entries });
   } catch (err) {
-    console.error("[templates] Failed to read templates dir:", templatesDir, err);
+    logger.error("Failed to read templates directory", {
+      templatesDir,
+      error: err instanceof Error ? err.message : String(err),
+    });
     // Templates directory doesn't exist or isn't readable
     return [];
   }

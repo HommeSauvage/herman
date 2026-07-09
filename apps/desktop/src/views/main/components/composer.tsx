@@ -1,3 +1,4 @@
+import { getLogger } from "@logtape/logtape";
 import { useCallback, useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -16,6 +17,8 @@ import { ComposerActions } from "./composer-actions.js";
 import { FileMentionPopover } from "./file-mention-popover.js";
 import { QueuedFollowUps } from "./queued-follow-ups.js";
 import { SlashCommandPopover } from "./slash-command-popover.js";
+
+const logger = getLogger(["herman-desktop", "view", "composer"]);
 
 // @refresh reset
 
@@ -150,10 +153,9 @@ export function Composer() {
     } catch (error) {
       // The user dismissing the dialog is not an error worth surfacing.
       // Log it for debugging but don't disrupt the composer.
-      console.error(
-        "[composer] openFilePicker failed:",
-        error instanceof Error ? error.message : String(error),
-      );
+      logger.error("openFilePicker failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }, [tabId, folderPath, addAttachment]);
 

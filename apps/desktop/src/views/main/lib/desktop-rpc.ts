@@ -1,5 +1,8 @@
 import type { AdPlacement, AgentCommand, AgentEvent } from "../../../shared/agent-protocol.js";
 import type { AgentStatus, DesktopRpc, OutgoingMessages } from "../../../shared/rpc.js";
+import { getLogger } from "@logtape/logtape";
+
+const logger = getLogger(["herman-desktop", "view", "desktop-rpc"]);
 
 let impl: DesktopRpc | undefined;
 
@@ -48,7 +51,7 @@ export const desktopRpc = new Proxy({} as DesktopRpc, {
                 | ((...args: unknown[]) => unknown)
                 | undefined;
               if (!fn) {
-                console.warn(`Unknown send method: ${String(method)}`);
+                logger.warning("Unknown send method", { method: String(method) });
                 return undefined;
               }
               return fn(...args);
@@ -72,10 +75,10 @@ export const desktopRpc = new Proxy({} as DesktopRpc, {
             ),
           )
           .catch((err: unknown) => {
-            console.error(
-              `[desktop-rpc] Failed to register message listener "${String(prop)}":`,
-              err instanceof Error ? err.message : String(err),
-            );
+            logger.error("Failed to register message listener", {
+              prop: String(prop),
+              error: err instanceof Error ? err.message : String(err),
+            });
           });
       };
     }

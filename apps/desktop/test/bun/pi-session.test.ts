@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  clearHermantAppDir,
+  createTestTempDir,
+  setHermantAppDir,
+} from "../helpers/temp-dir.js";
+import {
   extractMessagesFromAgentPayload,
   normalizeContentText,
   normalizePiMessage,
@@ -14,13 +19,12 @@ import { mergeAgentSettings } from "../../src/bun/agent-bridge.js";
 let tempDir: string;
 
 beforeEach(() => {
-  tempDir = join(import.meta.dir, ".tmp-pi-session-" + Math.random().toString(36).slice(2));
-  mkdirSync(tempDir, { recursive: true });
-  process.env.HERMAN_APP_DIR = tempDir;
+  tempDir = createTestTempDir("herman-pi-session-");
+  setHermantAppDir(tempDir);
 });
 
 afterEach(() => {
-  delete process.env.HERMAN_APP_DIR;
+  clearHermantAppDir(tempDir);
 });
 
 describe("resolvePiSessionResumeArg", () => {
