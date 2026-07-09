@@ -28,6 +28,7 @@ const rpc = Electroview.defineRPC<HermanDesktopRPC>({
       updateStatus: messageHandler("updateStatus"),
       tabsRestored: messageHandler("tabsRestored"),
       tabCreated: messageHandler("tabCreated"),
+      tabMessagesHydrated: messageHandler("tabMessagesHydrated"),
       tabClosed: messageHandler("tabClosed"),
       tabActivated: messageHandler("tabActivated"),
       tabFolderChanged: messageHandler("tabFolderChanged"),
@@ -38,6 +39,7 @@ const rpc = Electroview.defineRPC<HermanDesktopRPC>({
       agentStatusChanged: messageHandler("agentStatusChanged"),
       adEvent: messageHandler("adEvent"),
       adVisibilityChanged: messageHandler("adVisibilityChanged"),
+      previewStatusChanged: messageHandler("previewStatusChanged"),
     },
   },
 });

@@ -338,23 +338,14 @@ export default async function hermanExtension(pi: ExtensionAPI) {
     );
   });
 
-  pi.on("context", async (event, ctx) => {
-    const usage = ctx.getContextUsage();
-    if (!usage) return;
-
-    // Report the agent's own context-window estimate to the desktop so the
-    // fuel gauge can anchor on a reliable number instead of the chars/4
-    // heuristic, which jumps around during streaming.
-    ctx.ui.notify(
-      JSON.stringify({
-        type: "herman/context_usage",
-        tokens: usage.tokens,
-        contextWindow: usage.contextWindow,
-        percent: usage.percent,
-      }),
-      "info",
-    );
-
+  // Note: the `herman/context_usage` event used to be emitted from this
+  // `context` event. It's been superseded by `herman/context_report`,
+  // which is published by the dedicated `@herman/pi-context-reporter`
+  // extension (bundled alongside this one). The reporter streams
+  // cumulative totals + a live per-turn output estimate, and uses
+  // `getContextUsage()` itself for the gauge anchor — so the legacy
+  // payload adds no signal that the reporter doesn't already provide.
+  pi.on("context", async (event) => {
     // The context event allows message mutation; we only observe.
     return { messages: event.messages };
   });

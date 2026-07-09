@@ -10,6 +10,7 @@ process.env.PI_CODING_AGENT_DIR = PI_AGENT_DIR;
 process.env.PI_CODING_AGENT_SESSION_DIR = join(PI_AGENT_DIR, "sessions");
 
 import { main } from "@earendil-works/pi-coding-agent";
+import contextReporterExtension from "@herman/pi-context-reporter";
 
 import { config } from "./env.js";
 import hermanExtension from "./extensions/herman-extension.js";
@@ -43,11 +44,25 @@ function ensureBundledExtensions(agentDir: string, sources: string[]): void {
   const existing = (Array.isArray(settings.packages) ? settings.packages : []) as string[];
   const toAdd = sources.filter((s) => !existing.includes(s));
 
-  if (toAdd.length === 0) return;
+  // Older versions of this CLI registered `@herman/pi-context-reporter`
+  // as a bundled extension. Pi's PackageManager would then run
+  // `bun install` to fetch it, but that install emits ANSI-colored
+  // progress to stdout — which the desktop's JSONL parser cannot
+  // read. We now load the reporter via `extensionFactories` instead,
+  // so strip the stale entry from `settings.json` to keep Pi quiet.
+  const stale = "@herman/pi-context-reporter";
+  const filtered = existing.filter((p) => p !== stale);
 
-  settings.packages = [...existing, ...toAdd];
+  if (toAdd.length === 0 && filtered.length === existing.length) return;
+
+  settings.packages = [...filtered, ...toAdd];
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-  console.error("[herman-agent] Registered bundled extensions:", toAdd);
+  if (filtered.length !== existing.length) {
+    console.error("[herman-agent] Removed stale bundled extension:", stale);
+  }
+  if (toAdd.length > 0) {
+    console.error("[herman-agent] Registered bundled extensions:", toAdd);
+  }
 }
 
 ensureBundledExtensions(PI_AGENT_DIR, BUNDLED_EXTENSIONS);
@@ -72,7 +87,8 @@ function ensureRpcMode(args: string[]): string[] {
 const args = ensureRpcMode(process.argv.slice(2));
 
 await main(args, {
-  // Only herman-internal extension stays as an inline factory.
-  // pi-rewind and pi-fff are auto-discovered from the agent settings.
-  extensionFactories: [hermanExtension],
+  // The Herman extensions should be loaded as inline factories. 
+  // Other bundled extensions are auto-discovered from the agent settings,
+  // Which pi will install when it starts.
+  extensionFactories: [hermanExtension, contextReporterExtension],
 });

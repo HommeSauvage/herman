@@ -132,9 +132,46 @@ export type AgentStatus = {
 
 export type TabId = string;
 
+export type SessionWorktree = {
+  branch: string;
+  baseBranch: string;
+  mainFolderPath: string;
+};
+
 export type QueuedFollowUp = {
   id: string;
   text: string;
+};
+
+/** A file the user picked from the native file dialog or pasted from the
+ *  clipboard.  We keep the absolute path so the agent can be sent a stable
+ *  reference to the file via the prompt text.  An optional previewDataUrl is
+ *  included for small image attachments so the renderer can show a
+ *  thumbnail without having to read the file again. */
+export type PickedFile = {
+  path: string;
+  name: string;
+  size: number;
+  mime: string;
+  /** Base64 data URL (data:image/...) for image previews; only set for
+   *  small image files.  Undefined for other file types. */
+  previewDataUrl?: string;
+};
+
+export type OpenFilePickerOptions = {
+  multiple?: boolean;
+  title?: string;
+  /** Absolute path of the folder the dialog should open in. */
+  defaultPath?: string;
+};
+
+export type PendingAttachment = PickedFile & {
+  /** Stable client-side id used to key React lists and identify attachments
+   *  for removal.  Independent from the file path so the same file can be
+   *  attached twice (e.g. in different turns) without collisions. */
+  id: string;
+  /** Unix timestamp (ms) when the attachment was added. */
+  addedAt: number;
 };
 
 export type Usage = {
@@ -179,6 +216,13 @@ export type Message =
       status: "running" | "done" | "error";
       output?: string;
       args?: unknown;
+    }
+  | {
+      id: string;
+      role: "thinking";
+      content: string;
+      isStreaming?: boolean;
+      parentId?: string;
     };
 
 export type PersistedSession = {
@@ -186,6 +230,9 @@ export type PersistedSession = {
   title: string;
   folderPath: string;
   projectColor: string;
+  /** Latest PI session UUID observed for this tab. */
+  piSessionId?: string;
+  worktree?: SessionWorktree;
   createdAt: number;
   updatedAt: number;
   /** Revert point: messages at or after this ID are considered reverted. */
@@ -209,6 +256,16 @@ export type ContextStats = {
   modelId?: string;
   providerId?: string;
   updatedAt: number;
+  /**
+   * True when the agent reported the context is unknown (post-compaction,
+   * before next LLM response). The desktop should render a "?" in the
+   * gauge. Only meaningful when the agent sends `herman/context_report`.
+   */
+  isCompacted?: boolean;
+  /** Running output estimate for the in-flight assistant turn. */
+  currentTurnOutput?: number;
+  /** True while the agent is mid-turn (between `agent_start` and `agent_end`). */
+  isStreaming?: boolean;
 };
 
 /** A single file's diff information, used by the changes panel. */
@@ -222,11 +279,23 @@ export type FileDiff = {
 
 export type DiffScope = "last-message" | "everything" | "working-tree";
 
+/** Result of fetching conversation history from the agent on tab resume. */
+export type TabMessageHydrationStatus = "pending" | "success" | "empty" | "failed";
+
+export type TabMessagesHydrated = {
+  tabId: TabId;
+  status: TabMessageHydrationStatus;
+  messages: Message[];
+  contextStats?: ContextStats;
+  error?: string;
+};
+
 export type Tab = {
   id: TabId;
   title: string;
   folderPath: string;
   projectColor: string;
+  worktree?: SessionWorktree;
   messages: Message[];
   isThinking: boolean;
   currentModel?: string;
@@ -238,6 +307,11 @@ export type Tab = {
   updatedAt: number;
   composerValue: string;
   queuedMessages: QueuedFollowUp[];
+  /** Files attached to the next prompt in the composer.  Optional on the
+   *  wire (older sessions predate this field) and ephemeral — the renderer
+   *  clears it on submission so the main process never has to reason
+   *  about it. */
+  pendingAttachments?: PendingAttachment[];
   selectedMessageId?: string;
   /** If set, all messages with id >= revertMessageId are considered reverted (hidden). */
   revertMessageId?: string;
@@ -245,6 +319,10 @@ export type Tab = {
   revertDiffSummary?: string;
   /** Estimated token / context / cost statistics for the session. */
   contextStats?: ContextStats;
+  /** Whether to render the model's thinking process in the message list. */
+  showThinking: boolean;
+  /** Thinking messages buffered for the current/visible session. */
+  thinkingMessages: Message[];
 };
 
 export type OutgoingMessages = {
@@ -257,6 +335,7 @@ export type OutgoingMessages = {
     sessions: PersistedSession[];
   };
   tabCreated: { tab: Tab };
+  tabMessagesHydrated: TabMessagesHydrated;
   tabClosed: { tabId: TabId };
   tabActivated: { tabId: TabId };
   tabFolderChanged: { tabId: TabId; folderPath?: string };
@@ -362,6 +441,10 @@ export type HermanDesktopRPC = {
         params: { sessionId: TabId };
         response: Tab | undefined;
       };
+      retryTabMessageHydration: {
+        params: { tabId: TabId };
+        response: TabMessagesHydrated;
+      };
       setComposerDraft: {
         params: { tabId: TabId; value: string };
         response: undefined;
@@ -369,6 +452,10 @@ export type HermanDesktopRPC = {
       findProjectFiles: {
         params: { folderPath: string; query: string; includeDirectories?: boolean };
         response: { paths: string[] };
+      };
+      openFilePicker: {
+        params: OpenFilePickerOptions;
+        response: { files: PickedFile[] };
       };
       agentRequest: {
         params: { tabId: TabId; command: AgentCommand };
@@ -465,6 +552,18 @@ export type HermanDesktopRPC = {
         params: { templateId: string; projectName: string; parentDir?: string };
         response: { folderPath: string };
       };
+      getSessionChanges: {
+        params: { tabId: TabId };
+        response: { isWorktree: boolean; changedFiles: number; canApply: boolean };
+      };
+      applySession: {
+        params: { tabId: TabId };
+        response: { status: "applied" | "resolving" | "error"; error?: string };
+      };
+      discardSession: {
+        params: { tabId: TabId };
+        response: undefined;
+      };
       focusWindow: {
         params: undefined;
         response: undefined;
@@ -480,6 +579,10 @@ export type HermanDesktopRPC = {
       stopPreview: {
         params: { folderPath: string };
         response: undefined;
+      };
+      restartPreview: {
+        params: { folderPath: string; devCommand?: string; devPort?: number };
+        response: { url?: string; port: number };
       };
       getPreviewStatus: {
         params: { folderPath: string };

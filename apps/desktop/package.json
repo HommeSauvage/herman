@@ -12,6 +12,7 @@
     "inject-dev-session": "bun run scripts/inject-dev-session.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "catalog:",
     "@fontsource-variable/inter": "catalog:",
     "@herman/agent": "workspace:*",
     "@herman/rpc": "workspace:*",

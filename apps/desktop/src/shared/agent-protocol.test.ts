@@ -147,4 +147,109 @@ describe("parseHermanEventFromNotify", () => {
     const event = parseHermanEventFromNotify(payload);
     expect(event?.type === "models_sync" && event.modelMetadata).toBeUndefined();
   });
+
+  it("parses a full context_report event", () => {
+    const payload = JSON.stringify({
+      type: "herman/context_report",
+      schema: 1,
+      modelKey: "anthropic/claude-sonnet-4.6",
+      context: { tokens: 12_345, contextWindow: 200_000, percent: 6.17 },
+      totals: {
+        input: 1000,
+        output: 200,
+        cacheRead: 50,
+        cacheWrite: 25,
+        reasoning: 30,
+        cost: 0.0123,
+      },
+      lastUsage: {
+        input: 500,
+        output: 100,
+        cacheRead: 25,
+        cacheWrite: 0,
+        reasoning: 10,
+        totalTokens: 625,
+        cost: { input: 0.005, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.006 },
+      },
+      currentTurn: { output: 42, startedAt: 1700000000000, messageId: "m1" },
+      isCompacted: false,
+      isStreaming: true,
+      updatedAt: 1700000001000,
+    });
+    const event = parseHermanEventFromNotify(payload);
+    expect(event).toEqual({
+      type: "herman/context_report",
+      schema: 1,
+      modelKey: "anthropic/claude-sonnet-4.6",
+      context: { tokens: 12_345, contextWindow: 200_000, percent: 6.17 },
+      totals: {
+        input: 1000,
+        output: 200,
+        cacheRead: 50,
+        cacheWrite: 25,
+        reasoning: 30,
+        cost: 0.0123,
+      },
+      lastUsage: {
+        input: 500,
+        output: 100,
+        cacheRead: 25,
+        cacheWrite: 0,
+        reasoning: 10,
+        totalTokens: 625,
+        cost: { input: 0.005, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.006 },
+      },
+      currentTurn: { output: 42, startedAt: 1700000000000, messageId: "m1" },
+      isCompacted: false,
+      isStreaming: true,
+      updatedAt: 1700000001000,
+    });
+  });
+
+  it("parses a context_report with null tokens (post-compaction)", () => {
+    const payload = JSON.stringify({
+      type: "herman/context_report",
+      schema: 1,
+      modelKey: "anthropic/claude-sonnet-4.6",
+      context: { tokens: null, contextWindow: 200_000, percent: null },
+      totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 0 },
+      isCompacted: true,
+      isStreaming: false,
+      updatedAt: 1700000001000,
+    });
+    const event = parseHermanEventFromNotify(payload);
+    expect(event).toMatchObject({
+      type: "herman/context_report",
+      context: { tokens: null, percent: null },
+      isCompacted: true,
+    });
+  });
+
+  it("ignores context_report with wrong schema", () => {
+    const payload = JSON.stringify({
+      type: "herman/context_report",
+      schema: 99,
+      modelKey: "x",
+      context: { tokens: 0, contextWindow: 100, percent: 0 },
+      totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 0 },
+      isCompacted: false,
+      isStreaming: false,
+      updatedAt: 0,
+    });
+    expect(parseHermanEventFromNotify(payload)).toBeUndefined();
+  });
+
+  it("ignores context_report missing required fields", () => {
+    const payload = JSON.stringify({
+      type: "herman/context_report",
+      schema: 1,
+      // missing modelKey
+      context: { tokens: 0, contextWindow: 100, percent: 0 },
+      totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 0 },
+      isCompacted: false,
+      isStreaming: false,
+      updatedAt: 0,
+    });
+    expect(parseHermanEventFromNotify(payload)).toBeUndefined();
+  });
 });

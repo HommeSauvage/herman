@@ -28,17 +28,22 @@ type ProjectManifest = {
 
 type PreviewPaneProps = {
   folderPath: string;
+  tabId?: string;
+  isWorktree?: boolean;
   onPublish?: () => void;
 };
 
-export function PreviewPane({ folderPath, onPublish }: PreviewPaneProps) {
+export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: PreviewPaneProps) {
   const [manifest, setManifest] = useState<ProjectManifest | null>(null);
   const [manifestLoading, setManifestLoading] = useState(true);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [applyState, setApplyState] = useState<"idle" | "working">("idle");
+  const [sessionChanges, setSessionChanges] = useState<number>(0);
   const [deviceMode, setDeviceMode] = useState<DeviceMode>("desktop");
-  const [iframeKey, setIframeKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Load herman.json when folderPath changes
@@ -54,6 +59,7 @@ export function PreviewPane({ folderPath, onPublish }: PreviewPaneProps) {
     setManifest(null);
     setPreviewUrl(null);
     setIsRunning(false);
+    setStartError(null);
 
     desktopRpc.request
       .getProjectManifest({ folderPath })
@@ -72,10 +78,21 @@ export function PreviewPane({ folderPath, onPublish }: PreviewPaneProps) {
     };
   }, [folderPath]);
 
+  useEffect(() => {
+    if (!tabId || !isWorktree) {
+      setSessionChanges(0);
+      return;
+    }
+    void desktopRpc.request.getSessionChanges({ tabId }).then((state) => {
+      setSessionChanges(state.changedFiles);
+    });
+  }, [tabId, isWorktree]);
+
   const handleStartPreview = useCallback(async () => {
     if (!manifest) return;
 
     setIsStarting(true);
+    setStartError(null);
     try {
       const status = await desktopRpc.request.getPreviewStatus({ folderPath });
       if (status.running && status.url) {
@@ -96,15 +113,55 @@ export function PreviewPane({ folderPath, onPublish }: PreviewPaneProps) {
         setIsRunning(true);
       }
     } catch (err) {
-      console.error("Failed to start preview:", err);
+      const message = err instanceof Error ? err.message : "Failed to start preview server";
+      setStartError(message);
     } finally {
       setIsStarting(false);
     }
   }, [manifest, folderPath]);
 
+  useEffect(() => {
+    if (!manifest || !folderPath) return;
+    void handleStartPreview();
+  }, [manifest, folderPath, handleStartPreview]);
+
   const handleRefresh = useCallback(() => {
-    setIframeKey((k) => k + 1);
-  }, []);
+    if (!manifest) return;
+    setIsRestarting(true);
+    setStartError(null);
+    void desktopRpc.request
+      .restartPreview({
+        folderPath,
+        devCommand: manifest.devCommand,
+        devPort: manifest.devPort,
+      })
+      .then((result) => {
+        if (result.url) {
+          setPreviewUrl(result.url);
+          setIsRunning(true);
+        }
+      })
+      .catch((err) => {
+        setStartError(err instanceof Error ? err.message : "Failed to restart preview");
+      })
+      .finally(() => setIsRestarting(false));
+  }, [manifest, folderPath]);
+
+  const handleApplySession = useCallback(() => {
+    if (!tabId) return;
+    setApplyState("working");
+    void desktopRpc.request
+      .applySession({ tabId })
+      .finally(() => setApplyState("idle"));
+  }, [tabId]);
+
+  const handleDiscardSession = useCallback(() => {
+    if (!tabId) return;
+    setApplyState("working");
+    void desktopRpc.request
+      .discardSession({ tabId })
+      .finally(() => setApplyState("idle"));
+  }, [tabId]);
 
   const handleOpenExternal = useCallback(() => {
     if (previewUrl) {
@@ -146,10 +203,11 @@ export function PreviewPane({ folderPath, onPublish }: PreviewPaneProps) {
               {/* Refresh */}
               <button
                 onClick={handleRefresh}
-                aria-label="Refresh preview"
+                aria-label="Restart server"
                 className="text-ghost hover:text-dim flex h-7 w-7 items-center justify-center rounded-lg transition hover:bg-white/[0.04]"
+                title="Restart server"
               >
-                <RefreshCw size={13} />
+                {isRestarting ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
               </button>
             </>
           )}
@@ -182,6 +240,30 @@ export function PreviewPane({ folderPath, onPublish }: PreviewPaneProps) {
         </div>
       </div>
 
+      {isWorktree && (
+        <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] bg-white/[0.02] px-3 py-2">
+          <p className="text-ghost text-xs">
+            Working in a safe draft copy{sessionChanges > 0 ? ` · ${sessionChanges} file(s) changed` : ""}.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleDiscardSession}
+              disabled={applyState === "working"}
+              className="text-ghost hover:text-dim rounded-md border border-white/[0.08] px-2 py-1 text-xs disabled:opacity-50"
+            >
+              Discard
+            </button>
+            <button
+              onClick={handleApplySession}
+              disabled={applyState === "working"}
+              className="bg-signal hover:bg-signal-dim rounded-md px-2 py-1 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              Save to my project
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Preview area */}
       <div className="flex flex-1 items-start justify-center overflow-auto p-4">
         {manifestLoading ? (
@@ -194,13 +276,22 @@ export function PreviewPane({ folderPath, onPublish }: PreviewPaneProps) {
             <Loader2 size={22} className="text-signal animate-spin" />
             <p className="text-dim text-sm">Starting preview server…</p>
           </div>
+        ) : startError ? (
+          <div className="flex flex-col items-center gap-3 pt-20">
+            <p className="text-dim text-sm">{startError}</p>
+            <button
+              onClick={handleStartPreview}
+              className="bg-signal hover:bg-signal-dim rounded-lg px-3 py-1.5 text-xs font-semibold text-primary-foreground"
+            >
+              Try again
+            </button>
+          </div>
         ) : previewUrl ? (
           <div
             className="overflow-hidden rounded-lg border border-white/[0.08] shadow-2xl shadow-black/60 transition-all duration-300"
             style={{ width: deviceWidth }}
           >
             <iframe
-              key={iframeKey}
               ref={iframeRef}
               src={previewUrl}
               className="block w-full bg-white"
@@ -213,24 +304,16 @@ export function PreviewPane({ folderPath, onPublish }: PreviewPaneProps) {
             />
           </div>
         ) : manifest ? (
-          /* Has manifest but not started — show start button */
           <div className="flex flex-col items-center gap-4 pt-20">
             <div className="text-dim flex h-16 w-16 items-center justify-center rounded-2xl bg-white/[0.02]">
               <Play size={26} strokeWidth={1.5} />
             </div>
             <div className="text-center">
-              <p className="text-dim text-sm">Ready to preview</p>
+              <p className="text-dim text-sm">Starting preview automatically…</p>
               <p className="text-ghost mt-1 text-xs">
-                Start the dev server to see your site live.
+                This can take a bit on first run.
               </p>
             </div>
-            <button
-              onClick={handleStartPreview}
-              className="bg-signal hover:bg-signal-dim flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-[0_0_16px_rgba(34,197,94,0.18)] transition hover:shadow-[0_0_24px_rgba(34,197,94,0.28)] active:scale-[0.97]"
-            >
-              <Play size={14} />
-              Start Preview
-            </button>
           </div>
         ) : (
           /* No manifest — project not created from a template */

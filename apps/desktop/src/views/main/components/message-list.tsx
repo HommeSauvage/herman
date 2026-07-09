@@ -17,6 +17,8 @@ import { MessageItem } from "./message-item.js";
 import { NativeAdMessage } from "./native-ad-message.js";
 import { ThinkingRow } from "./thinking-row.js";
 
+const EMPTY_THINKING: Message[] = [];
+
 export function MessageList({
   messages,
   isThinking,
@@ -37,6 +39,19 @@ export function MessageList({
     ),
   );
   const isHermanProvider = useIsHermanProvider();
+
+  // ---- Show thinking (per-tab) -----------------------------------------
+
+  const { showThinking, thinkingMessages } = useAgentStore(
+    useShallow((s) => {
+      if (!tabId) return { showThinking: false, thinkingMessages: EMPTY_THINKING };
+      const tab = s.tabs[tabId];
+      return {
+        showThinking: tab?.showThinking ?? false,
+        thinkingMessages: tab?.showThinking ? tab?.thinkingMessages ?? EMPTY_THINKING : EMPTY_THINKING,
+      };
+    }),
+  );
 
   // ---- Visible messages (respect revert boundary) ----------------------
 
@@ -104,7 +119,7 @@ export function MessageList({
   // ---- Render items ---------------------------------------------------
 
   const rawItems = useMemo(() => {
-    const items = computeRenderItems(visibleMessages);
+    const items = computeRenderItems(visibleMessages, thinkingMessages, showThinking);
     // Attach revert props to eligible user messages.
     for (const item of items) {
       if (
@@ -117,16 +132,17 @@ export function MessageList({
       }
     }
     return items;
-  }, [visibleMessages, revertableIds, handleRevert]);
+  }, [visibleMessages, revertableIds, handleRevert, thinkingMessages, showThinking]);
   const items = useStableRenderItems(rawItems);
 
   const visibleNativeAds = isHermanProvider ? nativeAds : [];
 
-  // Only show thinking shimmer before the first assistant message.
+  // Only show the generic "Thinking" shimmer when we are not already
+  // rendering the live thinking stream and before the first assistant message.
   const hasAssistantMessage = visibleMessages.some(
     (m) => m.role === "assistant",
   );
-  const showThinking = isThinking && !hasAssistantMessage;
+  const showThinkingRow = isThinking && !hasAssistantMessage && !showThinking;
 
   // ---- Render ---------------------------------------------------------
 
@@ -161,7 +177,7 @@ export function MessageList({
           </motion.div>
         ),
       )}
-      {showThinking && <ThinkingRow />}
+      {showThinkingRow && <ThinkingRow />}
       {tabId &&
         visibleNativeAds.map((campaign, index) => (
           <NativeAdMessage

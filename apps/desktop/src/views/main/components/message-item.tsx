@@ -106,8 +106,40 @@ export const MessageItem = memo(function MessageItem({
     );
   }
 
+  if (message.role === "thinking") {
+    return <ThinkingMessage message={message} />;
+  }
+
   return <AssistantMessage message={message} />;
 });
+
+function ThinkingMessage({
+  message,
+}: {
+  message: Extract<Message, { role: "thinking" }>;
+}) {
+  const isStreaming = !!message.isStreaming;
+  const content = useStreamingTextThrottle(message.content, isStreaming);
+
+  return (
+    <div
+      data-component="thinking-message"
+      className="text-dim group/thinking min-w-0 text-sm leading-relaxed"
+    >
+      <div className="text-ghost mb-1 text-xs font-medium">Thinking</div>
+      <div className="border-l-2 border-white/[0.06] pl-3">
+        <div className="whitespace-pre-wrap break-words">{content}</div>
+        {isStreaming && (
+          <span
+            data-slot="streaming-cursor"
+            className="bg-signal ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[0.1em] rounded-full align-baseline"
+            aria-hidden
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
 const proseClasses =
   "[&_pre]:relative [&_pre]:my-3 [&_pre]:overflow-hidden [&_pre]:rounded-lg " +

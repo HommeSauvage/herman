@@ -19,6 +19,7 @@
     "@bacnh85/pi-fff": "^0.7.0",
     "@earendil-works/pi-agent-core": "catalog:",
     "@earendil-works/pi-coding-agent": "catalog:",
+    "@herman/pi-context-reporter": "workspace:*",
     "@herman/rpc": "workspace:*",
     "arkenv": "catalog:",
     "arktype": "catalog:",

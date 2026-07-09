@@ -25,6 +25,17 @@ const item = {
   show: { opacity: 1, y: 0 },
 };
 
+export function HydrationPendingState() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+      <div className="flex max-w-md flex-col items-center gap-4">
+        <div className="h-8 w-8 animate-pulse rounded-full bg-white/[0.08]" />
+        <p className="text-sm text-dim">...</p>
+      </div>
+    </div>
+  );
+}
+
 export function EmptyState() {
   const activeTabId = useAgentStore((s) => s.activeTabId);
 

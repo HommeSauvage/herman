@@ -10,7 +10,7 @@ import { config } from "./env.js";
 export async function configureLogging(): Promise<void> {
   const consoleSink = redactByField(
     getConsoleSink({
-      formatter: getPrettyFormatter({ properties: true }),
+      formatter: getPrettyFormatter({ properties: true, timestamp: 'time' }),
       nonBlocking: true,
     }),
     {

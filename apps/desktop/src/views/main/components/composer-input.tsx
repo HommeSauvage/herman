@@ -6,6 +6,7 @@ type ComposerInputProps = {
   onInput: (textarea: HTMLTextAreaElement) => void;
   onBlur: () => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onPaste?: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 };
 
 function adjustHeight(target: HTMLTextAreaElement) {
@@ -19,6 +20,7 @@ export const ComposerInput = memo(function ComposerInput({
   onInput,
   onBlur,
   onKeyDown,
+  onPaste,
 }: ComposerInputProps) {
   return (
     <textarea
@@ -29,6 +31,7 @@ export const ComposerInput = memo(function ComposerInput({
         adjustHeight(event.currentTarget);
         onInput(event.currentTarget);
       }}
+      onPaste={onPaste}
       onBlur={onBlur}
       onKeyDown={onKeyDown}
       placeholder="Ask Herman anything… (@ for files)"

@@ -107,12 +107,14 @@ async function createManager() {
     serverUrl: "http://localhost:4000",
     getToken: async () => undefined,
     getHermanEnabled: () => true,
+    getMode: () => "normal",
     webviewRpc: {
       send: {
         agentEvent: () => {},
         agentStatusChanged: () => {},
         tabFolderChanged: () => {},
         sessionsChanged: () => {},
+        tabMessagesHydrated: () => {},
       },
     },
   });

@@ -7,7 +7,7 @@ import { useAutoScroll } from "../hooks/use-auto-scroll.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { useIsHermanProvider } from "../lib/model-utils.js";
 import { ConnectionErrorBanner } from "./connection-error-banner.js";
-import { EmptyState } from "./empty-state.js";
+import { EmptyState, HydrationPendingState } from "./empty-state.js";
 import { ErrorBanner } from "./error-banner.js";
 import { MessageList } from "./message-list.js";
 import { ProgressBar } from "./progress-bar.js";
@@ -33,12 +33,14 @@ export function ChatView() {
     connectionState,
     connectionError,
     retryState,
+    messagesHydrationStatus,
   } = useAgentStore(
     useShallow((s) => {
       const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
       return {
         activeTabId: s.activeTabId,
         messages: tab?.messages ?? EMPTY_MESSAGES,
+        messagesHydrationStatus: tab?.messagesHydrationStatus,
         revertMessageId: tab?.revertMessageId,
         revertDiffSummary: tab?.revertDiffSummary,
         isThinking: tab?.isThinking ?? false,
@@ -111,7 +113,11 @@ export function ChatView() {
               transition={{ duration: 0.12 }}
             >
               {messages.length === 0 ? (
-                <EmptyState />
+                messagesHydrationStatus === "pending" ? (
+                  <HydrationPendingState />
+                ) : (
+                  <EmptyState />
+                )
               ) : (
                 <MessageList
                   messages={messages}

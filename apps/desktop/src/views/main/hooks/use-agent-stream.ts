@@ -3,13 +3,13 @@ import { flushSync } from "react-dom";
 
 import type { AdCampaign, AgentEvent } from "../../../shared/agent-protocol.js";
 import { isContextTool } from "../../../shared/context-tools.js";
-import type { AgentStatus, TabId } from "../../../shared/rpc.js";
+import type { AgentStatus, TabId, TabMessagesHydrated } from "../../../shared/rpc.js";
 import { retryAgent } from "../lib/agent-actions.js";
 import { isTabAgentRunning, useAgentStore, useAppStore } from "../lib/agent-store.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 
 const FAST_POLL_MS = 120;
-const IDLE_POLL_MS = 600;
+const IDLE_POLL_MS = 2000;
 
 /**
  * Tool output updates can arrive at very high frequency while a tool is
@@ -74,11 +74,21 @@ function processAgentEvent(tabId: TabId, event: AgentEvent) {
   // message, or tool-end event is applied.
   flushToolUpdates(tabId);
 
+  const showThinking = useAgentStore.getState().tabs[tabId]?.showThinking ?? false;
+
+  let assistantEventType: string | undefined;
+  if (event.type === "message_update") {
+    assistantEventType = (event.assistantMessageEvent as { type?: string })?.type;
+  }
+
   const needsFlush =
     event.type === "message_start" ||
     event.type === "message_end" ||
-    (event.type === "message_update" &&
-      (event.assistantMessageEvent as { type?: string })?.type === "text_delta");
+    assistantEventType === "text_delta" ||
+    (showThinking &&
+      (assistantEventType === "thinking_start" ||
+        assistantEventType === "thinking_delta" ||
+        assistantEventType === "thinking_end"));
 
   if (needsFlush) {
     flushSync(() => {
@@ -115,13 +125,10 @@ function isActivelyStreaming(tab: {
 /**
  * Poll the main process for the authoritative tab state.
  *
- * Instead of replaying individual buffered events (which requires complex
- * dedup and can create duplicate messages when the webview reloads), every
- * poll cycle fetches the full tab from the main process.  The main process
- * is the single source of truth for message order and lifecycle flags.
- *
- * Poll speed is adaptive: fast (120 ms) while the tab is actively streaming
- * so the UI catches missed deltas quickly; slow (600 ms) while idle.
+ * The main process owns message snapshots after resume hydration. Live
+ * streaming still applies via `agentEvent`, but idle tabs — especially
+ * after reopen — rely on polling or `tabMessagesHydrated` to pick up the
+ * hydrated history.
  */
 function useAgentEventPolling() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -152,20 +159,25 @@ function useAgentEventPolling() {
       const streaming = isActivelyStreaming(tab);
 
       try {
-        // Replace the renderer's messages with the main process's version.
-        // The main process processes every agent event synchronously and is
-        // the authoritative source — no individual event replay, no dedup.
         const { tabs: freshTabs } = await desktopRpc.request.getTabs();
         const freshTab = freshTabs.find((t) => t.id === activeTabId);
         if (freshTab) {
           useAgentStore.getState().updateTab(activeTabId, {
-            messages: freshTab.messages,
+            ...(streaming ? {} : { messages: freshTab.messages, contextStats: freshTab.contextStats }),
             isThinking: freshTab.isThinking,
             availableModels: freshTab.availableModels,
             currentModel: freshTab.currentModel,
             connectionError: freshTab.connectionError,
             ...(freshTab.connectionState !== tab.connectionState
               ? { connectionState: freshTab.connectionState }
+              : {}),
+            ...(!streaming &&
+            freshTab.messages.length > 0 &&
+            tab.messagesHydrationStatus !== "success"
+              ? {
+                  messagesHydrationStatus: "success" as const,
+                  messagesHydrationError: undefined,
+                }
               : {}),
           });
         }
@@ -258,13 +270,59 @@ function useAutoRetry() {
   }, []);
 }
 
+function useMessageHydrationRetry() {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    const onHydrated = (payload: TabMessagesHydrated) => {
+      useAgentStore.getState().applyMessagesHydration(
+        payload.tabId,
+        payload.status,
+        payload.messages,
+        payload.error,
+        payload.contextStats,
+      );
+
+      if (payload.status !== "failed") return;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        void desktopRpc.request
+          .retryTabMessageHydration({ tabId: payload.tabId })
+          .then((result) => {
+            useAgentStore.getState().applyMessagesHydration(
+              result.tabId,
+              result.status,
+              result.messages,
+              result.error,
+              result.contextStats,
+            );
+          })
+          .catch(() => {
+            // Best-effort retry.
+          });
+      }, 500);
+    };
+
+    desktopRpc.addMessageListener("tabMessagesHydrated", onHydrated);
+    return () => {
+      desktopRpc.removeMessageListener("tabMessagesHydrated", onHydrated);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+}
+
 export function useAgentStream() {
   const session = useAppStore((s) => s.session);
   const activeTabId = useAgentStore((s) => s.activeTabId);
+  const activeTabConnectionState = useAgentStore((s) =>
+    s.activeTabId ? s.tabs[s.activeTabId]?.connectionState : undefined,
+  );
+  const lastSyncedRef = useRef<string | undefined>(undefined);
 
   useAgentEventPolling();
   useThinkingTimeout();
   useAutoRetry();
+  useMessageHydrationRetry();
 
   useEffect(() => {
     const listener = ({ tabId, event }: { tabId: TabId; event: AgentEvent }) => {
@@ -320,13 +378,23 @@ export function useAgentStream() {
 
   useEffect(() => {
     if (!session || !activeTabId) return;
+    if (activeTabConnectionState !== "running") return;
 
-    if (!isTabAgentRunning(activeTabId)) return;
+    const syncKey = `${activeTabId}:running`;
+    if (lastSyncedRef.current === syncKey) return;
+    lastSyncedRef.current = syncKey;
 
     void desktopRpc.request
       .agentRequest({ tabId: activeTabId, command: { type: "get_state" } })
       .catch(() => {
         // Best-effort: the polling fallback keeps the tab state in sync.
       });
-  }, [session, activeTabId]);
+  }, [session, activeTabId, activeTabConnectionState]);
+
+  useEffect(() => {
+    if (!activeTabId) return;
+    if (!isTabAgentRunning(activeTabId)) {
+      lastSyncedRef.current = undefined;
+    }
+  }, [activeTabId, activeTabConnectionState]);
 }

@@ -1,0 +1,42 @@
+{
+  "name": "@herman/pi-context-reporter",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Pi extension that streams live context-window and token-usage data to the Herman desktop app.",
+  "license": "UNLICENSED",
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "pi-package",
+    "context",
+    "tokens",
+    "herman"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./payload": "./src/payload.ts"
+  },
+  "files": [
+    "src/"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "catalog:",
+    "@herman/tsconfig": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

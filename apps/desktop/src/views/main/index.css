@@ -86,6 +86,23 @@ body {
   animation: signal-pulse 3s ease-in-out infinite;
 }
 
+/* Small, fast pulse for the fuel gauge's streaming indicator */
+@keyframes fuel-gauge-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.7);
+  }
+}
+
+.fuel-gauge-pulse {
+  animation: fuel-gauge-pulse 1.2s ease-in-out infinite;
+}
+
 @keyframes fade-in-up {
   from {
     opacity: 0;

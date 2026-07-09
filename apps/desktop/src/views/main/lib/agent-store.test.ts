@@ -204,6 +204,8 @@ describe("isTabWorking", () => {
       projectColor: "#000000",
       messages: [],
       isThinking: false,
+      showThinking: false,
+      thinkingMessages: [],
       availableModels: [],
       connectionState: "idle",
       createdAt: 0,
@@ -956,50 +958,59 @@ describe("native ads", () => {
 
 
 describe("context stats", () => {
-  it("computes context stats when messages arrive", () => {
+  it("initializes context stats from the current model on tab create", () => {
     const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().setModels(id, "anthropic/claude-sonnet-4.6", [
+      "anthropic/claude-sonnet-4.6",
+    ]);
     useAgentStore.getState().appendUserMessage(id, "hello");
     useAgentStore.getState().startAssistantMessage(id);
     useAgentStore.getState().appendAssistantDelta(id, "Hi there");
     useAgentStore.getState().finalizeAssistantMessage(id);
 
     const stats = useAgentStore.getState().tabs[id]?.contextStats;
+    // The desktop no longer derives context stats from the message list
+    // — it waits for the agent's `herman/context_report` event. The
+    // placeholder keeps the shape stable so the UI can render against
+    // message counts immediately.
     expect(stats).toBeDefined();
     expect(stats?.messageCount).toBe(2);
     expect(stats?.userMessageCount).toBe(1);
     expect(stats?.assistantMessageCount).toBe(1);
-    expect(stats?.totalTokens).toBeGreaterThan(0);
+    expect(stats?.totalTokens).toBe(0);
+    expect(stats?.modelId).toBe("claude-sonnet-4.6");
   });
 
-  it("updates context stats from message usage", () => {
+  it("updates context stats from a live context_report event", () => {
     const id = useAgentStore.getState().createTab("/project");
     useAgentStore.getState().recordAgentEvent(id, {
-      type: "message_start",
-      message: { role: "assistant" },
-    });
-    useAgentStore.getState().recordAgentEvent(id, {
-      type: "message_update",
-      message: {},
-      assistantMessageEvent: { type: "text_delta", delta: "Hello" },
-    });
-    useAgentStore.getState().recordAgentEvent(id, {
-      type: "message_end",
-      message: {
-        stopReason: "stop",
-        usage: {
-          input: 100,
-          output: 50,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 150,
-        },
+      type: "herman/context_report",
+      schema: 1,
+      modelKey: "anthropic/claude-sonnet-4.6",
+      context: { tokens: 12_345, contextWindow: 200_000, percent: 6.17 },
+      totals: {
+        input: 1000,
+        output: 200,
+        cacheRead: 50,
+        cacheWrite: 25,
+        reasoning: 30,
+        cost: 0.0123,
       },
+      isCompacted: false,
+      isStreaming: true,
+      updatedAt: 0,
     });
 
     const stats = useAgentStore.getState().tabs[id]?.contextStats;
-    expect(stats?.totalTokens).toBe(150);
-    expect(stats?.inputTokens).toBe(100);
-    expect(stats?.outputTokens).toBe(50);
+    expect(stats?.totalTokens).toBe(12_345);
+    expect(stats?.contextLimit).toBe(200_000);
+    expect(stats?.inputTokens).toBe(1000);
+    expect(stats?.outputTokens).toBe(200);
+    expect(stats?.cacheReadTokens).toBe(50);
+    expect(stats?.cacheWriteTokens).toBe(25);
+    expect(stats?.reasoningTokens).toBe(30);
+    expect(stats?.estimatedCost).toBe(0.0123);
+    expect(stats?.isStreaming).toBe(true);
   });
 
   it("resets context stats when the tab is cleared", () => {
@@ -1012,7 +1023,9 @@ describe("context stats", () => {
     expect(stats?.messageCount).toBe(0);
   });
 
-  it("uses agent-reported context usage when available", () => {
+  it("ignores legacy context_usage events in favor of context_report", () => {
+    // Legacy event from older agents (pre-`@herman/pi-context-reporter`).
+    // The handler is a no-op — the live report owns the truth.
     const id = useAgentStore.getState().createTab("/project");
     useAgentStore.getState().recordAgentEvent(id, {
       type: "herman/context_usage",
@@ -1021,8 +1034,49 @@ describe("context stats", () => {
       percent: 0.48,
     });
 
+    // No `contextStats` change should occur.
     const stats = useAgentStore.getState().tabs[id]?.contextStats;
-    expect(stats?.totalTokens).toBe(1234);
-    expect(stats?.contextLimit).toBe(256_000);
+    expect(stats?.totalTokens).toBe(0);
+    expect(stats?.contextLimit).toBe(0);
+  });
+
+  it("marks context as unknown when the report says it is compacted", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().recordAgentEvent(id, {
+      type: "herman/context_report",
+      schema: 1,
+      modelKey: "anthropic/claude-sonnet-4.6",
+      context: { tokens: null, contextWindow: 200_000, percent: null },
+      totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 0 },
+      isCompacted: true,
+      isStreaming: false,
+      updatedAt: 0,
+    });
+
+    const stats = useAgentStore.getState().tabs[id]?.contextStats;
+    expect(stats?.totalTokens).toBe(0);
+    expect(stats?.isCompacted).toBe(true);
+  });
+
+  it("applyMessagesHydration replaces the tab message snapshot authoritatively", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().applyMessagesHydration(
+      id,
+      "success",
+      [{ id: "m1", role: "user", content: "hello" }],
+    );
+
+    const tab = useAgentStore.getState().tabs[id];
+    expect(tab?.messages).toEqual([{ id: "m1", role: "user", content: "hello" }]);
+    expect(tab?.messagesHydrationStatus).toBe("success");
+    expect(tab?.thinkingMessages).toEqual([]);
+  });
+
+  it("restoreTabs marks folder-backed tabs as pending hydration when messages are empty", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    const tab = useAgentStore.getState().tabs[id];
+    useAgentStore.getState().restoreTabs([{ ...tab, messages: [] }], id);
+
+    expect(useAgentStore.getState().tabs[id]?.messagesHydrationStatus).toBe("pending");
   });
 });

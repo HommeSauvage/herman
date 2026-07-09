@@ -101,6 +101,15 @@ function eventMessageRole(message: unknown): string | undefined {
   return undefined;
 }
 
+function eventMessageId(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  const value = (message as { id?: unknown; messageId?: unknown }).id;
+  if (typeof value === "string" && value.length > 0) return value;
+  const alt = (message as { id?: unknown; messageId?: unknown }).messageId;
+  if (typeof alt === "string" && alt.length > 0) return alt;
+  return undefined;
+}
+
 function normalizeAgentRole(role: string | undefined): string | undefined {
   // The agent emits tool results with role "toolResult", but the desktop
   // stores them as "tool" messages. Treat the two as equivalent when
@@ -181,7 +190,12 @@ export function applyAgentEventToMessages(messages: Message[], event: AgentEvent
       if (msg?.role === "assistant") {
         return [
           ...messages,
-          { id: createMessageId(), role: "assistant", content: "", isStreaming: true },
+          {
+            id: eventMessageId(event.message) ?? createMessageId(),
+            role: "assistant",
+            content: "",
+            isStreaming: true,
+          },
         ];
       }
       return messages;
@@ -263,7 +277,7 @@ export function applyAgentEventToMessages(messages: Message[], event: AgentEvent
       return [
         ...messages,
         {
-          id: createMessageId(),
+          id: event.toolCallId || createMessageId(),
           role: "tool",
           toolName: event.toolName,
           toolCallId: event.toolCallId,

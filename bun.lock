@@ -16,6 +16,7 @@
     "apps/desktop": {
       "name": "@herman/desktop",
       "dependencies": {
+        "@earendil-works/pi-coding-agent": "catalog:",
         "@fontsource-variable/inter": "catalog:",
         "@herman/agent": "workspace:*",
         "@herman/rpc": "workspace:*",
@@ -66,6 +67,7 @@
         "@bacnh85/pi-fff": "^0.7.0",
         "@earendil-works/pi-agent-core": "catalog:",
         "@earendil-works/pi-coding-agent": "catalog:",
+        "@herman/pi-context-reporter": "workspace:*",
         "@herman/rpc": "workspace:*",
         "arkenv": "catalog:",
         "arktype": "catalog:",
@@ -76,6 +78,20 @@
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
+      },
+    },
+    "packages/pi-context-reporter": {
+      "name": "@herman/pi-context-reporter",
+      "version": "0.0.1",
+      "devDependencies": {
+        "@earendil-works/pi-coding-agent": "catalog:",
+        "@herman/tsconfig": "workspace:*",
+        "@types/bun": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+      "peerDependencies": {
+        "@earendil-works/pi-coding-agent": "*",
       },
     },
     "packages/rpc": {
@@ -438,6 +454,8 @@
     "@herman/agent": ["@herman/agent@workspace:packages/agent"],
 
     "@herman/desktop": ["@herman/desktop@workspace:apps/desktop"],
+
+    "@herman/pi-context-reporter": ["@herman/pi-context-reporter@workspace:packages/pi-context-reporter"],
 
     "@herman/rpc": ["@herman/rpc@workspace:packages/rpc"],
 

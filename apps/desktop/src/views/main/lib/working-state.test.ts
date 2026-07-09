@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { Tab } from "../../../shared/rpc.js";
+import type { Tab } from "./agent-store.js";
 import { deriveStatus } from "../components/status-bar.js";
 import { isTabWorking, useAgentStore } from "./agent-store.js";
 
@@ -12,6 +12,8 @@ function makeTab(overrides: Partial<Tab> = {}): Tab {
     projectColor: "#000000",
     messages: [],
     isThinking: false,
+    showThinking: false,
+    thinkingMessages: [],
     availableModels: [],
     connectionState: "idle",
     createdAt: 0,

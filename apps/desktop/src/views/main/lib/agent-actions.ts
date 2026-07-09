@@ -1,17 +1,30 @@
 import type { TabId } from "../../../shared/rpc.js";
 import { isTabAgentRunning, useAgentStore } from "./agent-store.js";
 import { desktopRpc } from "./desktop-rpc.js";
+import { formatAttachmentsForPrompt } from "./attachment-format.js";
 
 export async function sendPrompt(tabId: TabId, text: string) {
   const store = useAgentStore.getState();
-  store.appendUserMessage(tabId, text);
+  const tab = store.tabs[tabId];
+  // Serialize pending attachments into the prompt text before the
+  // user message is stored / sent.  The agent only ever sees the
+  // final string, so the on-screen chips can stay a UI-only concept.
+  const pendingAttachments = tab?.pendingAttachments ?? [];
+  const message = formatAttachmentsForPrompt(text, pendingAttachments);
+
+  const messageId = store.appendUserMessage(tabId, message);
   store.setComposerValue(tabId, "");
+  // Clear attachments once the prompt is sent — they belong to a
+  // single turn and shouldn't be re-sent on the next one.
+  if (pendingAttachments.length > 0) {
+    store.clearAttachments(tabId);
+  }
   store.setThinking(tabId, true);
 
   try {
     await desktopRpc.request.agentRequest({
       tabId,
-      command: { type: "prompt", message: text },
+      command: { type: "prompt", message, ...(messageId ? { messageId } : {}) },
     });
   } catch (error) {
     store.setConnectionState(tabId, {

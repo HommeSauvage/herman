@@ -3,7 +3,7 @@ import type { AdCampaign, AdEvent, AdPlacement } from "@herman/rpc/ads";
 import type { ModelMetadata } from "./rpc.js";
 
 export type AgentCommand =
-  | { id?: string; type: "prompt"; message: string }
+  | { id?: string; type: "prompt"; message: string; messageId?: string }
   | { id?: string; type: "abort" }
   | { id?: string; type: "get_state" }
   | { id?: string; type: "get_available_models" }
@@ -87,8 +87,58 @@ export type AgentEvent =
       contextWindow: number;
       percent: number | null;
     }
+  | {
+      /**
+       * Live, full context snapshot streamed by the `pi-context-reporter`
+       * extension. Replaces `herman/context_usage` as the source of
+       * truth for context-window / token data. Older agents (without
+       * the extension) keep emitting `herman/context_usage` instead.
+       */
+      type: "herman/context_report";
+      schema: 1;
+      modelKey: string;
+      context: {
+        tokens: number | null;
+        contextWindow: number;
+        percent: number | null;
+      };
+      totals: {
+        input: number;
+        output: number;
+        cacheRead: number;
+        cacheWrite: number;
+        reasoning: number;
+        cost: number;
+      };
+      lastUsage?: ContextReportUsageWire;
+      currentTurn?: {
+        output: number;
+        startedAt: number;
+        messageId?: string;
+      };
+      isCompacted: boolean;
+      isStreaming: boolean;
+      updatedAt: number;
+    }
   | { type: "herman/agent_proxy_error"; error: string; code: string }
   | AdEvent;
+
+/** Wire shape for a single LLM call's `usage`, matching the agent payload. */
+type ContextReportUsageWire = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  reasoning?: number;
+  totalTokens: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+};
 
 export type { AdCampaign, AdEvent, AdPlacement } from "@herman/rpc/ads";
 
@@ -185,7 +235,101 @@ export function parseHermanEventFromNotify(payload: unknown): AgentEvent | undef
     }
   }
 
+  if (event.type === "herman/context_report") {
+    return parseContextReport(event);
+  }
+
   return undefined;
+}
+
+function parseContextReport(event: Record<string, unknown>): AgentEvent | undefined {
+  if (event.schema !== 1) return undefined;
+  if (typeof event.modelKey !== "string") return undefined;
+  const contextRaw = event.context;
+  if (!contextRaw || typeof contextRaw !== "object") return undefined;
+  const context = contextRaw as Record<string, unknown>;
+  const tokens = typeof context.tokens === "number" ? context.tokens : null;
+  const contextWindow = typeof context.contextWindow === "number" ? context.contextWindow : 0;
+  const percent = typeof context.percent === "number" ? context.percent : null;
+
+  const totalsRaw = event.totals;
+  if (!totalsRaw || typeof totalsRaw !== "object") return undefined;
+  const totals = totalsRaw as Record<string, unknown>;
+  const normalizedTotals = {
+    input: numberOr(totals.input, 0),
+    output: numberOr(totals.output, 0),
+    cacheRead: numberOr(totals.cacheRead, 0),
+    cacheWrite: numberOr(totals.cacheWrite, 0),
+    reasoning: numberOr(totals.reasoning, 0),
+    cost: numberOr(totals.cost, 0),
+  };
+
+  const lastUsage = parseContextReportUsage(event.lastUsage);
+  const currentTurnRaw = event.currentTurn;
+  let currentTurn:
+    | { output: number; startedAt: number; messageId?: string }
+    | undefined;
+  if (currentTurnRaw && typeof currentTurnRaw === "object") {
+    const ct = currentTurnRaw as Record<string, unknown>;
+    if (typeof ct.output === "number" && typeof ct.startedAt === "number") {
+      currentTurn = {
+        output: ct.output,
+        startedAt: ct.startedAt,
+        ...(typeof ct.messageId === "string" ? { messageId: ct.messageId } : {}),
+      };
+    }
+  }
+
+  return {
+    type: "herman/context_report",
+    schema: 1,
+    modelKey: event.modelKey,
+    context: { tokens, contextWindow, percent },
+    totals: normalizedTotals,
+    ...(lastUsage ? { lastUsage } : {}),
+    ...(currentTurn ? { currentTurn } : {}),
+    isCompacted: event.isCompacted === true,
+    isStreaming: event.isStreaming === true,
+    updatedAt: typeof event.updatedAt === "number" ? event.updatedAt : Date.now(),
+  };
+}
+
+function parseContextReportUsage(value: unknown): ContextReportUsageWire | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const u = value as Record<string, unknown>;
+  if (
+    typeof u.input !== "number" ||
+    typeof u.output !== "number" ||
+    typeof u.cacheRead !== "number" ||
+    typeof u.cacheWrite !== "number"
+  ) {
+    return undefined;
+  }
+  const costRaw = u.cost;
+  if (!costRaw || typeof costRaw !== "object") return undefined;
+  const c = costRaw as Record<string, unknown>;
+  return {
+    input: u.input,
+    output: u.output,
+    cacheRead: u.cacheRead,
+    cacheWrite: u.cacheWrite,
+    ...(typeof u.reasoning === "number" ? { reasoning: u.reasoning } : {}),
+    totalTokens:
+      typeof u.totalTokens === "number"
+        ? u.totalTokens
+        : u.input + u.output + u.cacheRead + u.cacheWrite,
+    cost: {
+      input: numberOr(c.input, 0),
+      output: numberOr(c.output, 0),
+      cacheRead: numberOr(c.cacheRead, 0),
+      cacheWrite: numberOr(c.cacheWrite, 0),
+      total: numberOr(c.total, 0),
+    },
+  };
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 type ModelMetadataMap = Record<string, ModelMetadata>;

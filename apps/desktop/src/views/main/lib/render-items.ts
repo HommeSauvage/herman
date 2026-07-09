@@ -4,6 +4,7 @@ import type { Message } from "../../../shared/rpc.js";
 import { isContextTool } from "../lib/tool-info.js";
 
 type ToolMessage = Extract<Message, { role: "tool" }>;
+type ThinkingMessage = Extract<Message, { role: "thinking" }>;
 
 export type RenderItem =
   | {
@@ -15,15 +16,40 @@ export type RenderItem =
     }
   | { type: "context-group"; key: string; tools: ToolMessage[] };
 
+function groupThinkingByParent(
+  thinkingMessages: Message[],
+  showThinking: boolean,
+): Map<string, ThinkingMessage[]> {
+  const map = new Map<string, ThinkingMessage[]>();
+  if (!showThinking) return map;
+  for (const message of thinkingMessages) {
+    if (message.role !== "thinking" || !message.parentId) continue;
+    const list = map.get(message.parentId);
+    if (list) {
+      list.push(message);
+    } else {
+      map.set(message.parentId, [message]);
+    }
+  }
+  return map;
+}
+
 /**
  * Compute render items from a flat message array.
  *
  * Groups consecutive context tools (read, glob, grep, list) into a single
- * ContextToolGroup.  Skips empty assistant messages that never received text.
+ * ContextToolGroup.  Skips empty assistant messages that never received text,
+ * but renders visible thinking blocks before the assistant response that owns
+ * them.
  */
-export function computeRenderItems(messages: Message[]): RenderItem[] {
+export function computeRenderItems(
+  messages: Message[],
+  thinkingMessages: Message[] = [],
+  showThinking = false,
+): RenderItem[] {
   const items: RenderItem[] = [];
   let buffer: ToolMessage[] = [];
+  const thinkingByParent = groupThinkingByParent(thinkingMessages, showThinking);
 
   const flush = () => {
     if (buffer.length === 0) return;
@@ -45,11 +71,25 @@ export function computeRenderItems(messages: Message[]): RenderItem[] {
     buffer = [];
   };
 
+  const appendThinkingFor = (parentId: string) => {
+    const thinkings = thinkingByParent.get(parentId);
+    if (!thinkings) return;
+    for (const thinking of thinkings) {
+      items.push({ type: "message", key: thinking.id, message: thinking });
+    }
+  };
+
   for (const message of messages) {
     if (message.role === "tool" && isContextTool(message.toolName)) {
       buffer.push(message);
       continue;
     }
+
+    const hasVisibleThinking =
+      message.role === "assistant" && thinkingByParent.has(message.id);
+
+    // Empty non-streaming assistant with no errors — usually skip it, but if
+    // it owns visible thinking blocks, render those blocks instead.
     if (
       message.role === "assistant" &&
       !message.content &&
@@ -58,9 +98,33 @@ export function computeRenderItems(messages: Message[]): RenderItem[] {
       message.stopReason !== "error" &&
       message.stopReason !== "aborted"
     ) {
+      if (hasVisibleThinking) {
+        flush();
+        appendThinkingFor(message.id);
+      }
       continue;
     }
+
+    // Empty streaming assistant with visible thinking: show the thinking blocks
+    // now and skip the placeholder "…" until text starts arriving.
+    if (
+      message.role === "assistant" &&
+      !message.content &&
+      message.isStreaming &&
+      !message.errorMessage &&
+      message.stopReason !== "error" &&
+      message.stopReason !== "aborted" &&
+      hasVisibleThinking
+    ) {
+      flush();
+      appendThinkingFor(message.id);
+      continue;
+    }
+
     flush();
+    if (message.role === "assistant" && hasVisibleThinking) {
+      appendThinkingFor(message.id);
+    }
     items.push({
       type: "message",
       key: message.id,
@@ -118,6 +182,13 @@ export function isRenderItemUnchanged(a: RenderItem, b: RenderItem): boolean {
       am.toolCallId === bm.toolCallId &&
       am.status === bm.status &&
       am.output === bm.output
+    );
+  }
+
+  if (am.role === "thinking" && bm.role === "thinking") {
+    return (
+      am.content === bm.content &&
+      am.isStreaming === bm.isStreaming
     );
   }
 

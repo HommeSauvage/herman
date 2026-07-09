@@ -1,6 +1,6 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/tooltip";
 import { cn } from "@herman/ui/lib/utils";
-import { LayoutGrid, Plus, PanelRightClose, PanelRightOpen, X } from "lucide-react";
+import { LayoutGrid, Plus, PanelRightClose, PanelRightOpen, X, Brain, Eye, EyeOff } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { useEffect, useRef } from "react";
 
@@ -72,6 +72,63 @@ function SidebarToggle() {
     >
       {sidebarOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
     </CommandButton>
+  );
+}
+
+function ShowThinkingToggle() {
+  const activeTabId = useAgentStore((s) => s.activeTabId);
+  const view = useAgentStore((s) => s.ui.view);
+  const showThinking = useAgentStore((s) =>
+    s.activeTabId ? (s.tabs[s.activeTabId]?.showThinking ?? false) : false,
+  );
+  const setShowThinking = useAgentStore((s) => s.setShowThinking);
+
+  if (view !== "session" || !activeTabId) return null;
+
+  const handleClick = () => setShowThinking(activeTabId, !showThinking);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={handleClick}
+            className={cn(
+              "electrobun-webkit-app-region-no-drag relative h-8 w-8 rounded-lg p-1 transition active:scale-[0.96]",
+              showThinking
+                ? "bg-white/[0.08] text-text shadow-[0_1px_2px_rgba(0,0,0,0.25)]"
+                : "text-faint hover:bg-white/[0.06] hover:text-text",
+            )}
+            aria-label={showThinking ? "Hide thinking" : "Show thinking"}
+          >
+            <span className="relative flex h-full w-full">
+              <Brain
+                size={12}
+                className="absolute top-0 right-0 z-0"
+                strokeWidth={1.5}
+              />
+              {showThinking ? (
+                <Eye
+                  size={16}
+                  className="absolute bottom-0 left-0 z-10"
+                  strokeWidth={2}
+                />
+              ) : (
+                <EyeOff
+                  size={16}
+                  className="absolute bottom-0 left-0 z-10"
+                  strokeWidth={2}
+                />
+              )}
+            </span>
+          </button>
+        }
+      />
+      <TooltipContent side="bottom" align="end">
+        {showThinking ? "Hide thinking" : "Show thinking"}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -260,6 +317,7 @@ export function TabBar() {
       </motion.div>
 
       <div className="electrobun-webkit-app-region-no-drag flex h-full shrink-0 items-center gap-1 pr-3">
+        <ShowThinkingToggle />
         <ContextUsageGauge />
         <SidebarToggle />
       </div>

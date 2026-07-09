@@ -31,6 +31,7 @@ function createBrowserRpc(): DesktopRpc {
     sessionChanged: [],
     tabsRestored: [],
     tabCreated: [],
+    tabMessagesHydrated: [],
     tabClosed: [],
     tabActivated: [],
     tabFolderChanged: [],
@@ -140,8 +141,17 @@ function createBrowserRpc(): DesktopRpc {
       openProject: async () => ({ folderPath: "" }),
       closeProject: async () => {},
       openSession: async () => createTab(),
+      retryTabMessageHydration: async ({ tabId }: { tabId: TabId }) => {
+        const tab = useAgentStore.getState().tabs[tabId];
+        return {
+          tabId,
+          status: "empty" as const,
+          messages: tab?.messages ?? [],
+        };
+      },
       setComposerDraft: async () => {},
       findProjectFiles: async () => ({ paths: [] }),
+      openFilePicker: async () => ({ files: [] }),
       agentRequest: async ({ command }: { tabId: TabId; command: AgentCommand }) => {
         await sendAgentCommand(command);
         return { type: "response", command: command.type, success: true } as const;
@@ -199,11 +209,15 @@ function createBrowserRpc(): DesktopRpc {
       createProjectFromTemplate: async ({ templateId, projectName }: { templateId: string; projectName: string }) => ({
         folderPath: `/tmp/herman/${projectName}`,
       }),
+      getSessionChanges: async () => ({ isWorktree: false, changedFiles: 0, canApply: false }),
+      applySession: async () => ({ status: "error" as const, error: "Unavailable in browser mock" }),
+      discardSession: async () => {},
       startPreview: async ({ folderPath }: { folderPath: string }) => ({
         url: `http://localhost:4321`,
         port: 4321,
       }),
       stopPreview: async () => {},
+      restartPreview: async () => ({ url: `http://localhost:4321`, port: 4321 }),
       getPreviewStatus: async () => ({ running: false }),
       getProjectManifest: async () => undefined,
       getSkills: async () => ({ skills: [] }),
@@ -268,6 +282,8 @@ function createTab(folderPath = ""): Tab {
     projectColor: "#22c55e",
     messages: [],
     isThinking: false,
+    showThinking: false,
+    thinkingMessages: [],
     availableModels: [],
     connectionState: "idle",
     createdAt: now,
