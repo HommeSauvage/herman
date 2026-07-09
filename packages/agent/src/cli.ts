@@ -9,11 +9,15 @@ mkdirSync(PI_AGENT_DIR, { recursive: true });
 process.env.PI_CODING_AGENT_DIR = PI_AGENT_DIR;
 process.env.PI_CODING_AGENT_SESSION_DIR = join(PI_AGENT_DIR, "sessions");
 
+import { getLogger } from "@logtape/logtape";
 import { main } from "@earendil-works/pi-coding-agent";
 import contextReporterExtension from "@herman/pi-context-reporter";
 
 import { config } from "./env.js";
 import hermanExtension from "./extensions/herman-extension.js";
+import { configureLogging } from "./logging.js";
+
+const logger = getLogger(["herman-agent", "cli"]);
 
 /**
  * Extensions that herman bundles as packages. Pi auto-discovers and auto-installs
@@ -37,7 +41,7 @@ function ensureBundledExtensions(agentDir: string, sources: string[]): void {
     try {
       settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
     } catch {
-      console.error("[herman-agent] Failed to parse settings.json, overwriting");
+      logger.warning("Failed to parse settings.json, overwriting");
     }
   }
 
@@ -58,16 +62,18 @@ function ensureBundledExtensions(agentDir: string, sources: string[]): void {
   settings.packages = [...filtered, ...toAdd];
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
   if (filtered.length !== existing.length) {
-    console.error("[herman-agent] Removed stale bundled extension:", stale);
+    logger.info("Removed stale bundled extension", { extension: stale });
   }
   if (toAdd.length > 0) {
-    console.error("[herman-agent] Registered bundled extensions:", toAdd);
+    logger.info("Registered bundled extensions", { extensions: toAdd });
   }
 }
 
+await configureLogging();
+
 ensureBundledExtensions(PI_AGENT_DIR, BUNDLED_EXTENSIONS);
 
-console.error("[herman-agent] Starting agent", {
+logger.info("Starting agent", {
   serverUrl: config.serverUrl,
   hasSessionToken: !!config.sessionToken,
   clientVersion: config.clientVersion,

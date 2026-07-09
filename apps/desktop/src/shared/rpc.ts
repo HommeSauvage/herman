@@ -317,6 +317,8 @@ export type Tab = {
   revertMessageId?: string;
   /** Diff summary shown in the revert dock (populated by file-level rewind). */
   revertDiffSummary?: string;
+  /** Git checkpoint id captured immediately before file restore; used to undo file changes on cancel. */
+  revertSafetyCheckpointId?: string;
   /** Estimated token / context / cost statistics for the session. */
   contextStats?: ContextStats;
   /** Whether to render the model's thinking process in the message list. */
@@ -480,7 +482,11 @@ export type HermanDesktopRPC = {
       commitRevertTab: {
         params: { tabId: TabId; messageIndex: number };
         response: { tab: Tab };
-      },
+      };
+      previewRevertTab: {
+        params: { tabId: TabId; messageIndex: number };
+        response: { diffSummary?: string; messageCount: number };
+      };
       getDiff: {
         params: { tabId: TabId; scope: DiffScope };
         response: { diffs: FileDiff[] };

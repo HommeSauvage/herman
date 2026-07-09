@@ -163,6 +163,16 @@ function createBrowserRpc(): DesktopRpc {
         // Browser mock: restart the agent connection.
         ws.send(JSON.stringify({ type: "restart_agent", sessionId }));
       },
+      previewRevertTab: async ({ tabId, messageIndex }: { tabId: TabId; messageIndex: number }) => {
+        const tab = useAgentStore.getState().tabs[tabId];
+        if (!tab) return { messageCount: 0 };
+        const boundary = tab.messages[messageIndex];
+        if (!boundary) return { messageCount: 0 };
+        const userMessages = tab.messages.filter((m) => m.role === "user");
+        const boundaryIdx = userMessages.findIndex((m) => m.id === boundary.id);
+        const messageCount = boundaryIdx >= 0 ? userMessages.length - boundaryIdx : 0;
+        return { messageCount, diffSummary: undefined };
+      },
       revertTab: async ({ tabId, messageIndex }: { tabId: TabId; messageIndex: number }) => {
         const tab = useAgentStore.getState().tabs[tabId];
         if (!tab) return { tab: createTab() };

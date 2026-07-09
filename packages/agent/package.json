@@ -21,6 +21,9 @@
     "@earendil-works/pi-coding-agent": "catalog:",
     "@herman/pi-context-reporter": "workspace:*",
     "@herman/rpc": "workspace:*",
+    "@logtape/logtape": "catalog:",
+    "@logtape/pretty": "catalog:",
+    "@logtape/redaction": "catalog:",
     "arkenv": "catalog:",
     "arktype": "catalog:",
     "pi-rewind": "^0.5.0"

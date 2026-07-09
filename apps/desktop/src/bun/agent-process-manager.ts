@@ -27,7 +27,7 @@ import {
 } from "./pi-messages.js";
 import { contextStatsFromContextReport } from "./session-snapshot.js";
 import { stopDevServer } from "./preview-server.js";
-import { rewindManager, getUserMessageIds, readPiSessionId } from "./rewind-manager.js";
+import { rewindManager, getUserMessageIds, readPiSessionId, RevertConflictError } from "./rewind-manager.js";
 import { deleteTabHistory, saveTabHistory } from "./tab-history.js";
 import { loadInstantHydration } from "./tab-message-hydration.js";
 import { resolvePiSessionFile } from "./pi-session.js";
@@ -188,25 +188,28 @@ export class AgentProcessManager {
   }
 
   async createTab(folderPath?: string, title?: string): Promise<Tab> {
-    const inheritedFolder = this.store.activeTabId
-      ? this.store.tabs.get(this.store.activeTabId)?.folderPath
-      : undefined;
     const state = await loadWindowState();
     const lastFolder = state.lastFolderPath;
-    const path = folderPath ?? inheritedFolder ?? lastFolder ?? "";
-    const tab = this.makeTab(path, title);
+    const inheritedTab = this.store.activeTabId
+      ? this.store.tabs.get(this.store.activeTabId)
+      : undefined;
+    const rawPath = folderPath ?? inheritedTab?.folderPath ?? lastFolder ?? "";
+    const tab = this.makeTab(rawPath, title);
     const mode = this.getMode();
-    if (mode === "rookie" && path && (await isGitRepo(path))) {
-      const hasConcurrentProject = this.store.openTabIds.some((id) => {
-        const existing = this.store.tabs.get(id);
-        if (!existing) return false;
-        if (existing.folderPath === path) return true;
-        return existing.worktree?.mainFolderPath === path;
-      });
-      if (hasConcurrentProject) {
-        const created = await createSessionWorktree(path, tab.id);
-        tab.folderPath = created.folderPath;
-        tab.worktree = created.worktree;
+    let projectPath = rawPath;
+    if (mode === "rookie" && rawPath && (await isGitRepo(rawPath))) {
+      const mainPath =
+        folderPath ??
+        inheritedTab?.worktree?.mainFolderPath ??
+        lastFolder ??
+        rawPath;
+      projectPath = mainPath;
+      const created = await createSessionWorktree(mainPath, tab.id);
+      tab.folderPath = created.folderPath;
+      tab.worktree = created.worktree;
+      tab.projectColor = getProjectColor(mainPath);
+      if (!title) {
+        tab.title = getProjectName(mainPath);
       }
     }
     this.store.sessions.set(tab.id, this.toPersistedSession(tab));
@@ -214,11 +217,11 @@ export class AgentProcessManager {
     this.store.openTabIds.push(tab.id);
     this.store.activeTabId = tab.id;
 
-    if (path && !this.store.projects.includes(path)) {
-      this.store.projects.push(path);
+    if (projectPath && !this.store.projects.includes(projectPath)) {
+      this.store.projects.push(projectPath);
     }
 
-    if (path) {
+    if (tab.folderPath) {
       this.agentRuntime.schedule(tab.id);
     }
     await this.persist();
@@ -247,7 +250,16 @@ export class AgentProcessManager {
     const now = Date.now();
     const instant = await loadInstantHydration(sessionId, persisted);
     let tab = { ...this.materializeTabFromHydration(persisted, instant, composerValue), updatedAt: now };
-    if (tab.worktree) {
+    const mode = this.getMode();
+    if (mode === "rookie" && tab.folderPath && (await isGitRepo(tab.folderPath))) {
+      if (!tab.worktree) {
+        const created = await createSessionWorktree(tab.folderPath, tab.id);
+        tab.folderPath = created.folderPath;
+        tab.worktree = created.worktree;
+      } else {
+        tab.folderPath = await ensureSessionWorktree(tab);
+      }
+    } else if (tab.worktree) {
       tab.folderPath = await ensureSessionWorktree(tab);
     }
     this.store.tabs.set(sessionId, tab);
@@ -520,6 +532,25 @@ export class AgentProcessManager {
     }
   }
 
+  async previewRevertTab(
+    tabId: TabId,
+    messageIndex: number,
+  ): Promise<{ diffSummary?: string; messageCount: number }> {
+    const tab = this.store.tabs.get(tabId);
+    if (!tab) throw new Error("Tab not found");
+
+    const message = tab.messages[messageIndex];
+    if (!message) return { messageCount: 0 };
+
+    await rewindManager.reload(tabId);
+    const userMessageIds = getUserMessageIds(tab.messages);
+    const preview = await rewindManager.previewRevert(tabId, message.id, userMessageIds);
+    return {
+      diffSummary: preview.diffSummary || undefined,
+      messageCount: preview.messageCount,
+    };
+  }
+
   async revertTab(tabId: TabId, messageIndex: number): Promise<Tab> {
     this.stopWorking(tabId);
     this.bridges.get(tabId)?.sendRaw({ type: "abort" });
@@ -535,27 +566,28 @@ export class AgentProcessManager {
     // Don't re-revert the same point.
     if (tab.revertMessageId === message.id) return tab;
 
+    this.assertNoSharedFolderConflict(tabId);
+
     // Reload checkpoints (pi-rewind in the agent process may have created new ones).
     await rewindManager.reload(tabId);
 
     // Restore files to the state before this message's changes.
     const userMessageIds = getUserMessageIds(tab.messages);
     const cp = rewindManager.findCheckpointBefore(tabId, message.id, userMessageIds);
+    let revertSafetyCheckpointId: string | undefined;
     if (cp) {
-      void rewindManager.restoreToCheckpoint(tabId, cp).catch((err) => {
-        logger.warning("File restore failed during revert", {
-          tabId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
+      revertSafetyCheckpointId = await rewindManager.restoreToCheckpoint(tabId, cp);
     }
 
-    const updated = this.patchTab(tab, { revertMessageId: message.id });
+    const updated = this.patchTab(tab, {
+      revertMessageId: message.id,
+      revertSafetyCheckpointId,
+    });
     this.store.tabs.set(tabId, updated);
     return updated;
   }
 
-  unrevertTab(tabId: TabId): Tab {
+  async unrevertTab(tabId: TabId): Promise<Tab> {
     this.stopWorking(tabId);
     this.bridges.get(tabId)?.sendRaw({ type: "abort" });
 
@@ -564,7 +596,15 @@ export class AgentProcessManager {
 
     if (!tab.revertMessageId) return tab;
 
-    const updated = this.patchTab(tab, { revertMessageId: undefined });
+    if (tab.revertSafetyCheckpointId) {
+      await rewindManager.restoreSafetyCheckpoint(tabId, tab.revertSafetyCheckpointId);
+    }
+
+    const updated = this.patchTab(tab, {
+      revertMessageId: undefined,
+      revertSafetyCheckpointId: undefined,
+      revertDiffSummary: undefined,
+    });
     this.store.tabs.set(tabId, updated);
     return updated;
   }
@@ -595,9 +635,31 @@ export class AgentProcessManager {
 
     // Keep only messages before the boundary.
     const messages = tab.messages.slice(0, messageIndex);
-    const updated = this.patchTab(tab, { messages, revertMessageId: undefined });
+    const updated = this.patchTab(tab, {
+      messages,
+      revertMessageId: undefined,
+      revertSafetyCheckpointId: undefined,
+      revertDiffSummary: undefined,
+    });
     this.store.tabs.set(tabId, updated);
     return updated;
+  }
+
+  private assertNoSharedFolderConflict(tabId: TabId): void {
+    const tab = this.store.tabs.get(tabId);
+    if (!tab?.folderPath) return;
+
+    const conflict = this.store.openTabIds.some((id) => {
+      if (id === tabId) return false;
+      const other = this.store.tabs.get(id);
+      return other?.folderPath === tab.folderPath;
+    });
+
+    if (conflict) {
+      throw new RevertConflictError(
+        "Another open tab is using the same project folder. Close the other tab first, then try undo again.",
+      );
+    }
   }
 
   private stopWorking(tabId: TabId): void {

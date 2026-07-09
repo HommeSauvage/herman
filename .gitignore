@@ -7,6 +7,3 @@ build
 .DS_Store
 artifacts
 .pi-agent
-
-# Ephemeral test directories (see apps/desktop/test/helpers/temp-dir.ts)
-**/test/.tmp/

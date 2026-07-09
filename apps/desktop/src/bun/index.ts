@@ -120,6 +120,12 @@ function getMode() {
   return desktopSettings.mode;
 }
 
+function assertRevertAllowed(): void {
+  if (getMode() !== "rookie") {
+    throw new Error("Undo is only available in Rookie mode.");
+  }
+}
+
 const windowState = await loadWindowState();
 const frame = resolveFrame(windowState.frame);
 
@@ -387,7 +393,13 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         logger.info("Restarting agent", { tabId });
         await agentProcessManager.restartTabAgent(tabId);
       },
+      previewRevertTab: async ({ tabId, messageIndex }) => {
+        assertRevertAllowed();
+        logger.info("Previewing revert for tab", { tabId, messageIndex });
+        return agentProcessManager.previewRevertTab(tabId, messageIndex);
+      },
       revertTab: async ({ tabId, messageIndex }) => {
+        assertRevertAllowed();
         logger.info("Reverting tab to message", { tabId, messageIndex });
         const tab = await agentProcessManager.revertTab(tabId, messageIndex);
 
@@ -402,11 +414,13 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         return { tab, diffSummary: diffSummary || undefined };
       },
       unrevertTab: async ({ tabId }) => {
+        assertRevertAllowed();
         logger.info("Unreverting tab", { tabId });
-        const tab = agentProcessManager.unrevertTab(tabId);
+        const tab = await agentProcessManager.unrevertTab(tabId);
         return { tab };
       },
       commitRevertTab: async ({ tabId, messageIndex }) => {
+        assertRevertAllowed();
         logger.info("Committing revert for tab", { tabId, messageIndex });
         const tab = agentProcessManager.commitRevertTab(tabId, messageIndex);
         return { tab };

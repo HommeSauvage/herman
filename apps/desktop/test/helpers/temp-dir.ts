@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const testTmpRoot = join(import.meta.dir, "..", ".tmp");
+/** Lives outside the repo so git-based helpers (e.g. project-files) behave correctly. */
+const testTmpRoot = join(tmpdir(), "herman-desktop-tests");
 const activeDirs = new Set<string>();
 
 function ensureTestTmpRoot(): string {
@@ -11,7 +13,7 @@ function ensureTestTmpRoot(): string {
   return testTmpRoot;
 }
 
-/** Create a unique directory under the gitignored `test/.tmp/` folder. */
+/** Create a unique temp directory for a test run. Always cleaned up by the caller. */
 export function createTestTempDir(prefix: string): string {
   const dir = mkdtempSync(join(ensureTestTmpRoot(), prefix));
   activeDirs.add(dir);
@@ -24,7 +26,7 @@ export function removeTestTempDir(dir: string): void {
   activeDirs.delete(dir);
 }
 
-/** Remove any leftover temp dirs and the `test/.tmp/` root. */
+/** Remove any leftover temp dirs from failed or interrupted test runs. */
 export function cleanupAllTestTempDirs(): void {
   for (const dir of activeDirs) {
     rmSync(dir, { recursive: true, force: true });

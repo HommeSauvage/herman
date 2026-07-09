@@ -87,4 +87,58 @@ describe("rewindManager", () => {
     expect(state!.sessionId).toBeUndefined();
     expect(state!.checkpoints).toHaveLength(0);
   });
+
+  it("returns a safety checkpoint id from restoreToCheckpoint", async () => {
+    const sessionDir = join(appDir, "agent-configs", tabId, "sessions");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
+
+    await createCheckpoint({
+      root: repoRoot,
+      id: "cp-target",
+      sessionId: "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e",
+      trigger: "turn",
+      turnIndex: 0,
+    });
+
+    await rewindManager.init(tabId, repoRoot);
+    await rewindManager.reload(tabId);
+
+    const target = (rewindManager as unknown as { states: Map<string, { checkpoints: import("../../src/bun/rewind-core.js").CheckpointData[] }> }).states
+      .get(tabId)?.checkpoints[0];
+    expect(target).toBeDefined();
+
+    writeFileSync(join(repoRoot, "a.txt"), "before-restore");
+    const safetyId = await rewindManager.restoreToCheckpoint(tabId, target!);
+    expect(safetyId).toMatch(/^before-restore-/);
+  });
+
+  it("restores files from a safety checkpoint", async () => {
+    const { readFileSync } = await import("node:fs");
+    const sessionDir = join(appDir, "agent-configs", tabId, "sessions");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
+
+    await createCheckpoint({
+      root: repoRoot,
+      id: "cp-v1",
+      sessionId: "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e",
+      trigger: "turn",
+      turnIndex: 0,
+    });
+
+    await rewindManager.init(tabId, repoRoot);
+    await rewindManager.reload(tabId);
+    const target = (rewindManager as unknown as { states: Map<string, { checkpoints: import("../../src/bun/rewind-core.js").CheckpointData[] }> }).states
+      .get(tabId)?.checkpoints[0];
+    expect(target).toBeDefined();
+
+    writeFileSync(join(repoRoot, "a.txt"), "v2");
+    const safetyId = await rewindManager.restoreToCheckpoint(tabId, target!);
+    expect(readFileSync(join(repoRoot, "a.txt"), "utf-8")).toBe("a");
+
+    writeFileSync(join(repoRoot, "a.txt"), "v3");
+    await rewindManager.restoreSafetyCheckpoint(tabId, safetyId!);
+    expect(readFileSync(join(repoRoot, "a.txt"), "utf-8")).toBe("v2");
+  });
 });

@@ -1,10 +1,9 @@
 import { mock } from "bun:test";
 import { join } from "node:path";
 
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  cleanupAllTestTempDirs,
   clearHermantAppDir,
   createTestTempDir,
   setHermantAppDir,
@@ -108,10 +107,6 @@ beforeEach(() => {
 afterEach(() => {
   clearHermantAppDir(tempDir);
   mock.restore();
-});
-
-afterAll(() => {
-  cleanupAllTestTempDirs();
 });
 
 async function createManager() {

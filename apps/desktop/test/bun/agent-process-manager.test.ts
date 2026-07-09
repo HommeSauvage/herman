@@ -2,10 +2,9 @@ import { mock } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterEach, afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  cleanupAllTestTempDirs,
   clearHermantAppDir,
   createTestTempDir,
   setHermantAppDir,
@@ -146,10 +145,6 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-afterAll(() => {
-  cleanupAllTestTempDirs();
-});
-
 async function drainAgent(manager: Awaited<ReturnType<typeof createManager>>): Promise<void> {
   await manager.waitForAgentRuntime();
 }
@@ -241,7 +236,7 @@ describe("AgentProcessManager", () => {
     expect(tab.folderPath).toBe("/first-project");
   });
 
-  it("creates a worktree for the second rookie tab on same project", async () => {
+  it("creates a worktree for every rookie tab on a git project", async () => {
     const { git } = await import("../../src/bun/rewind-core.js");
     writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
     mkdirSync(join(tempDir, "node_modules"), { recursive: true });
@@ -251,9 +246,11 @@ describe("AgentProcessManager", () => {
     const manager = await createManager({ getMode: () => "rookie" });
     const first = await manager.createTab(tempDir);
     const second = await manager.createTab(tempDir);
-    expect(first.folderPath).toBe(tempDir);
+    expect(first.worktree?.mainFolderPath).toBe(tempDir);
+    expect(first.folderPath).toContain(".worktrees");
     expect(second.worktree?.mainFolderPath).toBe(tempDir);
     expect(second.folderPath).toContain(".worktrees");
+    expect(first.folderPath).not.toBe(second.folderPath);
   });
 
   it("closeTab removes the open tab and stops the bridge", async () => {
@@ -856,5 +853,80 @@ describe("AgentProcessManager", () => {
     await drainAgent(manager);
 
     expect(manager.getTabs().tabs[0]?.messages).toEqual([]);
+  });
+
+  it("rejects revert when another open tab shares the same folder path", async () => {
+    const { git } = await import("../../src/bun/rewind-core.js");
+    const { RevertConflictError } = await import("../../src/bun/rewind-manager.js");
+    writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test" }));
+    await git("init -b main", tempDir);
+    await git("add -A", tempDir);
+    await git("-c user.email=herman@local -c user.name=Herman commit -m init", tempDir);
+
+    const manager = await createManager({ getMode: () => "rookie" });
+    const first = await manager.createTab(tempDir);
+    const second = await manager.createTab(tempDir);
+    await manager.sendCommand(first.id, { type: "prompt", message: "hello" });
+    await manager.sendCommand(second.id, { type: "prompt", message: "world" });
+
+    const store = (manager as unknown as { store: { tabs: Map<string, { folderPath: string }> } }).store;
+    const secondTab = store.tabs.get(second.id);
+    if (secondTab) {
+      secondTab.folderPath = first.folderPath;
+    }
+
+    const firstMessages = manager.getTabs().tabs.find((t) => t.id === first.id)?.messages ?? [];
+    const userIndex = firstMessages.findIndex((m) => m.role === "user");
+    await expect(manager.revertTab(first.id, userIndex)).rejects.toBeInstanceOf(RevertConflictError);
+  });
+
+  it("unrevert restores files from the safety checkpoint", async () => {
+    const { execSync } = await import("node:child_process");
+    const { readFileSync } = await import("node:fs");
+    const { git, createCheckpoint, getRepoRoot } = await import("../../src/bun/rewind-core.js");
+    const { rewindManager } = await import("../../src/bun/rewind-manager.js");
+
+    writeFileSync(join(tempDir, "a.txt"), "v1\n");
+    await git("init -b main", tempDir);
+    await git("config user.email test@example.com", tempDir);
+    await git("config user.name Test", tempDir);
+    await git("add a.txt", tempDir);
+    await git("commit -m init", tempDir);
+
+    const manager = await createManager({ getMode: () => "rookie" });
+    const tab = await manager.createTab(tempDir);
+    await drainAgent(manager);
+
+    const appDir = process.env.HERMAN_APP_DIR!;
+    const piSessionDir = join(appDir, "agent-configs", tab.id, "sessions");
+    mkdirSync(piSessionDir, { recursive: true });
+    writeFileSync(join(piSessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
+
+    const worktreePath = tab.folderPath;
+    const repoRoot = await getRepoRoot(worktreePath);
+    await rewindManager.init(tab.id, worktreePath);
+    await createCheckpoint({
+      root: repoRoot,
+      id: "cp-before",
+      sessionId: "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e",
+      trigger: "turn",
+      turnIndex: 0,
+    });
+
+    writeFileSync(join(worktreePath, "a.txt"), "v2\n");
+    await manager.sendCommand(tab.id, { type: "prompt", message: "change file" });
+    const messages = manager.getTabs().tabs.find((t) => t.id === tab.id)?.messages ?? [];
+    const userIndex = messages.findIndex((m) => m.role === "user");
+
+    const reverted = await manager.revertTab(tab.id, userIndex);
+    expect(reverted.revertSafetyCheckpointId).toBeDefined();
+    expect(readFileSync(join(worktreePath, "a.txt"), "utf-8")).toBe("v1\n");
+
+    writeFileSync(join(worktreePath, "a.txt"), "v3\n");
+    const restored = await manager.unrevertTab(tab.id);
+    expect(restored.revertMessageId).toBeUndefined();
+    expect(readFileSync(join(worktreePath, "a.txt"), "utf-8")).toBe("v2\n");
+
+    rewindManager.dispose(tab.id);
   });
 });

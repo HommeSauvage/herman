@@ -1,9 +1,9 @@
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { cleanupAllTestTempDirs, createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
+import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 import { git } from "../../src/bun/rewind-core.js";
 import {
   applySessionToMainProject,
@@ -24,10 +24,6 @@ afterEach(() => {
   for (const dir of createdDirs.splice(0, createdDirs.length)) {
     removeTestTempDir(dir);
   }
-});
-
-afterAll(() => {
-  cleanupAllTestTempDirs();
 });
 
 describe("worktree helpers", () => {

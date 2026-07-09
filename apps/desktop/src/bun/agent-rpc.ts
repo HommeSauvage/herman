@@ -31,8 +31,8 @@ type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
 function stderrLogLevel(line: string): "info" | "debug" | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
-  if (trimmed.includes("[herman-extension]")) {
-    return /error|failed|refuses/i.test(trimmed) ? "info" : "debug";
+  if (trimmed.includes("[herman-extension]") || trimmed.includes("herman-agent")) {
+    return /error|failed|refuses|ERR|WRN/i.test(trimmed) ? "info" : "debug";
   }
   return "info";
 }

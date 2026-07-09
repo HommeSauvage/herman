@@ -29,6 +29,7 @@ import {
   diffCheckpoints,
   deleteCheckpoint,
   loadAllCheckpoints,
+  loadCheckpointFromRef,
   git,
   parseUnifiedDiff,
   type CheckpointData,
@@ -36,6 +37,14 @@ import {
 } from "./rewind-core.js";
 
 const logger = getLogger(["herman-desktop", "rewind-manager"]);
+
+/** Thrown when a file restore would conflict with another open session. */
+export class RevertConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RevertConflictError";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -234,16 +243,19 @@ export class RewindManager {
 
   /**
    * Restore files to a checkpoint's state, with a safety snapshot first.
+   * Returns the safety checkpoint id so cancel-undo can restore files.
    */
-  async restoreToCheckpoint(tabId: TabId, cp: CheckpointData): Promise<void> {
+  async restoreToCheckpoint(tabId: TabId, cp: CheckpointData): Promise<string | undefined> {
     const state = this.states.get(tabId);
-    if (!state?.gitAvailable) return;
+    if (!state?.gitAvailable) return undefined;
+
+    const safetyId = `before-restore-${randomUUIDv7()}`;
 
     // Create a safety checkpoint before restoring.
     try {
       await createCheckpoint({
         root: state.repoRoot,
-        id: `before-restore-${randomUUIDv7()}`,
+        id: safetyId,
         sessionId: "herman-desktop",
         trigger: "before-restore",
         turnIndex: 0,
@@ -254,6 +266,7 @@ export class RewindManager {
         tabId,
         error: err instanceof Error ? err.message : String(err),
       });
+      throw new Error("Could not save a safety copy of your files before undoing. Try again.");
     }
 
     await restoreCheckpoint(state.repoRoot, cp);
@@ -261,7 +274,41 @@ export class RewindManager {
     logger.info("Files restored to checkpoint", {
       tabId,
       checkpointId: cp.id,
+      safetyCheckpointId: safetyId,
     });
+    return safetyId;
+  }
+
+  /** Restore files from a safety checkpoint created before a revert. */
+  async restoreSafetyCheckpoint(tabId: TabId, checkpointId: string): Promise<void> {
+    const state = this.states.get(tabId);
+    if (!state?.gitAvailable) return;
+
+    const cp = await loadCheckpointFromRef(state.repoRoot, checkpointId);
+    if (!cp) {
+      throw new Error("Could not find the safety copy of your files.");
+    }
+    await restoreCheckpoint(state.repoRoot, cp);
+    logger.info("Files restored from safety checkpoint", { tabId, checkpointId });
+  }
+
+  /**
+   * Preview file changes that would occur if reverting to a message boundary.
+   * Does not mutate the worktree.
+   */
+  async previewRevert(
+    tabId: TabId,
+    messageId: string,
+    userMessageIds: string[],
+  ): Promise<{ diffSummary: string; messageCount: number }> {
+    const cp = this.findCheckpointBefore(tabId, messageId, userMessageIds);
+    const boundaryTurn = userMessageIds.indexOf(messageId);
+    const messageCount = boundaryTurn >= 0 ? userMessageIds.length - boundaryTurn : 0;
+    if (!cp) {
+      return { diffSummary: "", messageCount };
+    }
+    const diffSummary = await this.getDiff(tabId, cp);
+    return { diffSummary, messageCount };
   }
 
   /**

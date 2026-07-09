@@ -74,7 +74,7 @@ export const MessageItem = memo(function MessageItem({
                     <button
                       type="button"
                       onClick={onRevert}
-                      aria-label="Revert to this point"
+                      aria-label="Undo Herman's changes from here"
                       className={cn(
                         "text-faint hover:text-text inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-white/[0.06] active:scale-[0.96]",
                       )}
@@ -83,7 +83,9 @@ export const MessageItem = memo(function MessageItem({
                 >
                   <RotateCcw size={13} />
                 </TooltipTrigger>
-                <TooltipContent side="top">Revert to this point</TooltipContent>
+                <TooltipContent side="top">
+                  Undo Herman&apos;s changes from here
+                </TooltipContent>
               </Tooltip>
             )}
             <CopyButton text={message.content} />

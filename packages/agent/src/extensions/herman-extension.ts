@@ -6,15 +6,18 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { PROTECTED_PROVIDER_KEY_VARS } from "@herman/agent/protected-keys";
 import type { AdCampaign, AdPlacement } from "@herman/rpc/ads";
+import { getLogger } from "@logtape/logtape";
 
 import { config } from "../env.js";
 
-// Use console.error directly in the agent subprocess. LogTape may not be
-// configured for our categories or may not flush before a crash, while stderr
-// is captured line-by-line by the desktop process.
+const logger = getLogger(["herman-agent", "extension"]);
+
 function extLog(level: "info" | "error", message: string, meta?: Record<string, unknown>) {
-  const suffix = meta ? ` ${JSON.stringify(meta)}` : "";
-  console.error(`[herman-extension] ${message}${suffix}`);
+  if (level === "error") {
+    logger.error(message, meta ?? {});
+    return;
+  }
+  logger.info(message, meta ?? {});
 }
 
 function summarizePayload(payload: Record<string, unknown> | undefined): Record<string, unknown> {

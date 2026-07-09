@@ -54,6 +54,8 @@ export type Tab = {
   revertMessageId?: string;
   /** Diff summary shown in the revert dock (populated by file-level rewind). */
   revertDiffSummary?: string;
+  /** Git checkpoint id captured immediately before file restore; used to undo file changes on cancel. */
+  revertSafetyCheckpointId?: string;
   /** Live token / context / cost statistics for the session, populated
    *  directly by the agent's `herman/context_report` events. */
   contextStats?: ContextStats;

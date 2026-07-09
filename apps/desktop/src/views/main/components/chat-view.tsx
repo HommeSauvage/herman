@@ -34,6 +34,7 @@ export function ChatView() {
     connectionError,
     retryState,
     messagesHydrationStatus,
+    revertEnabled,
   } = useAgentStore(
     useShallow((s) => {
       const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
@@ -47,6 +48,7 @@ export function ChatView() {
         connectionState: tab?.connectionState ?? "idle",
         connectionError: tab?.connectionError,
         retryState: tab?.retryState,
+        revertEnabled: s.settings.mode === "rookie",
       };
     }),
   );
@@ -123,6 +125,7 @@ export function ChatView() {
                   messages={messages}
                   isThinking={isThinking}
                   tabId={activeTabId}
+                  revertEnabled={revertEnabled}
                 />
               )}
             </motion.div>
@@ -130,7 +133,7 @@ export function ChatView() {
         </div>
       </div>
       {/* Revert dock pinned to the bottom of the scroll area */}
-      {activeTabId && revertMessageId && (
+      {revertEnabled && activeTabId && revertMessageId && (
         <div className="mx-auto w-full max-w-3xl px-5 md:px-6">
           <RevertDock
             tabId={activeTabId}

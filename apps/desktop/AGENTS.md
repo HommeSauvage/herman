@@ -110,6 +110,6 @@ Communication between the main process and the agent uses JSON-RPC over stdin/st
 | `test` | Run unit tests in `test/` |
 | `test:e2e` | Run e2e tests in `test/e2e/` (requires `HERMAN_RUN_E2E=1` and external services) |
 
-Tests that need filesystem fixtures use `test/helpers/temp-dir.ts`, which creates ephemeral directories under the gitignored `test/.tmp/` folder and removes them after each test.
+Tests that need filesystem fixtures use `test/helpers/temp-dir.ts`, which creates ephemeral directories under the OS temp folder (`$TMPDIR/herman-desktop-tests/`) and removes them after each test.
 | `typecheck` | TypeScript check |
 | `inject-dev-session` | Inject a test session for local development |
