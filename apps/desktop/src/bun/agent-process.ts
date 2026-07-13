@@ -1,9 +1,12 @@
 import { PROTECTED_PROVIDER_KEY_SET } from "@herman/agent/protected-keys";
 import type { Subprocess } from "bun";
+import { getLogger } from "@logtape/logtape";
 
 import { AgentRpcClient } from "./agent-rpc.js";
 import { resolveShellEnv } from "./shell-env.js";
 import { waitForSubprocessExit } from "./subprocess-exit.js";
+
+const logger = getLogger(["herman-desktop", "agent-process"]);
 
 export type AgentProcessState = "idle" | "starting" | "running" | "stopped" | "crashed";
 
@@ -30,6 +33,7 @@ export class AgentProcess {
   constructor(private options: AgentProcessOptions) {
     this.client = new AgentRpcClient(options.commandTimeout);
     this.client.onExit((code) => {
+      logger.info("Agent process exited", { pid: this.subprocess?.pid, code });
       if (this.processState === "running") {
         this.processState = code === 0 ? "stopped" : "crashed";
       }
@@ -94,12 +98,20 @@ export class AgentProcess {
 
     this.client.attach(this.subprocess);
     this.processState = "running";
+    logger.info("Agent process started", {
+      pid: this.subprocess.pid,
+      binaryPath: this.options.binaryPath,
+      cwd: this.options.cwd ?? process.cwd(),
+    });
   }
 
   async stop() {
     if (this.processState !== "running" || !this.subprocess) {
       return;
     }
+
+    const pid = this.subprocess.pid;
+    logger.info("Stopping agent process", { pid });
 
     this.processState = "stopped";
     const proc = this.subprocess;
@@ -126,6 +138,7 @@ export class AgentProcess {
     const exitedAfterSigterm = await waitForSubprocessExit(proc.exited, SIGTERM_TIMEOUT_MS);
 
     if (!exitedAfterSigterm) {
+      logger.warning("Agent process did not exit after SIGTERM; sending SIGKILL", { pid });
       try {
         proc.kill("SIGKILL");
       } catch {
@@ -133,5 +146,6 @@ export class AgentProcess {
       }
       await waitForSubprocessExit(proc.exited, SIGKILL_TIMEOUT_MS);
     }
+    logger.info("Agent process stopped", { pid });
   }
 }

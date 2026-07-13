@@ -1,9 +1,13 @@
+import { getLogger } from "@logtape/logtape";
 import { Database } from "bun:sqlite";
 
 import { dbPath } from "./app-paths.js";
 import { migrations } from "./persistence/migrations/index.js";
 import { dirname } from "node:path";
 import { ensureDir } from "./fs-utils.js";
+import { logStorageError } from "../logging-shared.js";
+
+const logger = getLogger(["herman-desktop", "storage"]);
 
 const dp = dbPath;
 
@@ -14,13 +18,19 @@ export function getDb(): Database {
 
   const path = dp();
   ensureDir(dirname(path));
-  _db = new Database(path, { create: true });
-  _db.run("PRAGMA journal_mode = WAL");
-  _db.run("PRAGMA synchronous = NORMAL");
-  _db.run("PRAGMA busy_timeout = 5000");
-  _db.run("PRAGMA foreign_keys = ON");
+  try {
+    _db = new Database(path, { create: true });
+    _db.run("PRAGMA journal_mode = WAL");
+    _db.run("PRAGMA synchronous = NORMAL");
+    _db.run("PRAGMA busy_timeout = 5000");
+    _db.run("PRAGMA foreign_keys = ON");
 
-  runMigrations(_db);
+    runMigrations(_db);
+    logger.info("SQLite database initialized", { path });
+  } catch (error) {
+    logStorageError(logger, "initDatabase", path, error);
+    throw error;
+  }
 
   return _db;
 }
@@ -46,6 +56,7 @@ function runMigrations(db: Database): void {
       m.up(db);
       db.run("INSERT INTO migration (id, applied_at) VALUES (?, ?)", [m.id, Date.now()]);
     })();
+    logger.info("Applied database migration", { migrationId: m.id });
   }
 }
 

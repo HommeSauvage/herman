@@ -1,4 +1,5 @@
 import { Sparkles, Loader2 } from "lucide-react";
+import { getLogger } from "@logtape/logtape";
 import { useEffect, useState } from "react";
 
 import type { PersistedSession, Session, Tab, TabId } from "../../shared/rpc.js";
@@ -15,6 +16,8 @@ import { useAppStore, useAgentStore } from "./lib/agent-store.js";
 import { createTab } from "./lib/agent-actions.js";
 import { useCommandShortcuts } from "./lib/command-dispatch.js";
 import { desktopRpc } from "./lib/desktop-rpc.js";
+
+const logger = getLogger(["herman-desktop", "view", "app"]);
 
 function AppContent() {
   useCommandShortcuts();
@@ -63,6 +66,15 @@ function AppContent() {
           // Rookie mode with no existing projects — show onboarding
           setShowOnboarding(true);
         }
+        logger.info("Renderer init complete", {
+          hasSession: Boolean(currentSession),
+          tabCount: tabs.length,
+          mode: settings.mode,
+        });
+      } catch (error) {
+        logger.error("Renderer init failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       } finally {
         setIsLoading(false);
       }

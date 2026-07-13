@@ -100,6 +100,20 @@ Communication between the main process and the agent uses JSON-RPC over stdin/st
 | `HERMAN_AGENT_PATH` | Custom path to the agent binary (overrides bundled) |
 | `ENABLE_EMAIL_AUTH` | Enable email-based auth flow |
 
+## Logging
+
+Herman uses [LogTape](https://github.com/dahlia/logtape) for structured logging. Do not use `console.log` in application code.
+
+| Rule | Detail |
+|------|--------|
+| Library | `getLogger(["herman-desktop", "<area>", ...])` |
+| Levels | `error` = failure requiring attention; `warning` = degraded/recoverable; `info` = lifecycle milestones and user actions; `debug` = flow detail; `trace` = per-event/per-RPC verbosity |
+| Metadata | Always pass a structured object as the 2nd arg; never log secrets (rely on redaction, but avoid logging bodies) |
+| API | Use `logger.warning()` — not `logger.warn()` |
+| Categories | `main`, `agent-rpc`, `agent-bridge`, `storage`, `auth`, `http`, `view/<module>` |
+
+Renderer and main process both respect `HERMAN_DESKTOP_LOG_LEVEL`. Enable file logging with `HERMAN_DESKTOP_LOG_FILE=true`.
+
 ## Scripts
 
 | Script | Purpose |

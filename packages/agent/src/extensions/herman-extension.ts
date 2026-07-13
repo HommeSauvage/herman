@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   ExtensionAPI,
@@ -7,6 +8,7 @@ import type {
   ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
 import { PROTECTED_PROVIDER_KEY_VARS } from "@herman/agent/protected-keys";
+import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
 import type { AdCampaign, AdPlacement } from "@herman/rpc/ads";
 import { getLogger } from "@logtape/logtape";
 
@@ -14,12 +16,16 @@ import { config } from "../env.js";
 
 const logger = getLogger(["herman-agent", "extension"]);
 
-function extLog(level: "info" | "error", message: string, meta?: Record<string, unknown>) {
+function extLog(level: "info" | "error" | "debug", message: string, meta?: Record<string, unknown>) {
   if (level === "error") {
     logger.error(message, meta ?? {});
     return;
   }
-  logger.info(message, meta ?? {});
+  if (level === "debug") {
+    logger.debug(message, meta ?? {});
+    return;
+  }
+  logger.debug(message, meta ?? {});
 }
 
 function summarizePayload(payload: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -67,6 +73,19 @@ function modelsUrl(): string {
   return `${serverBaseUrl()}/api/agent/models`;
 }
 
+function hermanAppDir(): string {
+  if (process.env.HERMAN_APP_DIR) return process.env.HERMAN_APP_DIR;
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+    return join(localAppData, "herman");
+  }
+  return join(homedir(), ".herman");
+}
+
+function modelsCachePath(): string {
+  return join(hermanAppDir(), "herman-models-cache.json");
+}
+
 type HermanModel = {
   id: string;
   name: string;
@@ -82,6 +101,38 @@ type HermanModel = {
     maxTokensField?: "max_tokens" | "max_completion_tokens";
   };
 };
+
+type ModelsCache = {
+  serverUrl: string;
+  fetchedAt: string;
+  models: HermanModel[];
+};
+
+function loadCachedModels(serverUrl: string): HermanModel[] | undefined {
+  try {
+    const path = modelsCachePath();
+    if (!existsSync(path)) return undefined;
+    const raw = readFileSync(path, "utf-8");
+    const cache = JSON.parse(raw) as ModelsCache;
+    if (cache.serverUrl !== serverUrl) return undefined;
+    if (!Array.isArray(cache.models)) return undefined;
+    return cache.models;
+  } catch (error) {
+    extLog("debug", "Failed to load cached Herman models", { error: String(error) });
+    return undefined;
+  }
+}
+
+function saveCachedModels(serverUrl: string, models: HermanModel[]): void {
+  try {
+    const dir = hermanAppDir();
+    mkdirSync(dir, { recursive: true });
+    const cache: ModelsCache = { serverUrl, fetchedAt: new Date().toISOString(), models };
+    writeFileSync(modelsCachePath(), JSON.stringify(cache, null, 2));
+  } catch (error) {
+    extLog("debug", "Failed to save cached Herman models", { error: String(error) });
+  }
+}
 
 async function fetchHermanModels(): Promise<HermanModel[]> {
   extLog("info", "Fetching Herman models", { url: modelsUrl(), hasToken: !!config.sessionToken });
@@ -104,6 +155,21 @@ async function fetchHermanModels(): Promise<HermanModel[]> {
   const payload = (await response.json()) as { models?: HermanModel[] };
   extLog("info", "Models received", { count: payload.models?.length });
   return payload.models ?? [];
+}
+
+async function loadModelsWithCache(): Promise<{ models: HermanModel[]; fromCache: boolean }> {
+  try {
+    const models = await fetchHermanModels();
+    saveCachedModels(config.serverUrl, models);
+    return { models, fromCache: false };
+  } catch (error) {
+    const cached = loadCachedModels(config.serverUrl);
+    if (cached && cached.length > 0) {
+      extLog("info", "Loaded Herman models from cache", { modelCount: cached.length });
+      return { models: cached, fromCache: true };
+    }
+    throw error;
+  }
 }
 
 function buildProviderConfig(models: HermanModel[]): ProviderConfig {
@@ -147,13 +213,26 @@ function buildProviderConfig(models: HermanModel[]): ProviderConfig {
   };
 }
 
+function sortAvailableHermanFirst(
+  available: { provider: string; id: string; contextWindow?: number; maxTokens?: number }[],
+) {
+  return [...available].sort((a, b) => {
+    const aHerman = a.provider === HERMAN_PROVIDER ? -1 : 1;
+    const bHerman = b.provider === HERMAN_PROVIDER ? -1 : 1;
+    if (aHerman !== bHerman) return aHerman - bHerman;
+    if (a.provider !== b.provider) return a.provider.localeCompare(b.provider);
+    return a.id.localeCompare(b.id);
+  });
+}
+
 function sendModelsSync(
   ui: ExtensionUIContext,
   available: { provider: string; id: string; contextWindow: number; maxTokens?: number }[],
   currentModelId?: string,
 ) {
+  const sorted = sortAvailableHermanFirst(available);
   const modelMetadata: Record<string, { contextWindow: number; maxTokens?: number }> = {};
-  for (const model of available) {
+  for (const model of sorted) {
     if (typeof model.contextWindow !== "number" || !Number.isFinite(model.contextWindow) || model.contextWindow <= 0) {
       continue;
     }
@@ -164,7 +243,7 @@ function sendModelsSync(
   }
   const payload: Record<string, unknown> = {
     type: "models_sync",
-    models: available.map((model) => `${model.provider}/${model.id}`),
+    models: sorted.map((model) => `${model.provider}/${model.id}`),
     currentModel: currentModelId,
   };
   if (Object.keys(modelMetadata).length > 0) {
@@ -249,23 +328,53 @@ export default async function hermanExtension(pi: ExtensionAPI) {
   let fetchError: string | undefined;
   const hermanEnabled = Boolean(config.serverUrl);
 
+  const registerModels = (nextModels: HermanModel[]) => {
+    hermanModels = nextModels;
+    pi.registerProvider(HERMAN_PROVIDER, buildProviderConfig(hermanModels));
+    extLog("info", "Registered Herman provider", {
+      modelCount: hermanModels.length,
+      baseUrl: proxyUrl(),
+    });
+  };
+
+  async function refreshModelsAndNotify(ctx: ExtensionContext) {
+    if (!hermanEnabled) return;
+    extLog("info", "Refreshing Herman models");
+    try {
+      const { models, fromCache } = await loadModelsWithCache();
+      hermanModels = models;
+      pi.registerProvider(HERMAN_PROVIDER, buildProviderConfig(hermanModels));
+      const available = ctx.modelRegistry.getAvailable().map((model) => ({
+        provider: model.provider,
+        id: model.id,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+      }));
+      sendModelsSync(
+        ctx.ui,
+        available,
+        ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+      );
+      extLog("info", "Herman models refreshed", {
+        modelCount: hermanModels.length,
+        fromCache,
+      });
+    } catch (error) {
+      extLog("error", "Failed to refresh Herman models", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (hermanEnabled) {
     assertNoLocalKeys();
 
-    const registerModels = (nextModels: HermanModel[]) => {
-      hermanModels = nextModels;
-      pi.registerProvider(HERMAN_PROVIDER, buildProviderConfig(hermanModels));
-      extLog("info", "Registered Herman provider", {
-        modelCount: hermanModels.length,
-        baseUrl: proxyUrl(),
-      });
-    };
-
     try {
-      registerModels(await fetchHermanModels());
+      const { models } = await loadModelsWithCache();
+      registerModels(models);
     } catch (error) {
       fetchError = error instanceof Error ? error.message : String(error);
-      extLog("error", "Failed to fetch models from server", { error: fetchError });
+      extLog("error", "Failed to fetch Herman models and no cache available", { error: fetchError });
       registerModels([]);
     }
   }
@@ -386,6 +495,14 @@ CRITICAL RULES:
     }
 
     return { systemPrompt };
+  });
+
+  pi.on("input", async (event, _ctx) => {
+    if (event.text === HERMAN_REFRESH_MODELS_MESSAGE) {
+      await refreshModelsAndNotify(_ctx);
+      return { action: "handled" };
+    }
+    return { action: "continue" };
   });
 
   pi.on("model_select", async (_event, ctx) => {
@@ -520,8 +637,8 @@ CRITICAL RULES:
     // block the error delivery.
     if (shouldRefreshModels(event.status)) {
       try {
-        const refreshed = await fetchHermanModels();
-        hermanModels = refreshed;
+        const { models, fromCache } = await loadModelsWithCache();
+        hermanModels = models;
         pi.registerProvider(HERMAN_PROVIDER, buildProviderConfig(hermanModels));
         const available = ctx.modelRegistry.getAvailable().map((model) => ({
           provider: model.provider,
@@ -536,7 +653,8 @@ CRITICAL RULES:
         );
         extLog("info", "Refreshed Herman models after proxy failure", {
           status: event.status,
-          modelCount: refreshed.length,
+          modelCount: hermanModels.length,
+          fromCache,
         });
       } catch (refreshError) {
         extLog("error", "Failed to refresh models after proxy failure", {

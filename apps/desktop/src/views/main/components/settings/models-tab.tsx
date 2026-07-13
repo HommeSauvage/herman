@@ -1,16 +1,18 @@
 import { Button } from "@herman/ui/components/button";
 import { cn } from "@herman/ui/lib/utils";
 import { Cpu, Eye, EyeOff } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
 
-import { useAgentStore } from "../../lib/agent-store.js";
+import { refreshHermanModels } from "../../lib/agent-actions.js";
+import { isTabAgentRunning, useAgentStore } from "../../lib/agent-store.js";
 import { desktopRpc } from "../../lib/desktop-rpc.js";
 
 export function ModelsTab() {
   const settings = useAgentStore((s) => s.settings);
   const setSettings = useAgentStore((s) => s.setSettings);
+  const activeTabId = useAgentStore((s) => s.activeTabId);
 
   // Subscribe only to availableModels from each tab, not the full tabs record
   // which changes on every streaming delta and causes unnecessary re-renders.
@@ -24,13 +26,30 @@ export function ModelsTab() {
           seen.add(modelId);
         }
       }
-      return Array.from(seen).sort().join("\x00");
+      return Array.from(seen)
+        .sort((a, b) => {
+          const [aProvider] = a.split("/");
+          const [bProvider] = b.split("/");
+          const aHerman = aProvider === "herman" ? -1 : 1;
+          const bHerman = bProvider === "herman" ? -1 : 1;
+          if (aHerman !== bHerman) return aHerman - bHerman;
+          return a.localeCompare(b);
+        })
+        .join("\x00");
     }),
   );
 
   const [defaultModel, setDefaultModel] = useState(settings.models.defaultModel ?? "");
 
   const hiddenModels = settings.models.hiddenModels ?? [];
+
+  useEffect(() => {
+    // Silently refresh Herman models each time the Models settings tab is
+    // opened, so the list stays current even if the server was down earlier.
+    if (activeTabId && settings.providers.herman.enabled && isTabAgentRunning(activeTabId)) {
+      void refreshHermanModels(activeTabId);
+    }
+  }, [activeTabId, settings.providers.herman.enabled]);
 
   async function saveDefaultModel(modelId: string) {
     const prevDefault = defaultModel;

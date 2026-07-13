@@ -22,6 +22,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLogger } from "@logtape/logtape";
 
 import { type ContextReportUsage, REPORT_THROTTLE_MS } from "./payload.js";
 import { ContextState } from "./state.js";
@@ -88,6 +89,10 @@ function assistantEventDeltaChars(assistantMessageEvent: unknown): number {
 
 export default function contextReporterExtension(pi: ExtensionAPI): void {
   const state = new ContextState();
+  const verboseLogging =
+    process.env.HERMAN_AGENT_LOG_LEVEL === "debug" ||
+    process.env.HERMAN_AGENT_LOG_LEVEL === "trace";
+  const logger = getLogger(["herman-agent", "context-reporter"]);
   let notifier: ThrottledNotifier | undefined;
   let installedForSession = false;
 
@@ -100,6 +105,11 @@ export default function contextReporterExtension(pi: ExtensionAPI): void {
       // Swallow notify errors — they should never break the agent loop.
       // The next scheduled emit will retry.
       () => {},
+      verboseLogging
+        ? () => {
+            logger.debug("Context report emit throttled");
+          }
+        : undefined,
     );
     return notifier;
   };

@@ -1,7 +1,8 @@
 import { memo } from "react";
 
+import { scheduleTextareaHeightAdjust } from "../lib/composer-textarea-height.js";
+
 type ComposerInputProps = {
-  defaultValue: string;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onInput: (textarea: HTMLTextAreaElement) => void;
   onBlur: () => void;
@@ -9,13 +10,7 @@ type ComposerInputProps = {
   onPaste?: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 };
 
-function adjustHeight(target: HTMLTextAreaElement) {
-  target.style.height = "auto";
-  target.style.height = `${Math.min(target.scrollHeight, 160)}px`;
-}
-
 export const ComposerInput = memo(function ComposerInput({
-  defaultValue,
   textareaRef,
   onInput,
   onBlur,
@@ -26,9 +21,8 @@ export const ComposerInput = memo(function ComposerInput({
     <textarea
       ref={textareaRef}
       data-composer-input
-      defaultValue={defaultValue}
       onInput={(event) => {
-        adjustHeight(event.currentTarget);
+        scheduleTextareaHeightAdjust(event.currentTarget);
         onInput(event.currentTarget);
       }}
       onPaste={onPaste}

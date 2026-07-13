@@ -2,6 +2,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/t
 import { cn } from "@herman/ui/lib/utils";
 import { LayoutGrid, Plus, PanelRightClose, PanelRightOpen, X, Brain, Eye, EyeOff } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
+import { getLogger } from "@logtape/logtape";
 import { useEffect, useRef } from "react";
 
 import { closeTab, activateTab } from "../lib/agent-actions.js";
@@ -10,6 +11,8 @@ import { getShortcutLabelForCommand, type CommandId } from "../lib/commands.js";
 import { CommandButton } from "./command-button.js";
 import { FuelGauge } from "./fuel-gauge.js";
 import { ProjectIcon } from "./project-icon.js";
+
+const logger = getLogger(["herman-desktop", "view", "tab-bar"]);
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
@@ -202,7 +205,14 @@ function TabItem({
             }
       }
       data-active-tab={isActive}
-      onClick={() => activateTab(tab.id).catch(() => {})}
+      onClick={() =>
+        activateTab(tab.id).catch((error) => {
+          logger.warning("Failed to activate tab", {
+            tabId: tab.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        })
+      }
       className={cn(
         "group electrobun-webkit-app-region-no-drag relative flex h-8 w-40 max-w-[200px] flex-shrink-0 cursor-default items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
         isActive
@@ -246,7 +256,12 @@ function TabItem({
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                closeTab(tab.id).catch(() => {});
+                closeTab(tab.id).catch((error) => {
+                  logger.warning("Failed to close tab", {
+                    tabId: tab.id,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                });
               }}
               className="text-faint hover:text-text rounded-md p-0.5 opacity-0 transition group-hover:opacity-100 hover:bg-white/[0.08]"
               aria-label="Close tab"

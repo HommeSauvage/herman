@@ -1,18 +1,26 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 describe("hermanExtension", () => {
   const originalEnv = { ...process.env };
   const originalFetch = globalThis.fetch;
+  let cacheDir: string;
 
   beforeEach(() => {
     process.env.HERMAN_SERVER_URL = "http://localhost:4000";
     process.env.HERMAN_SESSION_TOKEN = "session-token";
+    cacheDir = mkdtempSync(join(tmpdir(), "herman-extension-test-"));
+    process.env.HERMAN_APP_DIR = cacheDir;
   });
 
   afterEach(() => {
     process.env = { ...originalEnv };
     vi.restoreAllMocks();
     globalThis.fetch = originalFetch;
+    rmSync(cacheDir, { recursive: true, force: true });
   });
 
   function createMockApi() {
@@ -136,6 +144,91 @@ describe("hermanExtension", () => {
     const config = mockApi._registered[0].config;
     expect(config.api).toBe("openai-completions");
     expect(config.models?.[0].api).toBe("openai-completions");
+  });
+
+  it("falls back to cached models when the server is unreachable on startup", async () => {
+    const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
+
+    // First run: server is reachable, populate the cache.
+    globalThis.fetch = mockFetch([{ id: "kimi-k2.7-code", name: "Kimi K2.7 Code" }]) as unknown as typeof fetch;
+    await hermanExtension(createMockApi().mockApi as never);
+
+    // Second run: server is down, but the cache should still be used.
+    globalThis.fetch = mockFetch([], false) as unknown as typeof fetch;
+    const { mockApi } = createMockApi();
+    await hermanExtension(mockApi as never);
+
+    expect(mockApi._registered).toHaveLength(1);
+    expect(mockApi._registered[0].config.models).toHaveLength(1);
+    expect(mockApi._registered[0].config.models?.[0].id).toBe("kimi-k2.7-code");
+  });
+
+  it("ignores the cache when it belongs to a different server URL", async () => {
+    const cachePath = join(cacheDir, "herman-models-cache.json");
+    writeFileSync(
+      cachePath,
+      JSON.stringify({
+        serverUrl: "http://old-server:4000",
+        fetchedAt: new Date().toISOString(),
+        models: [{ id: "old-model", name: "Old Model" }],
+      }),
+    );
+
+    globalThis.fetch = mockFetch([], false) as unknown as typeof fetch;
+    const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
+    const { mockApi } = createMockApi();
+    await hermanExtension(mockApi as never);
+
+    expect(mockApi._registered).toHaveLength(1);
+    expect(mockApi._registered[0].config.models).toHaveLength(0);
+  });
+
+  it("handles the refresh message and refreshes the model list", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ id: "kimi-k2.7-code", name: "Kimi" }] }),
+        text: async () => "",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ id: "glm-4.5", name: "GLM 4.5" }] }),
+        text: async () => "",
+      });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
+    const { mockApi, mockUi } = createMockApi();
+
+    await hermanExtension(mockApi as never);
+
+    const inputHandlers = mockApi._handlers.get("input") ?? [];
+    expect(inputHandlers).toHaveLength(1);
+
+    const ctx = {
+      model: undefined,
+      ui: mockUi,
+      modelRegistry: {
+        find: vi.fn(),
+        getAvailable: () => [{ id: "glm-4.5", provider: "herman" }],
+      },
+    };
+
+    const result = await inputHandlers[0]({ text: HERMAN_REFRESH_MODELS_MESSAGE }, ctx);
+    expect(result).toEqual({ action: "handled" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const notifications = mockApi._notifications
+      .filter((n): n is string => typeof n === "string")
+      .map((n) => JSON.parse(n));
+    expect(notifications).toContainEqual({
+      type: "models_sync",
+      models: ["herman/glm-4.5"],
+      currentModel: undefined,
+    });
   });
 
   it("registers an empty provider when the server returns no models", async () => {

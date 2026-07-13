@@ -1,4 +1,4 @@
-import { getLogger } from "@logtape/logtape";
+import { dispose, getLogger } from "@logtape/logtape";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -29,11 +29,15 @@ async function createSession(): Promise<string> {
 
 async function injectSession() {
   await configureLogging();
-  const token = await createSession();
-  mkdirSync(join(STATE_PATH, ".."), { recursive: true });
-  await Bun.write(STATE_PATH, JSON.stringify({ session: { token } }, null, 2));
-  logger.info("Injected dev session", { statePath: STATE_PATH });
-  logger.info("Session token prefix", { tokenPrefix: `${token.slice(0, 16)}...` });
+  try {
+    const token = await createSession();
+    mkdirSync(join(STATE_PATH, ".."), { recursive: true });
+    await Bun.write(STATE_PATH, JSON.stringify({ session: { token } }, null, 2));
+    logger.info("Injected dev session", { statePath: STATE_PATH });
+    logger.info("Session token prefix", { tokenPrefix: `${token.slice(0, 16)}...` });
+  } finally {
+    await dispose();
+  }
 }
 
 injectSession().catch((err) => {

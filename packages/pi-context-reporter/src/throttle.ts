@@ -39,6 +39,7 @@ export function createThrottledNotifier(
   getPayload: () => string,
   windowMs: number,
   onError?: (error: unknown) => void,
+  onDrop?: () => void,
 ): ThrottledNotifier {
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -53,7 +54,10 @@ export function createThrottledNotifier(
 
   return {
     schedule: () => {
-      if (timer !== undefined) return;
+      if (timer !== undefined) {
+        onDrop?.();
+        return;
+      }
       timer = setTimeout(emit, windowMs);
     },
     cancel: () => {

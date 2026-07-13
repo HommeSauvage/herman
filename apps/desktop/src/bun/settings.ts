@@ -1,9 +1,13 @@
+import { getLogger } from "@logtape/logtape";
 import { dirname } from "node:path";
 
 import { config } from "../env.js";
 import type { DesktopSettings, HermanProviderSettings, ProviderSettings } from "../shared/rpc.js";
 import { settingsPath } from "./app-paths.js";
 import { ensureDir } from "./fs-utils.js";
+import { logStorageError } from "../logging-shared.js";
+
+const logger = getLogger(["herman-desktop", "storage"]);
 
 const sp = settingsPath;
 
@@ -47,7 +51,12 @@ export async function loadSettings(): Promise<DesktopSettings> {
   const path = sp();
   ensureDir(dirname(path));
   try {
-    const raw = (await Bun.file(path).json()) as Partial<DesktopSettings>;
+    const file = Bun.file(path);
+    if (!(await file.exists())) {
+      logger.debug("Settings file missing; using defaults", { path });
+      return defaultSettings();
+    }
+    const raw = (await file.json()) as Partial<DesktopSettings>;
     // credentialStoreError is transient and should never be persisted.
     const { credentialStoreError: _, ...rawWithoutError } = raw;
     return {
@@ -56,7 +65,8 @@ export async function loadSettings(): Promise<DesktopSettings> {
       providers: migrateProviders(raw.providers),
       models: { ...defaultSettings().models, ...raw.models },
     };
-  } catch {
+  } catch (error) {
+    logStorageError(logger, "loadSettings", path, error);
     return defaultSettings();
   }
 }
@@ -64,13 +74,23 @@ export async function loadSettings(): Promise<DesktopSettings> {
 export async function saveSettings(settings: DesktopSettings): Promise<void> {
   const path = sp();
   ensureDir(dirname(path));
-  // credentialStoreError is transient and should never be persisted.
-  const { credentialStoreError: _, ...toSave } = settings;
-  await Bun.write(path, JSON.stringify(toSave, null, 2));
+  try {
+    // credentialStoreError is transient and should never be persisted.
+    const { credentialStoreError: _, ...toSave } = settings;
+    await Bun.write(path, JSON.stringify(toSave, null, 2));
+  } catch (error) {
+    logStorageError(logger, "saveSettings", path, error);
+    throw error;
+  }
 }
 
 export async function clearSettings(): Promise<void> {
   const path = sp();
   ensureDir(dirname(path));
-  await Bun.write(path, JSON.stringify(defaultSettings(), null, 2));
+  try {
+    await Bun.write(path, JSON.stringify(defaultSettings(), null, 2));
+  } catch (error) {
+    logStorageError(logger, "clearSettings", path, error);
+    throw error;
+  }
 }

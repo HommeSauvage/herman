@@ -92,9 +92,18 @@ function ensureRpcMode(args: string[]): string[] {
 
 const args = ensureRpcMode(process.argv.slice(2));
 
-await main(args, {
-  // The Herman extensions should be loaded as inline factories. 
-  // Other bundled extensions are auto-discovered from the agent settings,
-  // Which pi will install when it starts.
-  extensionFactories: [hermanExtension, contextReporterExtension],
-});
+try {
+  await main(args, {
+    // The Herman extensions should be loaded as inline factories. 
+    // Other bundled extensions are auto-discovered from the agent settings,
+    // Which pi will install when it starts.
+    extensionFactories: [hermanExtension, contextReporterExtension],
+  });
+  logger.info("Agent shutdown cleanly");
+} catch (error) {
+  logger.error("Agent startup or runtime failure", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+  throw error;
+}

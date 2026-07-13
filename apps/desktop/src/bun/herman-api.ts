@@ -1,5 +1,10 @@
 import type { AdClickReport, AdImpressionReport } from "@herman/rpc/ads";
+import { getLogger } from "@logtape/logtape";
+
 import { config } from "../env.js";
+import { logDuration } from "../logging-shared.js";
+
+const logger = getLogger(["herman-desktop", "http"]);
 
 function apiUrl(path: string): string {
   return `${config.serverUrl.replace(/\/$/, "")}${path}`;
@@ -10,7 +15,11 @@ async function apiFetch(
   token: string | undefined,
   init?: RequestInit,
 ): Promise<Response> {
-  return fetch(apiUrl(path), {
+  const method = init?.method ?? "GET";
+  const startMs = Date.now();
+  logger.debug("HTTP request", { method, path });
+
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -18,6 +27,23 @@ async function apiFetch(
       ...init?.headers,
     },
   });
+
+  logDuration(logger, "HTTP response", startMs, {
+    method,
+    path,
+    status: response.status,
+  });
+
+  if (!response.ok) {
+    logger.warning("HTTP request failed", {
+      method,
+      path,
+      status: response.status,
+      statusText: response.statusText,
+    });
+  }
+
+  return response;
 }
 
 export async function exchangeDeviceToken(accessToken: string): Promise<Response> {

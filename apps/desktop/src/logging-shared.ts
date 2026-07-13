@@ -1,4 +1,10 @@
-import { configure, getConsoleSink, type LogLevel, type Sink } from "@logtape/logtape";
+import {
+  configure,
+  getConsoleSink,
+  type LogLevel,
+  type Logger,
+  type Sink,
+} from "@logtape/logtape";
 import { getPrettyFormatter } from "@logtape/pretty";
 import { redactByField } from "@logtape/redaction";
 
@@ -40,4 +46,54 @@ export async function configureBaseLogging(
       { category: ["logtape", "meta"], lowestLevel: "warning", sinks: Object.keys(sinks) },
     ],
   });
+}
+
+export function logDuration(
+  logger: Logger,
+  label: string,
+  startMs: number,
+  meta: Record<string, unknown> = {},
+): void {
+  logger.debug(label, { ...meta, durationMs: Date.now() - startMs });
+}
+
+export function logStorageError(
+  logger: Logger,
+  operation: string,
+  path: string,
+  error: unknown,
+): void {
+  logger.warning("Storage operation failed", {
+    operation,
+    path,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
+
+type RpcHandler = (params: any) => any;
+
+export function wrapRpcHandlers<T extends Record<string, RpcHandler>>(
+  logger: Logger,
+  handlers: T,
+): T {
+  const wrapped = {} as T;
+  for (const [method, handler] of Object.entries(handlers)) {
+    wrapped[method as keyof T] = (async (params: any) => {
+      const startMs = Date.now();
+      logger.trace("RPC request", { method, params });
+      try {
+        const result = await handler(params);
+        logger.trace("RPC request completed", { method, durationMs: Date.now() - startMs });
+        return result;
+      } catch (error) {
+        logger.error("RPC request failed", {
+          method,
+          durationMs: Date.now() - startMs,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    }) as T[keyof T];
+  }
+  return wrapped;
 }

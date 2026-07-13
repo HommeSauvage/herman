@@ -1,9 +1,14 @@
 import { dirname } from "node:path";
 
+import { getLogger } from "@logtape/logtape";
+
 import type { TabId, PersistedSession } from "../shared/rpc.js";
 import { createTabId, getProjectColor, getProjectName } from "../shared/tab-utils.js";
 import { windowStatePath } from "./app-paths.js";
 import { ensureDir } from "./fs-utils.js";
+import { logStorageError } from "../logging-shared.js";
+
+const logger = getLogger(["herman-desktop", "storage"]);
 
 const wsp = windowStatePath;
 
@@ -99,9 +104,15 @@ export async function loadWindowState(): Promise<WindowState> {
   const path = wsp();
   ensureDir(dirname(path));
   try {
-    const raw = (await Bun.file(path).json()) as WindowState;
+    const file = Bun.file(path);
+    if (!(await file.exists())) {
+      logger.debug("Window state file missing", { path });
+      return {};
+    }
+    const raw = (await file.json()) as WindowState;
     return migrateWindowState(raw);
-  } catch {
+  } catch (error) {
+    logStorageError(logger, "loadWindowState", path, error);
     return {};
   }
 }
@@ -109,8 +120,13 @@ export async function loadWindowState(): Promise<WindowState> {
 export async function saveWindowState(state: WindowState) {
   const path = wsp();
   ensureDir(dirname(path));
-  const existing = await loadWindowState();
-  await Bun.write(path, JSON.stringify({ ...existing, ...state }, null, 2));
+  try {
+    const existing = await loadWindowState();
+    await Bun.write(path, JSON.stringify({ ...existing, ...state }, null, 2));
+  } catch (error) {
+    logStorageError(logger, "saveWindowState", path, error);
+    throw error;
+  }
 }
 
 export async function clearWindowState(): Promise<void> {

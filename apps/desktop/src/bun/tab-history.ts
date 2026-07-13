@@ -1,3 +1,4 @@
+import { getLogger } from "@logtape/logtape";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -5,6 +6,9 @@ import type { ContextStats, Message } from "../shared/rpc.js";
 import type { TabId } from "../shared/tab-utils.js";
 import { historyDir as appHistoryDir } from "./app-paths.js";
 import { ensureDir } from "./fs-utils.js";
+import { logStorageError } from "../logging-shared.js";
+
+const logger = getLogger(["herman-desktop", "storage"]);
 
 export type TabHistoryCache = {
   version: 1;
@@ -42,20 +46,29 @@ export async function saveTabHistory(
   messages: Message[],
   extras?: TabHistorySaveExtras,
 ): Promise<void> {
-  ensureDir(historyDir());
-  const cache: TabHistoryCache = {
-    version: 1,
-    messages,
-    contextStats: extras?.contextStats,
-    piSessionId: extras?.piSessionId,
-    updatedAt: Date.now(),
-  };
-  await Bun.write(historyPath(tabId), JSON.stringify(cache, null, 2));
+  const path = historyPath(tabId);
+  try {
+    ensureDir(historyDir());
+    const cache: TabHistoryCache = {
+      version: 1,
+      messages,
+      contextStats: extras?.contextStats,
+      piSessionId: extras?.piSessionId,
+      updatedAt: Date.now(),
+    };
+    await Bun.write(path, JSON.stringify(cache, null, 2));
+  } catch (error) {
+    logStorageError(logger, "saveTabHistory", path, error);
+    throw error;
+  }
 }
 
 export async function loadTabHistoryCache(tabId: TabId): Promise<TabHistoryCache | null> {
+  const path = historyPath(tabId);
   try {
-    const raw = await Bun.file(historyPath(tabId)).json();
+    const file = Bun.file(path);
+    if (!(await file.exists())) return null;
+    const raw = await file.json();
     if (isTabHistoryCache(raw)) {
       return raw;
     }
@@ -66,8 +79,10 @@ export async function loadTabHistoryCache(tabId: TabId): Promise<TabHistoryCache
         updatedAt: Date.now(),
       };
     }
+    logger.warning("Tab history cache is corrupt", { tabId, path });
     return null;
-  } catch {
+  } catch (error) {
+    logStorageError(logger, "loadTabHistoryCache", path, error);
     return null;
   }
 }
@@ -78,10 +93,14 @@ export async function loadTabHistory(tabId: TabId): Promise<Message[]> {
 }
 
 export async function deleteTabHistory(tabId: TabId) {
+  const path = historyPath(tabId);
   try {
-    unlinkSync(historyPath(tabId));
-  } catch {
-    // history file may not exist
+    unlinkSync(path);
+  } catch (error) {
+    const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
+    if (!missing) {
+      logStorageError(logger, "deleteTabHistory", path, error);
+    }
   }
 }
 
@@ -90,8 +109,8 @@ export async function clearAllTabHistory(): Promise<void> {
   for (const file of files) {
     try {
       unlinkSync(join(historyDir(), file));
-    } catch {
-      // ignore
+    } catch (error) {
+      logStorageError(logger, "clearAllTabHistory", join(historyDir(), file), error);
     }
   }
 }

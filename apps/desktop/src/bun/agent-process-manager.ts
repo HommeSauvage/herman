@@ -175,8 +175,16 @@ export class AgentProcessManager {
 
       await this.persist();
 
+      const tabs = this.getOpenTabs();
+      logger.info("Restored agent sessions", {
+        tabCount: tabs.length,
+        activeTabId: this.store.activeTabId,
+        projectCount: this.store.projects.length,
+        sessionCount: this.store.sessions.size,
+      });
+
       return {
-        tabs: this.getOpenTabs(),
+        tabs,
         activeTabId: this.store.activeTabId,
         projects: [...this.store.projects],
         sessions: [...this.store.sessions.values()],
@@ -225,6 +233,7 @@ export class AgentProcessManager {
       this.agentRuntime.schedule(tab.id);
     }
     await this.persist();
+    logger.debug("Created tab", { tabId: tab.id, folderPath: tab.folderPath });
     return tab;
   }
 
@@ -281,6 +290,7 @@ export class AgentProcessManager {
   }
 
   async closeTab(tabId: TabId): Promise<TabId | undefined> {
+    logger.debug("Closing tab in manager", { tabId });
     const tab = this.store.tabs.get(tabId);
 
     this.clearComposerDraftTimer(tabId);
@@ -336,6 +346,7 @@ export class AgentProcessManager {
   }
 
   async activateTab(tabId: TabId): Promise<void> {
+    logger.debug("Activating tab in manager", { tabId });
     if (!this.store.tabs.has(tabId)) return;
     this.store.activeTabId = tabId;
     await this.persist();
@@ -990,6 +1001,9 @@ export class AgentProcessManager {
       messages: updated.messages,
       contextStats: updated.contextStats,
     });
+    if (instant.hydrationStatus === "pending" && persisted.folderPath) {
+      logger.debug("Tab message hydration pending", { tabId: persisted.id });
+    }
     this.store.tabs.set(persisted.id, updated);
     void this.persistTabHistoryCache(persisted.id, updated, instant.piSessionId);
     return updated;

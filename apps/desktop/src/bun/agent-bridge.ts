@@ -1,15 +1,19 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { getLogger } from "@logtape/logtape";
+
 import { config } from "../env.js";
 import type { AgentCommand, AgentEvent } from "../shared/agent-protocol.js";
 import { parseAdEventFromNotify, parseHermanEventFromNotify } from "../shared/agent-protocol.js";
 import type { TabId } from "../shared/rpc.js";
-import { agentConfigsDir, skillsDir } from "./app-paths.js";
+import { agentConfigsDir, hermanDir, skillsDir } from "./app-paths.js";
 import { AgentProcess } from "./agent-process.js";
 import { refreshAllOAuthCredentials } from "./credentials.js";
 import { writeFileAtomically } from "./fs-utils.js";
 import { resolvePiSessionResumeArg } from "./pi-session.js";
+
+const logger = getLogger(["herman-desktop", "agent-bridge"]);
 
 export type AgentBridgeState = "idle" | "starting" | "running" | "crashed";
 
@@ -57,6 +61,7 @@ export class AgentBridge {
 
     const env: Record<string, string> = {
       HERMAN_AGENT_DIR: agentDir,
+      HERMAN_APP_DIR: hermanDir(),
       HERMAN_CLIENT_VERSION: "0.0.1",
       HERMAN_TAB_ID: this.tabId,
       ...(opts?.mode ? { HERMAN_MODE: opts.mode } : {}),
@@ -69,6 +74,14 @@ export class AgentBridge {
     }
 
     const sessionArg = resolvePiSessionResumeArg(agentDir, opts?.piSessionId);
+
+    logger.info("Starting agent subprocess", {
+      tabId: this.tabId,
+      binaryPath,
+      cwd: this.folderPath,
+      sessionArg: sessionArg ?? null,
+      hermanEnabled,
+    });
 
     this.process = new AgentProcess({
       binaryPath,
@@ -115,14 +128,20 @@ export class AgentBridge {
     });
 
     this.process.rpc.onError((error) => {
+      logger.warning("Agent subprocess error", {
+        tabId: this.tabId,
+        error: error.message,
+      });
       this.notifyStatus("crashed", error.message);
     });
 
     await this.process.start();
+    logger.info("Agent subprocess running", { tabId: this.tabId, pid: this.process.pid });
     this.notifyStatus("running");
   }
 
   async stop() {
+    logger.info("Stopping agent subprocess", { tabId: this.tabId });
     await this.process?.stop();
     this.process = undefined;
     // Keep the per-tab agent directory so PI session artifacts survive

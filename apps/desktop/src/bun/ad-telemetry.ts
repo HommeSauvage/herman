@@ -1,5 +1,9 @@
+import { getLogger } from "@logtape/logtape";
+
 import { loadState } from "./session.js";
 import { reportWindowFocus } from "./herman-api.js";
+
+const logger = getLogger(["herman-desktop", "ad-telemetry"]);
 
 type VisibilityState = {
   focused: boolean;
@@ -44,8 +48,10 @@ export class AdTelemetry {
         visible: this.state.visible,
         timestamp: Date.now(),
       });
-    } catch {
-      // best-effort telemetry
+    } catch (error) {
+      logger.debug("Window focus telemetry failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

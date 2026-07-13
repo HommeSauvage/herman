@@ -3,11 +3,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/t
 import { cn } from "@herman/ui/lib/utils";
 import { ArrowUp, Clock, Square } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { getLogger } from "@logtape/logtape";
 import { useEffect, useRef } from "react";
 
 import type { TabId } from "../../../shared/rpc.js";
 import { abortAgent } from "../lib/agent-actions.js";
 import { useIsActiveTabWorking } from "../lib/agent-store.js";
+
+const logger = getLogger(["herman-desktop", "view", "composer"]);
 
 type ComposerActionsProps = {
   tabId: TabId | undefined;
@@ -55,7 +58,15 @@ export function ComposerActions({
           render={
             <button
               aria-label="Stop"
-              onClick={() => tabId && abortAgent(tabId).catch(() => {})}
+              onClick={() =>
+                tabId &&
+                abortAgent(tabId).catch((error) => {
+                  logger.warning("Failed to abort agent from composer", {
+                    tabId,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                })
+              }
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 transition hover:bg-red-500/20 active:scale-[0.96]"
             />
           }

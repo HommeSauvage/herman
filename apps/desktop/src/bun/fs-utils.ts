@@ -1,5 +1,10 @@
+import { getLogger } from "@logtape/logtape";
 import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+import { logStorageError } from "../logging-shared.js";
+
+const logger = getLogger(["herman-desktop", "storage"]);
 
 export function ensureDir(path: string) {
   try {
@@ -30,6 +35,7 @@ export function writeFileAtomically(path: string, data: string, mode = 0o600) {
     } catch {
       // temp file may not exist
     }
+    logStorageError(logger, "atomicWrite", path, error);
     throw error;
   }
 }

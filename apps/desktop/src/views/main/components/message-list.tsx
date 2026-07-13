@@ -1,4 +1,5 @@
 import { motion } from "motion/react";
+import { getLogger } from "@logtape/logtape";
 import { useCallback, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { toast } from "sonner";
@@ -19,6 +20,7 @@ import { ThinkingRow } from "./thinking-row.js";
 import { UndoConfirmDialog } from "./undo-confirm-dialog.js";
 
 const EMPTY_THINKING: Message[] = [];
+const logger = getLogger(["herman-desktop", "view", "message-list"]);
 
 export function MessageList({
   messages,
@@ -80,7 +82,12 @@ export function MessageList({
     async (messageId: string) => {
       if (!tabId) return;
       try {
-        await desktopRpc.request.abortAgent({ tabId }).catch(() => {});
+        await desktopRpc.request.abortAgent({ tabId }).catch((error) => {
+          logger.warning("Failed to abort agent from message list", {
+            tabId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
 
         const state = useAgentStore.getState();
         const tab = state.tabs[tabId];

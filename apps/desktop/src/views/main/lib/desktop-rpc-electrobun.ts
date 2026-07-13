@@ -74,6 +74,33 @@ if (import.meta.env.DEV && rpc.setTransport) {
     };
     originalSetTransport(wrapped);
   };
+} else if (rpc.setTransport) {
+  const originalSetTransport = rpc.setTransport.bind(rpc);
+  rpc.setTransport = (transport) => {
+    const wrapped: typeof transport = {
+      ...transport,
+      send(message) {
+        const method =
+          message && typeof message === "object" && "method" in message
+            ? String((message as { method?: unknown }).method ?? "unknown")
+            : "unknown";
+        logger.trace("[desktop-rpc] send", { method });
+        transport.send?.(message);
+      },
+      registerHandler(handler) {
+        const wrappedHandler: typeof handler = (message) => {
+          const method =
+            message && typeof message === "object" && "method" in message
+              ? String((message as { method?: unknown }).method ?? "unknown")
+              : "unknown";
+          logger.trace("[desktop-rpc] receive", { method });
+          handler(message);
+        };
+        transport.registerHandler?.(wrappedHandler);
+      },
+    };
+    originalSetTransport(wrapped);
+  };
 }
 
 new Electroview({ rpc });

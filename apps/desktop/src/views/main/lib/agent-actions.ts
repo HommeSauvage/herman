@@ -1,7 +1,11 @@
+import { getLogger } from "@logtape/logtape";
+
 import type { TabId } from "../../../shared/rpc.js";
 import { isTabAgentRunning, useAgentStore } from "./agent-store.js";
 import { desktopRpc } from "./desktop-rpc.js";
 import { formatAttachmentsForPrompt } from "./attachment-format.js";
+
+const logger = getLogger(["herman-desktop", "view", "agent-actions"]);
 
 export async function sendPrompt(tabId: TabId, text: string) {
   const store = useAgentStore.getState();
@@ -27,9 +31,11 @@ export async function sendPrompt(tabId: TabId, text: string) {
       command: { type: "prompt", message, ...(messageId ? { messageId } : {}) },
     });
   } catch (error) {
+    const stderr = error instanceof Error ? error.message : String(error);
+    logger.warning("Failed to send prompt", { tabId, error: stderr });
     store.setConnectionState(tabId, {
       state: "crashed",
-      stderr: error instanceof Error ? error.message : String(error),
+      stderr,
     });
   }
 }
@@ -38,7 +44,14 @@ export async function abortAgent(tabId: TabId) {
   // Clear the UI streaming state immediately so the stop button always
   // feels responsive, even if the abort RPC is slow or fails.
   useAgentStore.getState().stopStreaming(tabId);
-  await desktopRpc.request.abortAgent({ tabId });
+  try {
+    await desktopRpc.request.abortAgent({ tabId });
+  } catch (error) {
+    logger.warning("Failed to abort agent", {
+      tabId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /** Tracks tabs with an in-flight retry to prevent concurrent restarts. */
@@ -90,9 +103,11 @@ export async function retryAgent(tabId: TabId) {
       });
     }
   } catch (error) {
+    const stderr = error instanceof Error ? error.message : String(error);
+    logger.warning("Failed to retry agent", { tabId, error: stderr });
     store.setConnectionState(tabId, {
       state: "crashed",
-      stderr: error instanceof Error ? error.message : String(error),
+      stderr,
     });
     throw error;
   } finally {
@@ -116,20 +131,22 @@ export async function selectModel(tabId: TabId, modelId: string) {
   }
 }
 
-export async function requestAvailableModels(tabId: TabId) {
+export async function refreshHermanModels(tabId: TabId) {
   if (!isTabAgentRunning(tabId)) {
-    // The agent must be running to answer this request; otherwise the list
-    // is populated later via herman/models_sync events.
+    // The agent must be running for the Herman extension to refresh.
     return;
   }
   try {
-    await desktopRpc.request.agentRequest({
-      tabId,
-      command: { type: "get_available_models" },
-    });
+    await desktopRpc.request.refreshHermanModels({ tabId });
   } catch {
     // Best-effort: models are also pushed via herman/models_sync events.
   }
+}
+
+export async function requestAvailableModels(tabId: TabId) {
+  // Kept for backwards compatibility; opening the model selector now triggers
+  // a silent Herman refresh via refreshHermanModels instead.
+  return refreshHermanModels(tabId);
 }
 
 export async function setTabFolder(tabId: TabId, folderPath?: string) {

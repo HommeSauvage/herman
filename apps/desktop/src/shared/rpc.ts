@@ -550,6 +550,10 @@ export type HermanDesktopRPC = {
         params: undefined;
         response: ProviderMetadata[];
       };
+      refreshHermanModels: {
+        params: { tabId: TabId };
+        response: undefined;
+      };
       getTemplates: {
         params: undefined;
         response: TemplateManifest[];

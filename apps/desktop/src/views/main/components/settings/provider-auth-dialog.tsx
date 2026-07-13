@@ -9,12 +9,15 @@ import {
 } from "@herman/ui/components/dialog";
 import { Input } from "@herman/ui/components/input";
 import { Label } from "@herman/ui/components/label";
+import { getLogger } from "@logtape/logtape";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import type { AuthMethod, ProviderMetadata } from "../../../../shared/rpc.js";
 import { useAgentStore } from "../../lib/agent-store.js";
 import { desktopRpc } from "../../lib/desktop-rpc.js";
+
+const logger = getLogger(["herman-desktop", "view", "provider-auth"]);
 
 type ProviderAuthDialogProps = {
   provider: ProviderMetadata;
@@ -82,7 +85,12 @@ export function ProviderAuthDialog({ provider, open, onOpenChange }: ProviderAut
       if (credentialSaved) {
         await desktopRpc.request
           .removeProviderCredentials({ providerId: provider.id })
-          .catch(() => {});
+          .catch((error) => {
+            logger.warning("Failed to roll back provider credentials", {
+              providerId: provider.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
       }
       setSettings(prevSettings);
       toast.error("Failed to save provider credentials.");

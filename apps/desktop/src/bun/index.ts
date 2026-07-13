@@ -2,6 +2,7 @@ import { getLogger } from "@logtape/logtape";
 import { BrowserWindow, BrowserView, ApplicationMenu, Updater, Utils } from "electrobun/bun";
 import type { ApplicationMenuItemConfig } from "electrobun/bun";
 
+import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
 import { config } from "../env.js";
 import { configureLogging } from "../logging.js";
 import { parseAdEventFromNotify } from "../shared/agent-protocol.js";
@@ -39,6 +40,20 @@ import {
 
 await configureLogging();
 const logger = getLogger(["herman-desktop", "main"]);
+
+process.on("uncaughtException", (error) => {
+  logger.error("Uncaught exception in main process", {
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled rejection in main process", {
+    error: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+});
 
 resolveShellEnv();
 logger.info("Herman desktop main process starting", { authUrl: config.authUrl });
@@ -249,7 +264,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         }
       },
       checkDeviceActivation: async ({ deviceCode }) => {
-        logger.debug("Checking device activation", { deviceCode: deviceCode.slice(0, 8) });
+        logger.trace("Checking device activation", { deviceCode: deviceCode.slice(0, 8) });
         return checkDeviceActivation(deviceCode);
       },
       getSession: async () => {
@@ -291,7 +306,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         await Updater.applyUpdate();
       },
       createTab: async ({ folderPath, title }) => {
-        logger.debug("Creating tab", { folderPath, title });
+        logger.trace("Creating tab", { folderPath, title });
         const tab = await agentProcessManager.createTab(folderPath, title);
         webviewRpc.send.tabCreated({ tab });
         webviewRpc.send.tabActivated({ tabId: tab.id });
@@ -300,7 +315,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         return tab;
       },
       closeTab: async ({ tabId }) => {
-        logger.debug("Closing tab", { tabId });
+        logger.trace("Closing tab", { tabId });
         const newActiveId = await agentProcessManager.closeTab(tabId);
         webviewRpc.send.tabClosed({ tabId });
         notifySessionsChanged();
@@ -312,7 +327,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         }
       },
       activateTab: async ({ tabId }) => {
-        logger.debug("Activating tab", { tabId });
+        logger.trace("Activating tab", { tabId });
         await agentProcessManager.activateTab(tabId);
         webviewRpc.send.tabActivated({ tabId });
         if (pendingNotificationTabId && pendingNotificationTabId !== tabId) {
@@ -320,11 +335,11 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         }
       },
       setTabFolder: async ({ tabId, folderPath }) => {
-        logger.debug("Setting tab folder", { tabId, folderPath });
+        logger.trace("Setting tab folder", { tabId, folderPath });
         return agentProcessManager.setTabFolder(tabId, folderPath);
       },
       selectTabProject: async ({ tabId, folderPath }) => {
-        logger.debug("Selecting tab project", { tabId, folderPath });
+        logger.trace("Selecting tab project", { tabId, folderPath });
         return agentProcessManager.selectTabProject(tabId, folderPath);
       },
       getTabs: async () => {
@@ -336,7 +351,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         return agentProcessManager.getProjectsAndSessions();
       },
       openProject: async ({ folderPath }) => {
-        logger.debug("Opening project", { folderPath });
+        logger.trace("Opening project", { folderPath });
         const result = await agentProcessManager.openProject(folderPath);
         if (result.folderPath) {
           notifyProjectOpened(result.folderPath);
@@ -344,13 +359,13 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         return result;
       },
       closeProject: async ({ folderPath }) => {
-        logger.debug("Closing project", { folderPath });
+        logger.trace("Closing project", { folderPath });
         await agentProcessManager.closeProject(folderPath);
         notifyProjectsChanged();
         notifySessionsChanged();
       },
       openSession: async ({ sessionId }) => {
-        logger.debug("Opening session", { sessionId });
+        logger.trace("Opening session", { sessionId });
         const tab = await agentProcessManager.openSession(sessionId);
         if (tab) {
           webviewRpc.send.tabCreated({ tab });
@@ -368,16 +383,16 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         return agentProcessManager.retryTabMessageHydration(tabId);
       },
       setComposerDraft: async ({ tabId, value }) => {
-        logger.debug("Setting composer draft", { tabId });
+        logger.trace("Setting composer draft", { tabId });
         await agentProcessManager.setComposerDraft(tabId, value);
       },
       findProjectFiles: async ({ folderPath, query, includeDirectories }) => {
-        logger.debug("Finding project files", { folderPath, query });
+        logger.trace("Finding project files", { folderPath, query });
         const paths = await findProjectFiles(folderPath, query, includeDirectories);
         return { paths };
       },
       openFilePicker: async (options) => {
-        logger.debug("Opening file picker", { options });
+        logger.trace("Opening file picker", { options });
         const files = await openFilePicker(options);
         return { files };
       },
@@ -450,7 +465,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       reportImpression: async (params) => {
         if (!isHermanEnabled()) return;
-        logger.debug("Reporting ad impression", {
+        logger.trace("Reporting ad impression", {
           campaignId: params.campaignId,
           placement: params.placement,
         });
@@ -461,7 +476,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       reportAdClick: async (params) => {
         if (!isHermanEnabled()) return { destinationUrl: undefined };
-        logger.debug("Reporting ad click", {
+        logger.trace("Reporting ad click", {
           campaignId: params.campaignId,
           placement: params.placement,
         });
@@ -531,9 +546,15 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       getAvailableProviders: async () => {
         return BUILTIN_PROVIDERS;
       },
+      refreshHermanModels: async ({ tabId }) => {
+        agentProcessManager.sendRaw(tabId, {
+          type: "prompt",
+          message: HERMAN_REFRESH_MODELS_MESSAGE,
+        });
+      },
       getTemplates: async () => {
         const templates = await loadTemplates();
-        logger.debug("Returning templates", { count: templates.length });
+        logger.trace("Returning templates", { count: templates.length });
         return templates;
       },
       createProjectFromTemplate: async ({ templateId, projectName, parentDir }) => {
@@ -726,7 +747,7 @@ const agentProcessManager = new AgentProcessManager({
             ? parseAdEventFromNotify(event.message)
             : undefined;
         if (adEvent) {
-          logger.debug("Ad event from agent", {
+          logger.trace("Ad event from agent", {
             placement: adEvent.placement,
             campaignId: adEvent.campaign.id,
           });
@@ -747,13 +768,13 @@ const agentProcessManager = new AgentProcessManager({
         if (state === "crashed" && stderr) {
           logger.error("Agent crashed", { tabId, stderr: stderr.slice(0, 2000) });
         } else {
-          logger.info("Agent status changed", { tabId, state });
+          logger.debug("Agent status changed", { tabId, state });
         }
         webviewRpc.send.agentStatusChanged({ tabId, state, stderr });
       },
       tabFolderChanged: (payload) => {
         const { tabId, folderPath } = payload;
-        logger.debug("Tab folder changed", { tabId, folderPath });
+        logger.trace("Tab folder changed", { tabId, folderPath });
         webviewRpc.send.tabFolderChanged({ tabId, folderPath });
       },
       sessionsChanged: (payload) => {
@@ -879,6 +900,7 @@ async function handleAuthResponse<T>(response: Response): Promise<T | undefined>
 }
 
 async function doSignOut() {
+  logger.info("Signing out");
   await clearSession();
   await agentProcessManager.clearAllTabs();
   notifySessionChanged(undefined);
@@ -969,7 +991,7 @@ async function pollActivation() {
     return;
   }
 
-  logger.debug("Polling device activation");
+  logger.trace("Polling device activation");
   const result = await checkDeviceActivation(currentActivation.deviceCode);
 
   if (result.status === "unauthorized") {
@@ -1028,7 +1050,12 @@ async function validateSession(token: string): Promise<boolean> {
     return response.status !== 401;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.warning("Could not validate session with Herman server", { error: message });
+    const isAbort = error instanceof Error && error.name === "AbortError";
+    if (isAbort) {
+      logger.debug("Skipping session validation (offline or timed out)", { error: message });
+    } else {
+      logger.debug("Could not validate session with Herman server", { error: message });
+    }
     return true;
   } finally {
     clearTimeout(timeout);
@@ -1224,7 +1251,7 @@ function wireNavigationRules(mainWindow: BrowserWindow, allowedOrigin?: string) 
       try {
         Utils.openExternal(targetUrl);
       } catch (err) {
-        logger.warn("Failed to open external URL", {
+        logger.warning("Failed to open external URL", {
           url: targetUrl,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -1247,7 +1274,7 @@ function wireNavigationRules(mainWindow: BrowserWindow, allowedOrigin?: string) 
       try {
         Utils.openExternal(targetUrl);
       } catch (err) {
-        logger.warn("Failed to open external URL", {
+        logger.warning("Failed to open external URL", {
           url: targetUrl,
           error: err instanceof Error ? err.message : String(err),
         });

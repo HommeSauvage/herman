@@ -5,6 +5,7 @@ import { defineConfig } from "vite";
 export default defineConfig({
   root: "web",
   base: "./",
+  envPrefix: ["VITE_", "HERMAN_DESKTOP_LOG"],
   resolve: {
     tsconfigPaths: true,
   },

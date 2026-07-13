@@ -1,7 +1,10 @@
 import { Sparkles, Copy, ExternalLink, ArrowLeft, Loader2 } from "lucide-react";
+import { getLogger } from "@logtape/logtape";
 import { useEffect, useState } from "react";
 
 import { desktopRpc } from "../lib/desktop-rpc.js";
+
+const logger = getLogger(["herman-desktop", "view", "login"]);
 
 export function LoginView() {
   const [code, setCode] = useState<string | null>(null);
@@ -38,8 +41,10 @@ export function LoginView() {
       setStatus("Your browser should have opened. Use the code below if needed.");
       desktopRpc.send.openVerificationUrl();
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start sign in";
+      logger.warning("Sign in failed", { error: message });
       setIsError(true);
-      setStatus(error instanceof Error ? error.message : "Failed to start sign in");
+      setStatus(message);
     } finally {
       setIsLoading(false);
     }

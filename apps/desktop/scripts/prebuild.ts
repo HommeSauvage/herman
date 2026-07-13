@@ -1,4 +1,4 @@
-import { getLogger } from "@logtape/logtape";
+import { dispose, getLogger } from "@logtape/logtape";
 import { $ } from "bun";
 import { parseArgs } from "node:util";
 
@@ -18,12 +18,16 @@ const isDev = values.dev ?? false;
 
 await configureLogging();
 
-if (isDev) {
-  logger.info("Herman dev prebuild complete (renderer handled by electrobun dev).");
-} else {
-  logger.info("Building Herman agent…");
-  await $`bun run --filter=@herman/agent build`;
-  logger.info("Building Herman renderer…");
-  await $`bun node_modules/vite/dist/node/cli.js build`;
-  logger.info("Herman prebuild complete.");
+try {
+  if (isDev) {
+    logger.info("Herman dev prebuild complete (renderer handled by electrobun dev).");
+  } else {
+    logger.info("Building Herman agent…");
+    await $`bun run --filter=@herman/agent build`;
+    logger.info("Building Herman renderer…");
+    await $`bun node_modules/vite/dist/node/cli.js build`;
+    logger.info("Herman prebuild complete.");
+  }
+} finally {
+  await dispose();
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
+import { getLogger } from "@logtape/logtape";
 
 import type { AdCampaign, AgentEvent } from "../../../shared/agent-protocol.js";
 import { isContextTool } from "../../../shared/context-tools.js";
@@ -7,6 +8,8 @@ import type { AgentStatus, TabId, TabMessagesHydrated } from "../../../shared/rp
 import { retryAgent } from "../lib/agent-actions.js";
 import { isTabAgentRunning, useAgentStore, useAppStore } from "../lib/agent-store.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
+
+const logger = getLogger(["herman-desktop", "view", "agent-stream"]);
 
 const FAST_POLL_MS = 120;
 const IDLE_POLL_MS = 2000;
@@ -181,8 +184,11 @@ function useAgentEventPolling() {
               : {}),
           });
         }
-      } catch {
-        // Best-effort.
+      } catch (error) {
+        logger.debug("Tab state poll failed", {
+          tabId: activeTabId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       scheduleNext(streaming ? FAST_POLL_MS : IDLE_POLL_MS);
@@ -256,8 +262,11 @@ function useAutoRetry() {
 
         // Time to retry! Trigger the retry — the subsequent connection state
         // change will clear or increment retryState as appropriate.
-        void retryAgent(tab.id).catch(() => {
-          // Error will surface via connectionState.
+        void retryAgent(tab.id).catch((error) => {
+          logger.warning("Scheduled agent retry failed", {
+            tabId: tab.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
       }
     };
@@ -297,8 +306,11 @@ function useMessageHydrationRetry() {
               result.contextStats,
             );
           })
-          .catch(() => {
-            // Best-effort retry.
+          .catch((error) => {
+            logger.warning("Message hydration retry failed", {
+              tabId: payload.tabId,
+              error: error instanceof Error ? error.message : String(error),
+            });
           });
       }, 500);
     };
@@ -325,11 +337,15 @@ export function useAgentStream() {
   useMessageHydrationRetry();
 
   useEffect(() => {
+    logger.debug("Agent event stream attached");
     const listener = ({ tabId, event }: { tabId: TabId; event: AgentEvent }) => {
       processAgentEvent(tabId, event);
     };
     desktopRpc.addMessageListener("agentEvent", listener);
-    return () => desktopRpc.removeMessageListener("agentEvent", listener);
+    return () => {
+      logger.debug("Agent event stream detached");
+      desktopRpc.removeMessageListener("agentEvent", listener);
+    };
   }, []);
 
   useEffect(() => {
@@ -386,8 +402,11 @@ export function useAgentStream() {
 
     void desktopRpc.request
       .agentRequest({ tabId: activeTabId, command: { type: "get_state" } })
-      .catch(() => {
-        // Best-effort: the polling fallback keeps the tab state in sync.
+      .catch((error) => {
+        logger.debug("Initial agent state sync failed", {
+          tabId: activeTabId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
   }, [session, activeTabId, activeTabConnectionState]);
 

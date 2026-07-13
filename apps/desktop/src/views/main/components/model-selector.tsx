@@ -5,7 +5,7 @@ import type { ElementType } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
-import { selectModel, requestAvailableModels } from "../lib/agent-actions.js";
+import { refreshHermanModels, selectModel } from "../lib/agent-actions.js";
 import { useAgentStore } from "../lib/agent-store.js";
 
 const EMPTY_MODELS: string[] = [];
@@ -52,6 +52,20 @@ function groupModels(models: string[]): GroupedModels[] {
   }));
 }
 
+function sortModelsHermanFirst(models: string[]): string[] {
+  return [...models].sort((a, b) => {
+    const [aProvider, ...aRest] = a.split("/");
+    const [bProvider, ...bRest] = b.split("/");
+    const aHerman = aProvider === HERMAN_PROVIDER_ID ? -1 : 1;
+    const bHerman = bProvider === HERMAN_PROVIDER_ID ? -1 : 1;
+    if (aHerman !== bHerman) return aHerman - bHerman;
+    if (aProvider !== bProvider) return aProvider.localeCompare(bProvider);
+    const aId = aRest.join("/");
+    const bId = bRest.join("/");
+    return aId.localeCompare(bId);
+  });
+}
+
 export function ModelSelector() {
   const open = useAgentStore((s) => s.ui.modelSelectorOpen);
   const setModelSelectorOpen = useAgentStore((s) => s.setModelSelectorOpen);
@@ -86,7 +100,7 @@ export function ModelSelector() {
     [models, hiddenModels, enabledProviders],
   );
   const filteredModels = useMemo(
-    () => visibleModels.filter((id) => id.toLowerCase().includes(query)),
+    () => sortModelsHermanFirst(visibleModels.filter((id) => id.toLowerCase().includes(query))),
     [visibleModels, query],
   );
   const grouped = useMemo(() => groupModels(filteredModels), [filteredModels]);
@@ -107,10 +121,11 @@ export function ModelSelector() {
       setSearch("");
       setFocusedIndex(-1);
       inputRef.current?.focus();
-      // Proactively request models if none are available yet (the
-      // herman/models_sync event may have been lost via unreliable IPC).
-      if (models.length === 0 && tabId) {
-        void requestAvailableModels(tabId);
+      // Refresh Herman models each time the selector opens. The refresh is
+      // silent (no loading UI); the updated herman/models_sync event will
+      // update the list if the server is now reachable.
+      if (tabId && settings.providers.herman.enabled) {
+        void refreshHermanModels(tabId);
       }
     }
   }, [open]);

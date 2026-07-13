@@ -217,8 +217,10 @@ function settleFlow(flow: OAuthFlow, result: OAuthFlowResult) {
   flow.result = result;
   clearTimeout(flow.timeout);
   if (result.status === "error") {
+    logger.warning("OAuth flow failed", { providerId: flow.providerId, error: result.error });
     flow.reject(new Error(result.error));
   } else {
+    logger.info("OAuth flow authorized", { providerId: flow.providerId });
     flow.resolve(result);
   }
 }

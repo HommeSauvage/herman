@@ -79,6 +79,7 @@ async function getEncryptionKey(): Promise<{ key: Buffer; fromKeychain: boolean 
     return cachedEncryptionKey;
   }
 
+  logger.info("OS keychain unavailable; using machine-derived encryption key fallback");
   return { key: machineKey(), fromKeychain: false };
 }
 
@@ -150,6 +151,7 @@ async function saveCredentials(credentials: Record<string, ProviderCredential>):
 }
 
 export async function getCredential(providerId: string): Promise<ProviderCredential | undefined> {
+  logger.debug("Loading provider credential", { providerId });
   const credentials = await loadCredentials();
   return credentials[providerId];
 }
@@ -200,6 +202,7 @@ export async function setCredential(
   providerId: string,
   credential: ProviderCredential,
 ): Promise<void> {
+  logger.debug("Saving provider credential", { providerId, type: credential.type });
   await withCredentialLock(async () => {
     const credentials = await loadCredentials();
     credentials[providerId] = credential;
@@ -208,6 +211,7 @@ export async function setCredential(
 }
 
 export async function removeCredential(providerId: string): Promise<void> {
+  logger.debug("Removing provider credential", { providerId });
   await withCredentialLock(async () => {
     const credentials = await loadCredentials();
     delete credentials[providerId];

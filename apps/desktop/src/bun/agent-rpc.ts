@@ -28,13 +28,13 @@ export type AgentStderrListener = (data: string) => void;
 
 type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
 
-function stderrLogLevel(line: string): "info" | "debug" | null {
+function stderrLogLevel(line: string): "debug" | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
   if (trimmed.includes("[herman-extension]") || trimmed.includes("herman-agent")) {
-    return /error|failed|refuses|ERR|WRN/i.test(trimmed) ? "info" : "debug";
+    return /error|failed|refuses|ERR|WRN/i.test(trimmed) ? "debug" : null;
   }
-  return "info";
+  return "debug";
 }
 
 const STDERR_MAX_LINES = 200;
@@ -96,6 +96,11 @@ export class AgentRpcClient {
     return new Promise<AgentResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
+        logger.warning("Agent command timed out", {
+          commandType: command.type,
+          commandId: id,
+          timeoutMs: this.commandTimeout,
+        });
         reject(new Error(`Command ${command.type} timed out after ${this.commandTimeout}ms`));
       }, this.commandTimeout);
 
@@ -254,9 +259,7 @@ export class AgentRpcClient {
   private logStderrLine(line: string) {
     const trimmed = line.trim();
     const level = stderrLogLevel(trimmed);
-    if (level === "info") {
-      logger.info("Agent stderr", { line: trimmed });
-    } else if (level === "debug") {
+    if (level === "debug") {
       logger.debug("Agent stderr", { line: trimmed });
     }
   }
@@ -266,15 +269,17 @@ export class AgentRpcClient {
     try {
       data = JSON.parse(line);
     } catch (error) {
-      this.emitError(
-        new Error(
-          `Failed to parse JSONL: ${error instanceof Error ? error.message : String(error)}`,
-        ),
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warning("Failed to parse agent JSONL line", {
+        error: message,
+        linePreview: line.slice(0, 200),
+      });
+      this.emitError(new Error(`Failed to parse JSONL: ${message}`));
       return;
     }
 
     if (typeof data !== "object" || data === null || !("type" in data)) {
+      logger.warning("Unexpected agent JSONL line", { linePreview: line.slice(0, 200) });
       this.emitError(new Error(`Unexpected JSONL line (no 'type' field): ${line.slice(0, 200)}`));
       return;
     }
@@ -305,7 +310,7 @@ export class AgentRpcClient {
 
   private logResponse(response: AgentResponse, line: string) {
     if (config.verboseAgentRpc) {
-      logger.debug("Agent stdout line", { line: line.slice(0, 200) });
+      logger.trace("Agent stdout line", { line: line.slice(0, 200) });
       return;
     }
 
@@ -318,7 +323,7 @@ export class AgentRpcClient {
 
   private logAgentEvent(event: AgentEvent, line: string, rawType: string) {
     if (config.verboseAgentRpc) {
-      logger.debug("Agent stdout line", { line: line.slice(0, 200) });
+      logger.trace("Agent stdout line", { line: line.slice(0, 200) });
       return;
     }
 
@@ -403,7 +408,7 @@ export class AgentRpcClient {
         logger.warning("Agent proxy error", { error: event.error, code: event.code });
         break;
       default:
-        logger.debug("Agent event", { eventType: event.type });
+        logger.trace("Agent event", { eventType: event.type });
     }
   }
 

@@ -1,3 +1,4 @@
+import { getLogger } from "@logtape/logtape";
 import type { AgentCommand, AgentEvent } from "../../../shared/agent-protocol.js";
 import type {
   AgentStatus,
@@ -13,6 +14,8 @@ import type {
 } from "../../../shared/rpc.js";
 import { useAgentStore } from "./agent-store.js";
 
+const logger = getLogger(["herman-desktop", "view", "browser-rpc"]);
+
 type MessageListenerMap = {
   [K in keyof OutgoingMessages]: Array<(payload: OutgoingMessages[K]) => void>;
 };
@@ -26,6 +29,15 @@ function createBrowserRpc(): DesktopRpc {
   const ws = new WebSocket(wsUrl);
   let sessionId: string | undefined;
   let agentStarted = false;
+  let reconnectAttempt = 0;
+
+  ws.addEventListener("error", (event) => {
+    logger.warning("Browser RPC WebSocket error", { url: wsUrl, event: String(event) });
+  });
+
+  ws.addEventListener("close", () => {
+    logger.info("Browser RPC WebSocket closed", { reconnectAttempt });
+  });
 
   const listeners: MessageListenerMap = {
     sessionChanged: [],
@@ -48,6 +60,8 @@ function createBrowserRpc(): DesktopRpc {
   };
 
   ws.addEventListener("open", async () => {
+    reconnectAttempt = 0;
+    logger.info("Browser RPC WebSocket connected", { url: wsUrl });
     const res = await fetch("/api/session");
     const data = (await res.json()) as { sessionId: string; serverUrl: string };
     sessionId = data.sessionId;
@@ -215,6 +229,7 @@ function createBrowserRpc(): DesktopRpc {
       pollOAuthLogin: async () => ({ status: "pending" as const }),
       cancelOAuthLogin: async () => {},
       getAvailableProviders: async () => [] as ProviderMetadata[],
+      refreshHermanModels: async () => {},
       getTemplates: async () => [],
       createProjectFromTemplate: async ({ templateId, projectName }: { templateId: string; projectName: string }) => ({
         folderPath: `/tmp/herman/${projectName}`,

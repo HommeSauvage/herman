@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./messages": "./src/messages.ts",
-    "./ads": "./src/ads.ts"
+    "./ads": "./src/ads.ts",
+    "./agent": "./src/agent.ts"
   },
   "scripts": {
     "test": "bun test test",

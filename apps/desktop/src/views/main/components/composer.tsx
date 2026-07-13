@@ -33,13 +33,12 @@ const EMPTY_ATTACHMENTS: PendingAttachment[] = [];
 export function Composer() {
   // ---- Store selectors ------------------------------------------------
 
-  const { tabId, folderPath, composerValue, pendingAttachments } = useAgentStore(
+  const { tabId, folderPath, pendingAttachments } = useAgentStore(
     useShallow((s) => {
       const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
       return {
         tabId: tab?.id,
         folderPath: tab?.folderPath,
-        composerValue: tab?.composerValue,
         pendingAttachments: tab?.pendingAttachments ?? EMPTY_ATTACHMENTS,
       };
     }),
@@ -74,7 +73,6 @@ export function Composer() {
     handleBlur,
   } = useComposerTextarea({
     tabId,
-    composerValue,
     draftSync,
     mention,
     slash,
@@ -100,19 +98,19 @@ export function Composer() {
 
   // ---- Submission handlers --------------------------------------------
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(() => {
     if (!tabId) return;
     const trimmed = (textareaRef.current?.value ?? "").trim();
     if (!trimmed || isWorkingRef.current) return;
     const text = commitMessage();
-    await sendPrompt(tabId, text);
+    void sendPrompt(tabId, text);
   }, [tabId, textareaRef, isWorkingRef, commitMessage]);
 
-  const handleSteer = useCallback(async () => {
+  const handleSteer = useCallback(() => {
     if (!tabId) return;
     const trimmed = commitMessage();
     if (!trimmed) return;
-    await sendPrompt(tabId, trimmed);
+    void sendPrompt(tabId, trimmed);
   }, [tabId, commitMessage]);
 
   const handleQueue = useCallback(() => {
@@ -388,7 +386,6 @@ export function Composer() {
           />
           <AttachButton onAttach={handleAttach} label="Attach files" />
           <ComposerInput
-            defaultValue={composerValue ?? ""}
             textareaRef={textareaRef}
             onInput={handleInput}
             onBlur={handleBlur}

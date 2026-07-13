@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { TabId } from "../../../shared/rpc.js";
-import { useAgentStore } from "../lib/agent-store.js";
+import { adjustTextareaHeight } from "../lib/composer-textarea-height.js";
+import { useAgentStore, useComposerValue } from "../lib/agent-store.js";
 import type { SlashCommandItem } from "./use-slash-command.js";
 
 /** Regex patterns for trigger detection. */
 const MENTION_TRIGGER = /(^|\s)@(\S*)$/;
 const SLASH_TRIGGER = /^\/(\S*)$/;
-
-function adjustHeight(target: HTMLTextAreaElement) {
-  target.style.height = "auto";
-  target.style.height = `${Math.min(target.scrollHeight, 160)}px`;
-}
 
 function readHasText(textarea: HTMLTextAreaElement | null): boolean {
   return (textarea?.value.trim().length ?? 0) > 0;
@@ -45,7 +41,6 @@ type DraftSync = {
 
 type UseComposerTextareaOptions = {
   tabId: TabId | undefined;
-  composerValue: string | undefined;
   draftSync: DraftSync;
   mention: MentionState;
   slash: SlashState;
@@ -58,12 +53,12 @@ type UseComposerTextareaOptions = {
  */
 export function useComposerTextarea({
   tabId,
-  composerValue,
   draftSync,
   mention,
   slash,
 }: UseComposerTextareaOptions) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerValue = useComposerValue();
   const setComposerValue = useAgentStore((s) => s.setComposerValue);
 
   // --- State -----------------------------------------------------------
@@ -77,13 +72,9 @@ export function useComposerTextarea({
 
   // Keep refs for popover hooks (stable across renders for keyboard handler).
   const mentionRef = useRef(mention);
-  useEffect(() => {
-    mentionRef.current = mention;
-  });
+  mentionRef.current = mention;
   const slashRef = useRef(slash);
-  useEffect(() => {
-    slashRef.current = slash;
-  });
+  slashRef.current = slash;
 
   // --- Helpers ---------------------------------------------------------
 
@@ -110,7 +101,7 @@ export function useComposerTextarea({
       if (storeValue === "") {
         textarea.style.height = "auto";
       } else {
-        adjustHeight(textarea);
+        adjustTextareaHeight(textarea);
       }
       syncHasText(textarea);
     }
@@ -160,7 +151,7 @@ export function useComposerTextarea({
       syncHasText(textarea);
       requestAnimationFrame(() => {
         textarea.focus();
-        adjustHeight(textarea);
+        adjustTextareaHeight(textarea);
       });
     },
     [tabId, draftSync, setComposerValue, syncHasText],
@@ -194,7 +185,7 @@ export function useComposerTextarea({
       requestAnimationFrame(() => {
         textarea.focus();
         textarea.setSelectionRange(nextCursor, nextCursor);
-        adjustHeight(textarea);
+        adjustTextareaHeight(textarea);
       });
     },
     [draftSync, tabId, setComposerValue, syncHasText],

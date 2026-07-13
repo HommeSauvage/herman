@@ -89,12 +89,14 @@
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "catalog:",
         "@herman/tsconfig": "workspace:*",
+        "@logtape/logtape": "catalog:",
         "@types/bun": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
       },
       "peerDependencies": {
         "@earendil-works/pi-coding-agent": "*",
+        "@logtape/logtape": "*",
       },
     },
     "packages/rpc": {

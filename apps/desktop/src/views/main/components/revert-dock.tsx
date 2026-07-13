@@ -1,4 +1,5 @@
 import { ChevronDown, HelpCircle, RotateCcw, Trash2, Undo2 } from "lucide-react";
+import { getLogger } from "@logtape/logtape";
 import { motion, AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -21,6 +22,15 @@ import {
 import type { Message } from "../../../shared/rpc.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
+
+const logger = getLogger(["herman-desktop", "view", "revert-dock"]);
+
+function logAbortFailure(tabId: string, error: unknown) {
+  logger.warning("Failed to abort agent during revert", {
+    tabId,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
 
 type RevertDockProps = {
   tabId: string;
@@ -120,7 +130,7 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
           }
         }
 
-        await desktopRpc.request.abortAgent({ tabId }).catch(() => {});
+        await desktopRpc.request.abortAgent({ tabId }).catch((error) => logAbortFailure(tabId, error));
         const store = useAgentStore.getState();
 
         if (nextUser && nextUser.role === "user") {
@@ -171,7 +181,7 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
 
     const snapshot = snapshotRevertState();
     try {
-      await desktopRpc.request.abortAgent({ tabId }).catch(() => {});
+      await desktopRpc.request.abortAgent({ tabId }).catch((error) => logAbortFailure(tabId, error));
       const store = useAgentStore.getState();
       store.unrevertTab(tabId);
       store.setComposerValue(tabId, "");
@@ -202,7 +212,7 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
 
     const snapshot = snapshotRevertState();
     try {
-      await desktopRpc.request.abortAgent({ tabId }).catch(() => {});
+      await desktopRpc.request.abortAgent({ tabId }).catch((error) => logAbortFailure(tabId, error));
       const store = useAgentStore.getState();
 
       const tab = store.tabs[tabId];

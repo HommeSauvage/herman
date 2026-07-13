@@ -1,9 +1,13 @@
+import { getLogger } from "@logtape/logtape";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import type { TabId } from "../shared/tab-utils.js";
 import { draftsDir as appDraftsDir } from "./app-paths.js";
 import { ensureDir } from "./fs-utils.js";
+import { logStorageError } from "../logging-shared.js";
+
+const logger = getLogger(["herman-desktop", "storage"]);
 
 function draftsDir() {
   return appDraftsDir();
@@ -14,33 +18,48 @@ function draftPath(tabId: TabId) {
 }
 
 export async function saveComposerDraft(tabId: TabId, value: string) {
-  ensureDir(draftsDir());
-  await Bun.write(draftPath(tabId), value);
+  const path = draftPath(tabId);
+  try {
+    ensureDir(draftsDir());
+    await Bun.write(path, value);
+  } catch (error) {
+    logStorageError(logger, "saveComposerDraft", path, error);
+    throw error;
+  }
 }
 
 export async function loadComposerDraft(tabId: TabId): Promise<string> {
+  const path = draftPath(tabId);
   try {
-    return await Bun.file(draftPath(tabId)).text();
-  } catch {
+    const file = Bun.file(path);
+    if (!(await file.exists())) return "";
+    return await file.text();
+  } catch (error) {
+    logStorageError(logger, "loadComposerDraft", path, error);
     return "";
   }
 }
 
 export async function deleteComposerDraft(tabId: TabId) {
+  const path = draftPath(tabId);
   try {
-    unlinkSync(draftPath(tabId));
-  } catch {
-    // draft file may not exist
+    unlinkSync(path);
+  } catch (error) {
+    const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
+    if (!missing) {
+      logStorageError(logger, "deleteComposerDraft", path, error);
+    }
   }
 }
 
 export async function clearAllComposerDrafts(): Promise<void> {
   const files = await listDraftFiles();
   for (const file of files) {
+    const path = join(draftsDir(), file);
     try {
-      unlinkSync(join(draftsDir(), file));
-    } catch {
-      // ignore
+      unlinkSync(path);
+    } catch (error) {
+      logStorageError(logger, "clearAllComposerDrafts", path, error);
     }
   }
 }
