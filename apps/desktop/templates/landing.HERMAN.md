@@ -2,8 +2,8 @@
 version: 1
 extends: base
 name: Landing Page
-description: A well design home page for your small business. No admin panel, no comlexity, just a beautiful identity for your business online
-extended_description: A lightweight marketing site with a polished hero, features, social proof, and call-to-action sections. No backend or admin panel—just a fast, SEO-friendly page for your business.
+description: A single, beautiful page that tells people about your business, product, or idea. Think of it like a digital flyer or business card that lives online.
+suitable_for: Perfect if you run a small business, startup, or freelance practice and want a simple online presence without building a full website.
 icon: "🚀"
 category: marketing
 ---

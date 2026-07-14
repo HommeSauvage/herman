@@ -11,6 +11,10 @@ The app runs in two processes within a single Electrobun window:
 
 Shared types and utilities live in `src/shared/`.
 
+## Design
+
+Visual standards (content widths, tokens, density): [DESIGN.md](DESIGN.md). Rookie is comfortable (cards, signal CTAs); Normal is compact (lists, quieter CTAs)—keep that intentional. Prefer Herman helpers in `src/views/main/components/ui/` over copy-pasted class strings; use `@herman/ui` for generic primitives (Dialog, Tooltip, etc.).
+
 ## Electrobun
 
 This is **not** Electron + Bun. Electrobun is an entirely different framework with its own APIs for windows, menus, views, RPC, and build tooling.

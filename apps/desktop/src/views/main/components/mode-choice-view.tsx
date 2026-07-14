@@ -54,7 +54,7 @@ export function ModeChoiceView({ onChoose }: { onChoose: (mode: "rookie" | "norm
               </div>
               <div>
                 <div className="text-text text-sm font-semibold">Rookie Mode</div>
-                <div className="text-dim text-xs leading-snug">
+                <div className="text-dim text-sm leading-snug">
                   Guided experience. Pick a template, answer a few questions, and we&apos;ll build
                   it together. No tech knowledge needed.
                 </div>
@@ -71,7 +71,7 @@ export function ModeChoiceView({ onChoose }: { onChoose: (mode: "rookie" | "norm
               </div>
               <div>
                 <div className="text-text text-sm font-semibold">Normal Mode</div>
-                <div className="text-dim text-xs leading-snug">
+                <div className="text-dim text-sm leading-snug">
                   Full control. Open any project folder, choose models and providers, use all the
                   power tools. For experienced developers.
                 </div>
@@ -80,7 +80,7 @@ export function ModeChoiceView({ onChoose }: { onChoose: (mode: "rookie" | "norm
           </div>
         </div>
 
-        <p className="text-ghost mt-5 text-center text-xs">
+        <p className="text-dim mt-5 text-center text-xs">
           You can switch modes anytime in Settings.
         </p>
       </div>

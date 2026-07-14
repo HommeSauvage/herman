@@ -168,7 +168,7 @@ export function RookieShell() {
 
             {/* Content area */}
             {view === "home" || !hasActiveTab ? (
-              <div className="flex flex-col items-center min-w-0 flex-1 overflow-hidden">
+              <div className="flex min-w-0 flex-1 flex-col items-stretch overflow-hidden">
                 <RookieHomeView />
               </div>
             ) : (

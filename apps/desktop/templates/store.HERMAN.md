@@ -2,8 +2,8 @@
 version: 1
 extends: base
 name: Store
-description: A simple online store for selling products.
-extended_description: Build a full e-commerce storefront with product listings, a cart, and an admin dashboard for managing products and orders. Includes inventory tracking, product variants, and a simple checkout flow.
+description: A simple online shop where you can list products and let visitors add them to a cart. Think of it like a digital catalog where people can browse what you sell.
+suitable_for: Great if you sell physical or digital products online and want a simple catalog with a cart, without needing a complex marketplace.
 icon: "🏪"
 category: commerce
 ---

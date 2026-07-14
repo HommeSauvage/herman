@@ -167,7 +167,7 @@ export async function getGalleryTemplates(): Promise<GalleryTemplate[]> {
       id,
       name: fm.name,
       description: fm.description ?? "",
-      extendedDescription: fm.extended_description,
+      suitableFor: fm.suitable_for,
       ...(fm.icon ? { icon: fm.icon } : {}),
       ...(fm.snapshot ? { snapshot: fm.snapshot } : {}),
       ...(fm.category ? { category: fm.category } : {}),

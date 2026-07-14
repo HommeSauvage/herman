@@ -9,6 +9,7 @@ import {
   Check,
   AlertCircle,
   Cpu,
+  PartyPopper,
 } from "lucide-react";
 import { getLogger } from "@logtape/logtape";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -26,6 +27,8 @@ import type { GalleryTemplate } from "../../../shared/herman-manifest.js";
 import type { WizardAskEnvelope } from "../../../shared/wizard-protocol.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
+import { useConfetti } from "../hooks/use-confetti.js";
+import { ContentWidth, SignalButton } from "./ui/index.js";
 import { ModelSelector } from "./model-selector.js";
 import { WizardQuestions } from "./wizard-questions.js";
 
@@ -92,15 +95,19 @@ function TemplateListItem({
           )}
         />
         <div className="flex flex-1 flex-col items-start gap-0.5 text-left">
-          <span className={cn("text-sm font-medium", selected ? "text-text" : "text-dim")}>
+          <span className={cn("text-sm font-medium", selected ? "text-text" : "text-body")}>
             {template.name}
           </span>
-          <span className="text-dim text-xs leading-relaxed">{template.description}</span>
+          <span className="text-dim text-sm leading-relaxed">{template.description}</span>
         </div>
       </AccordionTrigger>
-      {template.extendedDescription && (
-        <AccordionContent className="text-ghost pl-8 text-xs leading-relaxed">
-          {template.extendedDescription}
+      {template.suitableFor && (
+        <AccordionContent className="text-dim text-sm leading-relaxed">
+          {/* Match trigger: icon (20px) + gap-6 so copy lines up with title/description */}
+          <div className="flex gap-6">
+            <span className="w-5 shrink-0" aria-hidden />
+            <p>{template.suitableFor}</p>
+          </div>
         </AccordionContent>
       )}
     </AccordionItem>
@@ -140,6 +147,10 @@ export function OnboardingWizard({
   const setWizardSessionIdStore = useAgentStore((s) => s.setWizardSessionId);
   const setModelCatalog = useAgentStore((s) => s.setModelCatalog);
   const clearWizardState = useAgentStore((s) => s.clearWizardState);
+
+  // Confetti: fires when the wizard completes.
+  const { start: fireConfetti } = useConfetti();
+  const confettiFiredRef = useRef(false);
 
   // Refs so the wizardEvent listener (registered once) can read/act on latest state.
   const stepRef = useRef<Step>(step);
@@ -254,6 +265,11 @@ export function OnboardingWizard({
         case "wizard_complete": {
           setProjectPath(event.projectPath);
           setStep("done");
+          if (!confettiFiredRef.current) {
+            confettiFiredRef.current = true;
+            // Defer so the "done" step renders first, then fire.
+            requestAnimationFrame(() => fireConfetti());
+          }
           break;
         }
         case "wizard_retrying": {
@@ -451,39 +467,42 @@ export function OnboardingWizard({
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
-              className="w-full max-w-lg"
+              className="w-full"
             >
-              {templateError && (
-                <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-400">
-                  Failed to load templates: {templateError}
-                </div>
-              )}
-              <Accordion
-                value={selectedTemplate ? [selectedTemplate.id] : []}
-                onValueChange={(values) => {
-                  const nextId = values[0];
-                  setSelectedTemplate(
-                    nextId ? templates.find((t) => t.id === nextId) ?? null : null,
-                  );
-                }}
-                className="border-white/[0.08] bg-white/[0.02] mb-6 max-h-[360px] overflow-y-auto"
-              >
-                {templates.map((t) => (
-                  <TemplateListItem
-                    key={t.id}
-                    template={t}
-                    selected={selectedTemplate?.id === t.id}
-                  />
-                ))}
-              </Accordion>
-              <button
-                onClick={() => selectedTemplate && setStep("describe")}
-                disabled={!selectedTemplate}
-                className="bg-signal hover:bg-signal-dim flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-primary-foreground transition active:scale-[0.97] disabled:opacity-40"
-              >
-                Continue
-                <ArrowRight size={14} />
-              </button>
+              <ContentWidth size="formWide">
+                {templateError && (
+                  <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-400">
+                    Failed to load templates: {templateError}
+                  </div>
+                )}
+                <Accordion
+                  value={selectedTemplate ? [selectedTemplate.id] : []}
+                  onValueChange={(values) => {
+                    const nextId = values[0];
+                    setSelectedTemplate(
+                      nextId ? templates.find((t) => t.id === nextId) ?? null : null,
+                    );
+                  }}
+                  className="border-white/[0.08] bg-white/[0.02] mb-6 max-h-[360px] overflow-y-auto"
+                >
+                  {templates.map((t) => (
+                    <TemplateListItem
+                      key={t.id}
+                      template={t}
+                      selected={selectedTemplate?.id === t.id}
+                    />
+                  ))}
+                </Accordion>
+                <SignalButton
+                  size="lg"
+                  fullWidth
+                  disabled={!selectedTemplate}
+                  onClick={() => selectedTemplate && setStep("describe")}
+                >
+                  Continue
+                  <ArrowRight size={14} />
+                </SignalButton>
+              </ContentWidth>
             </motion.div>
           )}
 
@@ -493,24 +512,28 @@ export function OnboardingWizard({
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
-              className="w-full max-w-md"
+              className="w-full"
             >
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="e.g. A blog about home cooking with recipes, photos, and weekly tips for beginners…"
-                rows={5}
-                className="text-text placeholder:text-ghost bg-void w-full resize-none rounded-xl border border-white/[0.08] px-4 py-3 text-sm transition focus:border-signal/40 focus:outline-none focus:ring-1 focus:ring-signal/20"
-                autoFocus
-              />
-              <button
-                onClick={handleDescribeContinue}
-                disabled={!description.trim()}
-                className="bg-signal hover:bg-signal-dim mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground transition active:scale-[0.97] disabled:opacity-40"
-              >
-                Continue
-                <ArrowRight size={14} />
-              </button>
+              <ContentWidth size="form">
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="e.g. A blog about home cooking with recipes, photos, and weekly tips for beginners…"
+                  rows={5}
+                  className="text-text placeholder:text-ghost bg-void w-full resize-none rounded-xl border border-white/[0.08] px-4 py-3 text-sm transition focus:border-signal/40 focus:outline-none focus:ring-1 focus:ring-signal/20"
+                  autoFocus
+                />
+                <SignalButton
+                  size="md"
+                  fullWidth
+                  className="mt-4"
+                  disabled={!description.trim()}
+                  onClick={handleDescribeContinue}
+                >
+                  Continue
+                  <ArrowRight size={14} />
+                </SignalButton>
+              </ContentWidth>
             </motion.div>
           )}
 
@@ -519,14 +542,16 @@ export function OnboardingWizard({
               key="working"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="w-full max-w-md"
+              className="w-full"
             >
-              <div className="flex flex-col items-center gap-4">
-                <div className="bg-signal/10 text-signal flex h-14 w-14 items-center justify-center rounded-2xl">
-                  <Loader2 size={24} className="animate-spin" />
+              <ContentWidth size="form">
+                <div className="flex flex-col items-center gap-4">
+                  <div className="bg-signal/10 text-signal flex h-14 w-14 items-center justify-center rounded-2xl">
+                    <Loader2 size={24} className="animate-spin" />
+                  </div>
+                  <ProgressLog lines={progressLines} />
                 </div>
-                <ProgressLog lines={progressLines} />
-              </div>
+              </ContentWidth>
             </motion.div>
           )}
 
@@ -535,8 +560,9 @@ export function OnboardingWizard({
               key="retrying"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="w-full max-w-md"
+              className="w-full"
             >
+              <ContentWidth size="form">
               <div className="flex flex-col items-center gap-4">
                 {/* Orange / amber warning icon */}
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
@@ -557,6 +583,7 @@ export function OnboardingWizard({
                 </div>
                 <ProgressLog lines={progressLines} />
               </div>
+              </ContentWidth>
             </motion.div>
           )}
 
@@ -573,9 +600,40 @@ export function OnboardingWizard({
               key="done"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="w-full max-w-md"
+              className="w-full"
             >
-              <div className="bg-void mb-5 rounded-2xl border border-white/[0.08] p-5">
+              <ContentWidth size="form">
+              {/* Celebration header */}
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="mb-6 flex flex-col items-center gap-3 text-center"
+              >
+                <motion.div
+                  animate={{ scale: [1, 1.15, 1] }}
+                  transition={{ duration: 0.6, delay: 0.3, ease: "easeOut" }}
+                  className="bg-signal/10 text-signal flex h-16 w-16 items-center justify-center rounded-2xl ring-1 ring-signal/20"
+                >
+                  <PartyPopper size={28} strokeWidth={1.5} />
+                </motion.div>
+                <div>
+                  <h2 className="text-text text-lg font-semibold">
+                    Congratulations!
+                  </h2>
+                  <p className="text-dim mt-1 text-sm">
+                    Your project is ready to go.
+                  </p>
+                </div>
+              </motion.div>
+
+              {/* Project card */}
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="bg-void mb-4 rounded-2xl border border-white/[0.08] p-4"
+              >
                 <div className="flex items-center gap-3">
                   <div className="bg-signal/10 text-signal flex h-10 w-10 items-center justify-center rounded-xl">
                     <Check size={18} strokeWidth={2} />
@@ -589,15 +647,25 @@ export function OnboardingWizard({
                     )}
                   </div>
                 </div>
-              </div>
+              </motion.div>
+
               <ProgressLog lines={progressLines} />
-              <button
-                onClick={handleDone}
-                className="bg-signal hover:bg-signal-dim mt-5 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[0_0_24px_rgba(34,197,94,0.18)] transition active:scale-[0.97]"
+
+              {/* CTA */}
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.35 }}
               >
-                <Sparkles size={16} />
-                Open Project
-              </button>
+                <SignalButton size="lg" fullWidth glow className="mt-5" onClick={handleDone}>
+                  <Sparkles size={16} />
+                  Open Project
+                </SignalButton>
+                <p className="text-ghost mt-2 text-center text-[11px]">
+                  Opens in a new tab with your session ready.
+                </p>
+              </motion.div>
+              </ContentWidth>
             </motion.div>
           )}
 
@@ -606,19 +674,18 @@ export function OnboardingWizard({
               key="error"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              className="w-full max-w-md"
+              className="w-full"
             >
-              <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-400">
-                <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                <span className="leading-relaxed">{wizardError ?? "Unknown error."}</span>
-              </div>
-              <button
-                onClick={handleRetryFromError}
-                className="bg-signal hover:bg-signal-dim flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground transition active:scale-[0.97]"
-              >
-                Try again
-                <ArrowRight size={14} />
-              </button>
+              <ContentWidth size="form">
+                <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-400">
+                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                  <span className="leading-relaxed">{wizardError ?? "Unknown error."}</span>
+                </div>
+                <SignalButton size="md" fullWidth onClick={handleRetryFromError}>
+                  Try again
+                  <ArrowRight size={14} />
+                </SignalButton>
+              </ContentWidth>
             </motion.div>
           )}
         </AnimatePresence>

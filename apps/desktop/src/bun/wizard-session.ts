@@ -541,6 +541,7 @@ export function buildWizardPrompt(manifest: ResolvedManifest, description: strin
     "```yaml",
     `name: ${fm.name ?? manifest.id}`,
     fm.description ? `description: ${fm.description}` : "",
+    fm.suitable_for ? `suitable_for: ${fm.suitable_for}` : "",
     repoLine,
     "```",
     "",

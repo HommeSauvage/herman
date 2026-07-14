@@ -65,7 +65,7 @@ function validateFrontmatter(raw: unknown, id: string): HermanFrontmatter {
   if (typeof obj.extends === "string") fm.extends = obj.extends;
   if (typeof obj.name === "string") fm.name = obj.name;
   if (typeof obj.description === "string") fm.description = obj.description;
-  if (typeof obj.extended_description === "string") fm.extended_description = obj.extended_description;
+  if (typeof obj.suitable_for === "string") fm.suitable_for = obj.suitable_for;
   if (typeof obj.icon === "string") fm.icon = obj.icon;
   if (typeof obj.snapshot === "string") fm.snapshot = obj.snapshot;
   if (typeof obj.category === "string") fm.category = obj.category;
@@ -231,7 +231,7 @@ function dumpFrontmatterYaml(fm: Omit<HermanFrontmatter, "extends">): string {
   lines.push(`version: ${fm.version}`);
   if (fm.name != null) lines.push(`name: ${yamlString(fm.name)}`);
   if (fm.description != null) lines.push(`description: ${yamlString(fm.description)}`);
-  if (fm.extended_description != null) lines.push(`extended_description: ${yamlString(fm.extended_description)}`);
+  if (fm.suitable_for != null) lines.push(`suitable_for: ${yamlString(fm.suitable_for)}`);
   if (fm.icon != null) lines.push(`icon: ${yamlString(fm.icon)}`);
   if (fm.snapshot != null) lines.push(`snapshot: ${yamlString(fm.snapshot)}`);
   if (fm.category != null) lines.push(`category: ${yamlString(fm.category)}`);
@@ -316,10 +316,10 @@ export function mergeFrontmatter(
       : base.description != null
         ? { description: base.description }
         : {}),
-    ...(child.extended_description != null
-      ? { extended_description: child.extended_description }
-      : base.extended_description != null
-        ? { extended_description: base.extended_description }
+    ...(child.suitable_for != null
+      ? { suitable_for: child.suitable_for }
+      : base.suitable_for != null
+        ? { suitable_for: base.suitable_for }
         : {}),
     ...(child.icon != null ? { icon: child.icon } : base.icon != null ? { icon: base.icon } : {}),
     ...(child.snapshot != null

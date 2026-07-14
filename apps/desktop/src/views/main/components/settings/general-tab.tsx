@@ -26,7 +26,7 @@ export function GeneralTab() {
       {/* Mode selector */}
       <section className="mb-8">
         <h2 className="text-text mb-1 text-sm font-medium">Interface mode</h2>
-        <p className="text-dim mb-4 text-xs leading-relaxed">
+        <p className="text-dim mb-4 text-sm leading-relaxed">
           Rookie Mode simplifies the interface with guided onboarding and a preview-first layout.
           You can switch back anytime — nothing is lost.
         </p>
@@ -59,7 +59,7 @@ export function GeneralTab() {
               >
                 Rookie Mode
               </div>
-              <div className="text-ghost mt-0.5 text-[11px] leading-snug">
+              <div className="text-dim mt-0.5 text-sm leading-snug">
                 Guided experience, preview-first, no jargon
               </div>
             </div>
@@ -92,7 +92,7 @@ export function GeneralTab() {
               >
                 Normal Mode
               </div>
-              <div className="text-ghost mt-0.5 text-[11px] leading-snug">
+              <div className="text-dim mt-0.5 text-sm leading-snug">
                 Full control, all settings, power user tools
               </div>
             </div>

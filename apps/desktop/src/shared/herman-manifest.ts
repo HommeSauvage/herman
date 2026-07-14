@@ -59,8 +59,8 @@ export type HermanFrontmatter = {
   extends?: string;
   name?: string;
   description?: string;
-  /** Longer user-facing description shown when the template is selected. */
-  extended_description?: string;
+  /** What this template is good for, so the user can decide if it fits their project. */
+  suitable_for?: string;
   icon?: string;
   snapshot?: string;
   category?: string;
@@ -103,8 +103,8 @@ export type GalleryTemplate = {
   id: string;
   name: string;
   description: string;
-  /** Longer user-facing description shown when the template is selected. */
-  extendedDescription?: string;
+  /** What this template is good for, so the user can decide if it fits their project. */
+  suitableFor?: string;
   icon?: string;
   snapshot?: string;
   category?: string;

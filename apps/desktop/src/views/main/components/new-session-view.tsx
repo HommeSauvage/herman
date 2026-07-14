@@ -4,6 +4,7 @@ import { useAgentStore } from "../lib/agent-store.js";
 import { Composer } from "./composer.js";
 import { ErrorBoundary } from "./error-boundary.js";
 import { ProjectSelect } from "./project-select.js";
+import { SectionLabel } from "./ui/index.js";
 
 export function NewSessionView() {
   const tabId = useAgentStore((s) => s.activeTabId);
@@ -32,7 +33,7 @@ export function NewSessionView() {
             transition={{ duration: 0.35, delay: 0.1, ease: [0.2, 0, 0, 1] }}
             className="mt-4 flex items-center gap-2"
           >
-            <p className="text-ghost text-[10px] font-bold tracking-[0.12em] uppercase">Project</p>
+            <SectionLabel className="mb-0 px-0">Project</SectionLabel>
             <ProjectSelect tabId={tabId} />
           </motion.div>
         )}

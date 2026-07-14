@@ -3,6 +3,7 @@ import { ArrowRight, Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { WizardAskEnvelope, WizardAskQuestion, WizardOption } from "../../../shared/wizard-protocol.js";
+import { ContentWidth, SignalButton } from "./ui/index.js";
 
 /**
  * Render a `WizardAskEnvelope` (a batch of questions produced by the agent's
@@ -73,7 +74,7 @@ export function WizardQuestions({
   const answeredCount = questions.filter(isAnswered).length;
 
   return (
-    <div className="flex w-full max-w-md flex-col">
+    <ContentWidth size="form" className="flex flex-col">
       {/* Progress bar */}
       <div className="mb-5">
         <div className="mb-2 flex items-center justify-between">
@@ -122,17 +123,17 @@ export function WizardQuestions({
               Back
             </button>
           )}
-          <button
-            onClick={handleNext}
+          <SignalButton
+            size="sm"
             disabled={!canAdvance || submitting}
-            className="bg-signal hover:bg-signal-dim flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-primary-foreground transition active:scale-[0.97] disabled:opacity-40"
+            onClick={handleNext}
           >
             {isLast ? (submitting ? "Submitting…" : "Submit") : "Next"}
             <ArrowRight size={14} />
-          </button>
+          </SignalButton>
         </div>
       </div>
-    </div>
+    </ContentWidth>
   );
 }
 
