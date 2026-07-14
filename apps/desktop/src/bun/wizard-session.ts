@@ -14,6 +14,15 @@ import { resolveTemplateManifest } from "./template-registry.js";
 
 const logger = getLogger(["herman-desktop", "wizard-session"]);
 
+/** Plan file written by the planning session; coding/QA sessions consume it. */
+export const WIZARD_PLAN_FILENAME = "HERMAN_PLAN.md";
+
+/** Default setup goal when the template omits `setup_goal`. */
+export const DEFAULT_SETUP_GOAL = "The project should start without errors.";
+
+/** Wire value when the host rejects ask outside planning (extension understands this). */
+export const WIZARD_ASK_REJECTED_SENTINEL = "__herman_ask_rejected__";
+
 // ── Retry constants ──────────────────────────────────────────────────────────
 
 /** Maximum number of auto-retry attempts before giving up. */
@@ -22,6 +31,8 @@ const MAX_RETRIES = 20;
 const BASE_DELAY_MS = 2_000;
 /** Cap on retry delay so the total span stays near 5 minutes with 20 retries. */
 const MAX_DELAY_MS = 15_000;
+
+export type WizardPhase = "planning" | "coding" | "qa";
 
 /** Default parent directory for user projects (matches create-project.ts). */
 function projectsDir(): string {
@@ -50,14 +61,10 @@ export type WizardSessionOptions = {
 };
 
 /**
- * A detached agent session that runs in "wizard mode": it reads the template
- * manifest, clones the project, asks the user structured questions via the
- * `herman_wizard_ask` tool (round-tripped through the React UI), performs
- * setup, and reports completion via `herman_complete_wizard`.
- *
- * The session is NOT a tab — it uses its own isolated agent dir and emits
- * events to the renderer through the `wizardEvent` channel. On completion the
- * caller hands its pi session off to a real project tab (see handoff).
+ * A detached agent session that runs the Rookie wizard as three sequential
+ * pi sessions (planning → coding → QA), invisible to the user. Events go to
+ * the renderer through the `wizardEvent` channel. On completion the caller
+ * opens a fresh project tab (no session resume).
  */
 export class WizardSession {
   readonly id: string;
@@ -65,8 +72,21 @@ export class WizardSession {
   private manifest: ResolvedManifest | undefined;
   /** The editor extension_ui_request id awaiting a wizard answer. */
   private pendingRequestId: string | undefined;
-  /** Set when the agent calls herman_complete_wizard. */
+  /** Set when planning completes (project cloned + plan written). */
   private projectPath: string | undefined;
+  private planPath: string | undefined;
+  /** Final message / summary from the coding session, passed to QA. */
+  private codingSummary: string | undefined;
+  /** Last assistant narration in the current phase (fallback summary). */
+  private lastAssistantText: string | undefined;
+  private phase: WizardPhase = "planning";
+  /** True once the current phase has signaled completion (avoid retry on agent_end). */
+  private phaseSignaledComplete = false;
+  /**
+   * Incremented on every bridge start/stop so events from a dying bridge are
+   * ignored after a phase advance or retry.
+   */
+  private bridgeGeneration = 0;
   private cancelled = false;
   private finished = false;
   /** Preferred model id ("provider/modelId") for this wizard session. */
@@ -78,8 +98,6 @@ export class WizardSession {
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private templateId: string | undefined;
   private description: string | undefined;
-  /** The wizard agent's pi session id, captured from get_state for handoff. */
-  private wizardPiSessionId: string | undefined;
 
   constructor(private opts: WizardSessionOptions) {
     this.id = createWizardSessionId();
@@ -95,13 +113,15 @@ export class WizardSession {
 
     await mkdir(projectsDir(), { recursive: true });
 
-    // The wizard shares the single agent config dir (~/.herman/agent) with all
-    // tabs; its session is a normal pi session there, scoped to the projects
-    // parent cwd. The wizard extension is loaded via a --extension CLI arg set
-    // by AgentBridge, not via a per-wizard settings dir.
-    await this.startAttempt();
+    this.phase = "planning";
+    await this.startPhaseAttempt();
 
-    logger.info("Wizard session started", { id: this.id, templateId, modelId: this.preferredModel });
+    logger.info("Wizard session started", {
+      id: this.id,
+      templateId,
+      modelId: this.preferredModel,
+      phase: this.phase,
+    });
   }
 
   /**
@@ -116,16 +136,25 @@ export class WizardSession {
   }
 
   /**
-   * Start (or restart) the agent bridge and send the wizard prompt.
-   * On retry the pi agent resumes its session automatically because the
-   * bridge passes `--session` pointing at the newest JSONL in the agent dir.
+   * Start (or restart) the agent bridge for the current phase and send that
+   * phase's prompts. Retries re-run the same phase with a fresh pi session.
    */
-  private async startAttempt(): Promise<void> {
+  private async startPhaseAttempt(): Promise<void> {
     if (this.cancelled || this.finished) return;
 
-    if (this.retryCount > 0 && this.bridge) {
+    // Invalidate any in-flight events from the previous bridge before stop.
+    this.bridgeGeneration++;
+    const generation = this.bridgeGeneration;
+
+    if (this.bridge) {
       await this.bridge.stop().catch(() => undefined);
+      this.bridge = undefined;
     }
+
+    if (this.cancelled || this.finished || generation !== this.bridgeGeneration) return;
+
+    this.phaseSignaledComplete = false;
+    this.lastAssistantText = undefined;
 
     const manifest = this.manifest;
     const description = this.description;
@@ -134,7 +163,11 @@ export class WizardSession {
       return;
     }
 
-    let agentWasRunning = false;
+    if ((this.phase === "coding" || this.phase === "qa") && !this.projectPath) {
+      this.end("Cannot start coding/QA phase: missing project path");
+      return;
+    }
+
     let modelsResolved = false;
     let resolveModels: (() => void) | undefined;
     const modelsPromise = new Promise<void>((resolve) => {
@@ -150,49 +183,87 @@ export class WizardSession {
       this.id,
       () => {}, // no renderer tab channel for a detached wizard session
       (_tabId, state: AgentBridgeState, stderr?: string) => {
-        if (state === "running") {
-          agentWasRunning = true;
-          return;
-        }
-        // Treat crashes as retryable; the onEvent handler will schedule retries
-        // for terminal events (agent_error, agent_end without completion).
+        if (generation !== this.bridgeGeneration) return;
+        if (state === "running") return;
         if (state === "crashed") {
-          logger.warning("Wizard agent crashed", { id: this.id, stderr, retryCount: this.retryCount });
-          if (!this.finished) {
+          logger.warning("Wizard agent crashed", {
+            id: this.id,
+            stderr,
+            retryCount: this.retryCount,
+            phase: this.phase,
+            generation,
+          });
+          if (!this.finished && !this.phaseSignaledComplete) {
             this.scheduleRetry(`Agent crashed${stderr ? `: ${stderr}` : ""}`);
           }
         }
       },
-      (_tabId, event: AgentEvent) => this.onEvent(event),
+      (_tabId, event: AgentEvent) => {
+        if (generation !== this.bridgeGeneration) return;
+        this.onEvent(event);
+      },
     );
     this.bridge = bridge;
 
-    const projects = projectsDir();
+    const cwd = this.phase === "planning" ? projectsDir() : (this.projectPath as string);
     const wizardExtensions = resolveWizardExtensionPath();
-    await bridge.start(projects, { mode: "rookie", extensions: wizardExtensions });
+    await bridge.start(cwd, { mode: "rookie", extensions: wizardExtensions });
 
-    // Capture the wizard's pi session id for handoff. With a shared sessions
-    // dir the wizard's JSONL lives alongside every other session, so we must
-    // read the id from the agent's state rather than scanning a per-wizard dir.
-    void this.capturePiSessionId().catch(() => undefined);
+    if (this.cancelled || this.finished || generation !== this.bridgeGeneration) return;
 
     // Wait briefly for models_sync so we can override the auto-selected default
     // before sending the prompt. Fall through on timeout so we don't hang.
-    await Promise.race([
-      modelsPromise,
-      delay(5_000),
-    ]);
+    await Promise.race([modelsPromise, delay(5_000)]);
+
+    if (this.cancelled || this.finished || generation !== this.bridgeGeneration) return;
 
     await this.applyPreferredModel();
 
-    const prompt = buildWizardPrompt(manifest, description);
     try {
-      await bridge.sendCommand({ type: "prompt", message: prompt });
+      await this.sendPhasePrompts(bridge, manifest, description);
     } catch (error) {
+      if (generation !== this.bridgeGeneration || this.cancelled || this.finished) return;
       const msg = error instanceof Error ? error.message : String(error);
-      logger.warning("Wizard start prompt failed", { id: this.id, error: msg, retryCount: this.retryCount });
+      logger.warning("Wizard phase start prompt failed", {
+        id: this.id,
+        error: msg,
+        retryCount: this.retryCount,
+        phase: this.phase,
+      });
       this.scheduleRetry(msg);
     }
+  }
+
+  private async sendPhasePrompts(
+    bridge: AgentBridge,
+    manifest: ResolvedManifest,
+    _description: string,
+  ): Promise<void> {
+    if (this.phase === "planning") {
+      const prompt = buildPlanningPrompt(manifest, this.description ?? "");
+      await bridge.sendCommand({ type: "prompt", message: prompt });
+      return;
+    }
+
+    if (this.phase === "coding") {
+      const projectPath = this.projectPath as string;
+      const planPath = this.planPath ?? join(projectPath, WIZARD_PLAN_FILENAME);
+      // Single prompt: context framing is folded into /goal so an intermediate
+      // agent_end cannot spuriously retry the phase.
+      await bridge.sendCommand({
+        type: "prompt",
+        message: `/goal ${buildCodingGoal(manifest, projectPath, planPath)}`,
+      });
+      return;
+    }
+
+    // qa
+    const projectPath = this.projectPath as string;
+    const planPath = this.planPath ?? join(projectPath, WIZARD_PLAN_FILENAME);
+    await bridge.sendCommand({
+      type: "prompt",
+      message: `/goal ${buildQaGoal(projectPath, planPath, this.codingSummary ?? "(no summary)")}`,
+    });
   }
 
   private async applyPreferredModel(): Promise<void> {
@@ -201,18 +272,18 @@ export class WizardSession {
     const { provider, modelId: id } = parseWizardModelRef(modelId);
     try {
       await this.bridge.sendCommand({ type: "set_model", provider, modelId: id });
-      logger.info("Wizard model applied", { id: this.id, modelId });
+      logger.info("Wizard model applied", { id: this.id, modelId, phase: this.phase });
     } catch (error) {
       logger.warning("Failed to apply wizard model", { id: this.id, modelId, error });
     }
   }
 
   /**
-   * Schedule a retry with exponential backoff.
+   * Schedule a retry with exponential backoff for the current phase.
    * After MAX_RETRIES, gives up and calls `end()` with the last error.
    */
   private scheduleRetry(reason: string): void {
-    if (this.cancelled || this.finished) return;
+    if (this.cancelled || this.finished || this.phaseSignaledComplete) return;
 
     if (this.retryCount >= MAX_RETRIES) {
       this.end(`Setup failed after ${MAX_RETRIES} attempts: ${reason}`);
@@ -228,6 +299,7 @@ export class WizardSession {
       maxRetries: MAX_RETRIES,
       delayMs,
       reason,
+      phase: this.phase,
     });
 
     this.emit({
@@ -238,13 +310,30 @@ export class WizardSession {
       error: reason,
     });
 
+    // Drop any prior timer so overlapping errors cannot stack restarts.
+    this.clearRetryTimer();
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
-      void this.startAttempt().catch((error) => {
+      void this.startPhaseAttempt().catch((error) => {
         logger.error("Wizard retry attempt failed", { id: this.id, error });
         this.scheduleRetry(error instanceof Error ? error.message : String(error));
       });
     }, delayMs);
+  }
+
+  /** Advance to the next phase with a fresh retry budget. */
+  private advanceToPhase(next: WizardPhase): void {
+    this.phase = next;
+    this.retryCount = 0;
+    this.clearRetryTimer();
+    // Keep phaseSignaledComplete true until the new bridge is live so dying
+    // events from the previous bridge cannot schedule a retry on the new phase.
+    // startPhaseAttempt resets it after invalidating bridgeGeneration.
+    logger.info("Wizard advancing phase", { id: this.id, phase: next });
+    void this.startPhaseAttempt().catch((error) => {
+      logger.error("Wizard phase start failed", { id: this.id, phase: next, error });
+      this.scheduleRetry(error instanceof Error ? error.message : String(error));
+    });
   }
 
   /** Respond to a pending herman_wizard_ask question batch. */
@@ -268,6 +357,7 @@ export class WizardSession {
   async cancel(): Promise<void> {
     if (this.cancelled) return;
     this.cancelled = true;
+    this.bridgeGeneration++;
     this.clearRetryTimer();
     logger.info("Cancelling wizard session", { id: this.id, projectPath: this.projectPath });
 
@@ -292,37 +382,17 @@ export class WizardSession {
     this.end("Wizard cancelled");
   }
 
-  /** The project path reported by herman_complete_wizard (for handoff). */
+  /** The project path reported by planning completion (for handoff). */
   getProjectPath(): string | undefined {
     return this.projectPath;
-  }
-
-  /** The pi session id used by the wizard agent (for handoff/resume). */
-  getPiSessionId(): string | undefined {
-    return this.wizardPiSessionId;
-  }
-
-  /** Capture the wizard agent's pi session id from its get_state response. */
-  private async capturePiSessionId(): Promise<void> {
-    if (!this.bridge || this.wizardPiSessionId) return;
-    try {
-      const response = await this.bridge.sendCommand({ type: "get_state" });
-      if (response.success) {
-        const data = response.data as Record<string, unknown> | undefined;
-        if (data && typeof data.sessionId === "string") {
-          this.wizardPiSessionId = data.sessionId;
-        }
-      }
-    } catch {
-      // Agent RPC may not be ready yet; the id is only needed at handoff.
-    }
   }
 
   /** Stop the agent without cleanup (used after a successful handoff). */
   async detach(): Promise<void> {
     this.finished = true;
+    this.bridgeGeneration++;
+    this.clearRetryTimer();
     await this.bridge?.stop().catch(() => undefined);
-    // NOTE: do NOT cleanupPersistentState — the session file is handed off.
   }
 
   // ── Event routing ──────────────────────────────────────────────────────────
@@ -346,6 +416,22 @@ export class WizardSession {
     // 1. herman_wizard_ask → editor request carrying a wizard envelope.
     const wizardReq = tryParseWizardRequest(event);
     if (wizardReq) {
+      // Questions are planning-only. Auto-reject outside planning so coding/QA
+      // never surfaces the question UI or hangs on an unanswered editor request.
+      if (this.phase !== "planning") {
+        logger.warning("Rejecting herman_wizard_ask outside planning", {
+          id: this.id,
+          phase: this.phase,
+        });
+        this.bridge?.sendExtensionUiResponse(wizardReq.requestId, {
+          value: JSON.stringify({
+            [WIZARD_ASK_REJECTED_SENTINEL]: true,
+            answers: [],
+            cancelled: false,
+          }),
+        });
+        return;
+      }
       this.pendingRequestId = wizardReq.requestId;
       this.emit({
         type: "wizard_request",
@@ -356,27 +442,92 @@ export class WizardSession {
       return;
     }
 
-    // 2. herman_complete_wizard tool call → setup done.
+    // 2. Planning complete → start coding phase.
+    if (event.type === "tool_execution_start" && event.toolName === "herman_complete_planning") {
+      if (this.phase !== "planning" || this.phaseSignaledComplete) return;
+      const args = event.args as Record<string, unknown> | undefined;
+      const projectPath = typeof args?.projectPath === "string" ? args.projectPath.trim() : "";
+      const planPathArg = typeof args?.planPath === "string" ? args.planPath.trim() : "";
+      const planPath = planPathArg || (projectPath ? join(projectPath, WIZARD_PLAN_FILENAME) : "");
+
+      const validationError = validatePlanningOutputs(projectPath, planPath);
+      if (validationError) {
+        logger.warning("herman_complete_planning rejected", {
+          id: this.id,
+          projectPath,
+          planPath,
+          error: validationError,
+        });
+        this.emit({
+          type: "wizard_progress",
+          wizardSessionId: this.id,
+          text: validationError,
+        });
+        // Do not advance — wait for a correct completion or agent_end → retry.
+        return;
+      }
+
+      this.projectPath = projectPath;
+      this.planPath = planPath;
+      this.phaseSignaledComplete = true;
+      this.clearRetryTimer();
+      this.emit({
+        type: "wizard_progress",
+        wizardSessionId: this.id,
+        text: "Plan ready — starting build…",
+      });
+      this.advanceToPhase("coding");
+      return;
+    }
+
+    // 3. herman_complete_wizard — coding → QA, or QA → done.
     if (event.type === "tool_execution_start" && event.toolName === "herman_complete_wizard") {
+      if (this.phaseSignaledComplete) return;
       const args = event.args as Record<string, unknown> | undefined;
       const projectPath = typeof args?.projectPath === "string" ? args.projectPath : undefined;
       const summary = typeof args?.summary === "string" ? args.summary : undefined;
       if (projectPath) this.projectPath = projectPath;
-      this.emit({
-        type: "wizard_complete",
-        wizardSessionId: this.id,
-        projectPath: projectPath ?? "",
-        ...(summary ? { summary } : {}),
-      });
+
+      if (this.phase === "coding") {
+        this.phaseSignaledComplete = true;
+        this.clearRetryTimer();
+        this.codingSummary = (summary?.trim() || this.lastAssistantText || "").trim() || undefined;
+        this.emit({
+          type: "wizard_progress",
+          wizardSessionId: this.id,
+          text: "Build complete — verifying…",
+        });
+        this.advanceToPhase("qa");
+        return;
+      }
+
+      if (this.phase === "qa") {
+        this.phaseSignaledComplete = true;
+        this.clearRetryTimer();
+        const finalPath = this.projectPath ?? projectPath ?? "";
+        this.emit({
+          type: "wizard_complete",
+          wizardSessionId: this.id,
+          projectPath: finalPath,
+          ...(summary ? { summary } : {}),
+        });
+        // Stop the agent: the done screen no longer needs a live bridge.
+        this.finished = true;
+        this.bridgeGeneration++;
+        void this.bridge?.stop().catch(() => undefined);
+        return;
+      }
+
       return;
     }
 
-    // 3. Progress: assistant narration + tool activity (skip wizard tools).
+    // 4. Progress: assistant narration + tool activity (skip wizard tools).
     if (event.type === "message_end") {
       const msg = event.message as Record<string, unknown> | undefined;
       if (msg?.role === "assistant") {
         const text = extractText(msg);
         if (text.trim()) {
+          this.lastAssistantText = text.trim();
           this.emit({ type: "wizard_progress", wizardSessionId: this.id, text: text.trim() });
         }
       }
@@ -385,6 +536,7 @@ export class WizardSession {
     if (
       event.type === "tool_execution_start" &&
       event.toolName !== "herman_wizard_ask" &&
+      event.toolName !== "herman_complete_planning" &&
       event.toolName !== "herman_complete_wizard"
     ) {
       const label = formatToolActivity(event.toolName, event.args);
@@ -394,15 +546,14 @@ export class WizardSession {
       return;
     }
 
-    // 4. Terminal / error events — schedule retry instead of immediately ending.
+    // 5. Terminal / error events — schedule retry instead of immediately ending.
     if (event.type === "agent_error") {
       this.scheduleRetry(event.error);
       return;
     }
     if (event.type === "agent_end" || event.type === "agent_complete") {
-      // If the agent finishes without calling herman_complete_wizard, retry.
-      if (!this.projectPath && !this.cancelled) {
-        this.scheduleRetry("Agent ended before completing setup");
+      if (!this.phaseSignaledComplete && !this.cancelled) {
+        this.scheduleRetry(`Agent ended before completing ${this.phase} phase`);
       }
       return;
     }
@@ -483,59 +634,59 @@ export class WizardSessionManager {
   }
 }
 
-// ── Prompt ───────────────────────────────────────────────────────────────────
+// ── Prompts ──────────────────────────────────────────────────────────────────
 
 /**
- * Build the wizard-mode prompt: the resolved manifest (frontmatter + Setup +
- * Questions + Guidance) plus the user's description and explicit wizard
- * operating instructions (secrets, clone target, herman_complete_wizard).
+ * Session 1 — planning: ask questions, clone, discover from docs, write plan.
+ * Does not install, migrate, or customize the project.
  */
-export function buildWizardPrompt(manifest: ResolvedManifest, description: string): string {
+export function buildPlanningPrompt(manifest: ResolvedManifest, description: string): string {
   const fm = manifest.frontmatter;
   const source = fm.source;
-  const repoLine = source?.repo ? `Source repo: ${source.repo}${source.ref ? ` (ref: ${source.ref})` : ""}` : "(no source repo declared)";
+  const repoLine = source?.repo
+    ? `Source repo: ${source.repo}${source.ref ? ` (ref: ${source.ref})` : ""}`
+    : "(no source repo declared)";
 
   const envSection = formatEnvForPrompt(fm.env);
   const reqSection = formatRequirementsForPrompt(fm.requirements);
 
   return [
-    "You are running in HERMAN WIZARD MODE to set up a new project for a non-technical user.",
+    "You are running in HERMAN WIZARD MODE (planning phase) for a non-technical user.",
     "Do not write chat-style explanations — work autonomously and report progress only through tool calls.",
     "",
     "## Your job",
     "1. Ask the user what you still need via `herman_wizard_ask` (project name is collected on the first call).",
-    "2. Clone the template source into ~/Herman/<projectName> and work directly in that folder.",
-    "3. Set up the project (install deps, generate/migrate DB, write env files, apply the name in project files).",
-    "4. Call `herman_complete_wizard` with the final absolute project path when done.",
+    "2. Clone the template source into ~/Herman/<projectName>.",
+    "3. Read the cloned repo's docs (README, AGENTS.md, and other markdown) to understand the project.",
+    "4. If anything is still unclear, ask follow-up questions via `herman_wizard_ask`.",
+    "5. Write a complete plan to `HERMAN_PLAN.md` in the project root (checkbox task list of everything to do).",
+    "6. Call `herman_complete_planning` with { projectPath, planPath } when the plan is ready.",
     "",
     "## Operating rules",
     "- PROJECT NAME FIRST: call `herman_wizard_ask` before cloning. Herman auto-injects `projectName`",
     "  on your first call — do not clone until you have the projectName answer.",
     "  Clone with `git clone --depth 1 <repo> ~/Herman/<projectName>` (add --branch <ref> if given).",
     "  Sanitize projectName for the filesystem (lowercase, hyphens, no spaces) before cloning.",
-    "  Apply the name in package.json `name`, app/page <title>, README title, etc.",
     "  `projectName` IS the display name (blog title, store name, product name, site title). Do NOT ask",
     "  a separate naming question from ## Questions — if a manifest bullet bundles a name with",
     "  something else (e.g. 'what the blog is called and what they write about'), ask only the rest.",
     "- VISUAL TONE LAST: Herman appends `visualTone` as the last question once template-specific",
-    "  questions are in the batch (or on a follow-up ask). Use the answer for typography, color,",
-    "  imagery, and layout styling.",
+    "  questions are in the batch (or on a follow-up ask). Capture the answer in the plan for later",
+    "  styling work. The visual tone question must never be a `choice` question — it is free text.",
     "- QUESTIONS: ask ONLY what the description + manifest do not already answer. Prefer `choice` questions",
     "  with a small option set over free text when the answer is from a known set. Use `multiple: true` for",
     "  multi-select. Use `secret: true` for API keys the user must paste. Never echo secret values.",
-    "  After answers arrive, decide if you need more; if not, proceed to setup.",
-    "- ENV / SECRETS:",
-    "  * Vars with a `generate` shell command: RUN that command via bash and write its stdout to the env file.",
-    "    The user never sees these (e.g. BETTER_AUTH_SECRET via `bun auth:secret`).",
-    "  * Non-API-key secrets WITHOUT a `generate` command: do NOT ask the user — write a placeholder value",
-    "    (e.g. `change-me-in-production`) and proceed. They can rotate later.",
-    "  * Required API keys (no `generate`, clearly third-party like OPENAI_API_KEY): ask via",
-    "    `herman_wizard_ask` with `secret: true`. If the user skips, write a placeholder and continue.",
-    "  * Write env values to the file declared by the manifest env config (or the project's default .env).",
-    "- REQUIREMENTS: verify any required tools are installed (run each `check` command). If a required",
-    "  (non-optional) tool is missing, still proceed as far as you can and note it in the completion summary.",
-    "- When everything is ready, call `herman_complete_wizard` ONCE with { projectPath, summary }. This is",
-    "  your LAST tool call. Do not call other tools after it.",
+    "  After answers arrive, read the repo docs and decide if you need more clarifying questions.",
+    "- PLANNING ONLY: do NOT install dependencies, run migrations, write env files, or customize code",
+    "  in this phase. Your deliverable is discovery + `HERMAN_PLAN.md`.",
+    "- PLAN FILE: write `{projectPath}/HERMAN_PLAN.md` with:",
+    "  * A short summary of the user's intent and key answers",
+    "  * Findings from README / AGENTS.md / other docs",
+    "  * Env/secrets and requirements notes (what must be generated, asked, or placeholdered later)",
+    "  * A complete checkbox task list (`- [ ] …`) covering setup, naming, styling, content, and verification",
+    "  Session 2 will tick those boxes while coding.",
+    "- When the plan is ready, call `herman_complete_planning` ONCE with",
+    "  { projectPath, planPath: \"<absolute>/HERMAN_PLAN.md\", summary? }. This is your LAST tool call.",
     "",
     "## Template manifest (HERMAN.md)",
     "```yaml",
@@ -545,7 +696,7 @@ export function buildWizardPrompt(manifest: ResolvedManifest, description: strin
     repoLine,
     "```",
     "",
-    "### ## Setup",
+    "### ## Setup (context for the plan — do not execute yet)",
     manifest.sections.setup?.trim() ?? "(none)",
     "",
     "### ## Questions (author intent — what this template may need to know; Herman skips items already answered by the user's description; never re-ask project/blog/site/store name — use projectName)",
@@ -560,10 +711,104 @@ export function buildWizardPrompt(manifest: ResolvedManifest, description: strin
     "## What the user wants to build",
     description.trim(),
     "",
-    "Begin now: ask the user the questions you need, then clone into ~/Herman/<projectName> and set up the project.",
+    "Begin now: ask the user the questions you need, then clone into ~/Herman/<projectName>, read the docs, and write HERMAN_PLAN.md.",
   ]
     .filter((line) => line !== "")
     .join("\n");
+}
+
+/** @deprecated Use buildPlanningPrompt */
+export function buildWizardPrompt(manifest: ResolvedManifest, description: string): string {
+  return buildPlanningPrompt(manifest, description);
+}
+
+/**
+ * Session 2 — single `/goal` body (without the `/goal ` prefix).
+ * Includes rookie/coder framing so we do not need a separate context prompt.
+ */
+export function buildCodingGoal(
+  manifest: ResolvedManifest,
+  projectPath: string,
+  planPath: string,
+): string {
+  const setupGoal = manifest.frontmatter.setup_goal?.trim() || DEFAULT_SETUP_GOAL;
+  const setupSection = manifest.sections.setup?.trim() || "(none)";
+
+  return [
+    "You are in HERMAN WIZARD MODE dealing with a rookie (non-technical) user.",
+    "You are the coder for this project. Work autonomously — no chatty explanations.",
+    "Do NOT call herman_wizard_ask — there is no user Q&A in this phase.",
+    "",
+    setupGoal,
+    "",
+    "You MUST make sure that all the checkboxes in the plan are ticked before you finish.",
+    `Plan file: ${planPath}`,
+    `Project path: ${projectPath}`,
+    "",
+    "Before making changes: read AGENTS.md and README if they exist, study codebase patterns, then follow the plan.",
+    "",
+    "Also follow the template setup instructions:",
+    setupSection,
+    "",
+    "Tick each `- [ ]` to `- [x]` in the plan as you complete it.",
+    "When done, call herman_complete_wizard with the project path and a short summary of what you did.",
+  ].join("\n");
+}
+
+/** @deprecated Folded into buildCodingGoal — kept for any external imports. */
+export function buildCodingContextPrompt(projectPath: string, planPath: string): string {
+  return [
+    "You are in HERMAN WIZARD MODE dealing with a rookie (non-technical) user.",
+    "You are the coder for this project. Work autonomously — no chatty explanations.",
+    "",
+    `Project path: ${projectPath}`,
+    `Plan file: ${planPath}`,
+    "",
+    "Before making changes:",
+    "1. Read AGENTS.md and README if they exist in the codebase.",
+    "2. Study the patterns already used in the code.",
+    "3. Read the plan file and follow it.",
+    "",
+    "When every plan checkbox is ticked and setup is done,",
+    "call `herman_complete_wizard` with { projectPath, summary } as your last tool call.",
+  ].join("\n");
+}
+
+/** Session 3 — `/goal` body (without the `/goal ` prefix). */
+export function buildQaGoal(projectPath: string, planPath: string, codingSummary: string): string {
+  return [
+    "You are in HERMAN WIZARD MODE. Do NOT call herman_wizard_ask — there is no user Q&A in this phase.",
+    "",
+    `A prior agent has just completed the work on this plan: ${planPath}`,
+    "and their final message is this:",
+    "```",
+    codingSummary,
+    "```",
+    "",
+    "Your mission now is to make sure that the project is well set up and it runs without issues.",
+    `Project path: ${projectPath}`,
+    "Start the server and navigate the website. Notice any errors on the server side or the web page's console errors.",
+    "If you find any issues, study the patterns in the codebase, then fix the issues.",
+    "",
+    "When everything is smooth, call herman_complete_wizard with { projectPath, summary } as your last tool call.",
+  ].join("\n");
+}
+
+/** Returns an error message if planning outputs are not ready to advance; else undefined. */
+export function validatePlanningOutputs(projectPath: string, planPath: string): string | undefined {
+  if (!projectPath) {
+    return "Planning incomplete: projectPath is missing. Clone the project, write HERMAN_PLAN.md, then call herman_complete_planning again.";
+  }
+  if (!existsSync(projectPath)) {
+    return `Planning incomplete: project path does not exist (${projectPath}). Clone the project, then call herman_complete_planning again.`;
+  }
+  if (!planPath) {
+    return "Planning incomplete: planPath is missing. Write HERMAN_PLAN.md, then call herman_complete_planning again.";
+  }
+  if (!existsSync(planPath)) {
+    return `Planning incomplete: plan file not found (${planPath}). Write HERMAN_PLAN.md with checkbox tasks, then call herman_complete_planning again.`;
+  }
+  return undefined;
 }
 
 function formatEnvForPrompt(env: ResolvedManifest["frontmatter"]["env"]): string {

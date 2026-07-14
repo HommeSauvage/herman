@@ -8,6 +8,9 @@
  *    the envelope and routes it to React,
  *  - the React wizard which renders the envelope and returns answers.
  *
+ * Extension tools: `herman_wizard_ask`, `herman_complete_planning`,
+ * `herman_complete_wizard`.
+ *
  * The on-the-wire format is JSON carried as the `prefill`/`value` string of a
  * pi `ctx.ui.editor()` dialog round-trip (see docs/rpc.md). The sentinel
  * `__herman_wizard__` lets the bridge distinguish a wizard question batch from
@@ -182,3 +185,16 @@ export function parseWizardAnswers(value: string | undefined): WizardAskAnswers 
     return undefined;
   }
 }
+
+/** Args for `herman_complete_planning` (planning phase). */
+export type WizardCompletePlanningParams = {
+  projectPath: string;
+  planPath: string;
+  summary?: string;
+};
+
+/** Args for `herman_complete_wizard` (coding / QA phases). */
+export type WizardCompleteParams = {
+  projectPath: string;
+  summary?: string;
+};

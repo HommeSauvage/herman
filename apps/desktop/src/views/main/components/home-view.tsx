@@ -28,6 +28,7 @@ type DisplaySession = {
   id: string;
   title: string;
   folderPath: string;
+  projectRoot: string;
   updatedAt: number;
   /** true if this is a currently open tab (mark with "Active" badge). */
   isOpen: boolean;
@@ -36,7 +37,7 @@ type DisplaySession = {
 };
 
 function toDisplaySession(
-  session: { id: string; title: string; folderPath: string; updatedAt: number },
+  session: { id: string; title: string; folderPath: string; projectRoot: string; updatedAt: number },
   isOpen: boolean,
   piSessionId?: string,
 ): DisplaySession {
@@ -44,6 +45,7 @@ function toDisplaySession(
     id: session.id,
     title: session.title,
     folderPath: session.folderPath,
+    projectRoot: session.projectRoot,
     updatedAt: session.updatedAt,
     isOpen,
     piSessionId,
@@ -61,6 +63,7 @@ function nativeToDisplay(
         id: openTabId,
         title: s.name || s.firstMessage || "Untitled",
         folderPath: s.cwd,
+        projectRoot: s.cwd,
         updatedAt: s.modified,
       },
       true,
@@ -71,6 +74,7 @@ function nativeToDisplay(
       id: s.id,
       title: s.name || s.firstMessage || "Untitled",
       folderPath: s.cwd,
+      projectRoot: s.cwd,
       updatedAt: s.modified,
     },
     false,
@@ -115,7 +119,7 @@ export function HomeView() {
     const result: DisplaySession[] = [];
 
     for (const s of storeSessions) {
-      const matched = !selectedProject || s.folderPath === selectedProject;
+      const matched = !selectedProject || s.projectRoot === selectedProject;
       if (!matched) continue;
       result.push(toDisplaySession(s, true));
       if (s.piSessionId) seen.add(s.piSessionId);
@@ -219,7 +223,7 @@ export function HomeView() {
               <SessionRow
                 folderPath={session.folderPath}
                 title={session.title}
-                subtitle={showProject ? sessionProjectSubtitle(session.folderPath) : null}
+                subtitle={showProject ? sessionProjectSubtitle(session.projectRoot) : null}
                 isActive={session.isOpen && session.id === activeTab?.id}
                 showActiveBadge={session.isOpen}
                 density="compact"

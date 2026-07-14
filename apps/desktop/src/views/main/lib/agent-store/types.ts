@@ -20,6 +20,8 @@ export type Tab = {
   id: TabId;
   title: string;
   folderPath: string;
+  /** Stable project identity: git root if the folder is in a repo, otherwise folderPath. */
+  projectRoot: string;
   projectColor: string;
   worktree?: SessionWorktree;
   messages: Message[];
@@ -187,7 +189,7 @@ export type AgentActions = {
   setView: (view: "home" | "session" | "settings") => void;
   setSelectedProject: (folderPath: string | null) => void;
   setSettings: (settings: DesktopSettings) => void;
-  handleProjectOpened: (folderPath: string, projects: string[]) => void;
+  handleProjectOpened: (projectRoot: string, projects: string[]) => void;
   setComposerValue: ((value: string) => void) & ((tabId: TabId, value: string) => void);
   revertTab: (tabId: TabId, messageId: string) => void;
   unrevertTab: (tabId: TabId) => void;

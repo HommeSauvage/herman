@@ -68,6 +68,7 @@ function migrateLegacyFolderPath(state: WindowState): WindowState {
           id,
           title: getProjectName(state.folderPath),
           folderPath: state.folderPath,
+          projectRoot: state.folderPath,
           projectColor: getProjectColor(state.folderPath),
           createdAt: now,
           updatedAt: now,

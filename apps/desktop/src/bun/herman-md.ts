@@ -69,6 +69,7 @@ function validateFrontmatter(raw: unknown, id: string): HermanFrontmatter {
   if (typeof obj.icon === "string") fm.icon = obj.icon;
   if (typeof obj.snapshot === "string") fm.snapshot = obj.snapshot;
   if (typeof obj.category === "string") fm.category = obj.category;
+  if (typeof obj.setup_goal === "string") fm.setup_goal = obj.setup_goal;
 
   if (obj.source != null) {
     if (typeof obj.source !== "object" || Array.isArray(obj.source)) {
@@ -235,6 +236,7 @@ function dumpFrontmatterYaml(fm: Omit<HermanFrontmatter, "extends">): string {
   if (fm.icon != null) lines.push(`icon: ${yamlString(fm.icon)}`);
   if (fm.snapshot != null) lines.push(`snapshot: ${yamlString(fm.snapshot)}`);
   if (fm.category != null) lines.push(`category: ${yamlString(fm.category)}`);
+  if (fm.setup_goal != null) lines.push(`setup_goal: ${yamlString(fm.setup_goal)}`);
 
   if (fm.source) {
     lines.push("source:");
@@ -331,6 +333,11 @@ export function mergeFrontmatter(
       ? { category: child.category }
       : base.category != null
         ? { category: base.category }
+        : {}),
+    ...(child.setup_goal != null
+      ? { setup_goal: child.setup_goal }
+      : base.setup_goal != null
+        ? { setup_goal: base.setup_goal }
         : {}),
     ...(child.source != null
       ? { source: child.source }

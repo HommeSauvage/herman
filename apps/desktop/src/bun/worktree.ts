@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { getLogger } from "@logtape/logtape";
 
 import type { SessionWorktree, Tab, TabId } from "../shared/rpc.js";
-import { AgentBridge } from "./agent-bridge.js";
 import { git, getRepoRoot, isGitRepo } from "./rewind-core.js";
 
 const logger = getLogger(["herman-desktop", "worktree"]);
@@ -21,6 +20,28 @@ build
 
 function escapeRefPart(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+function parsePorcelainPaths(output: string): string[] {
+  if (!output.trim()) return [];
+  const paths = new Set<string>();
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    const arrow = line.indexOf(" -> ");
+    const path = arrow >= 0 ? line.slice(arrow + 4) : line.slice(3);
+    paths.add(path.trim());
+  }
+  return [...paths];
+}
+
+function unionFileCount(...groups: string[][]): number {
+  const paths = new Set<string>();
+  for (const group of groups) {
+    for (const path of group) {
+      if (path) paths.add(path);
+    }
+  }
+  return paths.size;
 }
 
 export async function initProjectRepo(projectPath: string): Promise<void> {
@@ -79,6 +100,30 @@ async function linkNodeModules(sourceDir: string, targetDir: string): Promise<vo
   await symlink(src, dest, "dir");
 }
 
+/**
+ * Resolve the true project root from a folder path, even when the folder
+ * is a git worktree. In a regular repo this returns the repo root. In a
+ * worktree it traces back to the main repo root via git-common-dir.
+ */
+export async function resolveProjectRoot(folderPath: string): Promise<string> {
+  try {
+    const commonDir = await git("rev-parse --git-common-dir", folderPath);
+    // In a regular repo git-common-dir is ".git"; use show-toplevel.
+    // In a worktree it's an absolute path to the main repo's .git dir.
+    if (commonDir === ".git") {
+      return await getRepoRoot(folderPath);
+    }
+    // Worktree: strip the trailing /.git to get the main repo root.
+    const resolved = commonDir.replace(/\/\.git$/, "");
+    if (resolved && resolved !== commonDir) {
+      return resolved;
+    }
+    return await getRepoRoot(folderPath);
+  } catch {
+    return folderPath;
+  }
+}
+
 export async function createSessionWorktree(mainFolderPath: string, tabId: TabId): Promise<{
   folderPath: string;
   worktree: SessionWorktree;
@@ -89,9 +134,9 @@ export async function createSessionWorktree(mainFolderPath: string, tabId: TabId
   const folderPath = join(homedir(), "Herman", ".worktrees", tabId);
   await mkdir(join(homedir(), "Herman", ".worktrees"), { recursive: true });
   await git(`worktree add "${folderPath}" -b "${branch}" "${baseBranch}"`, repoRoot);
-  await copyEnvFiles(mainFolderPath, folderPath);
+  await copyEnvFiles(repoRoot, folderPath);
   try {
-    await linkNodeModules(mainFolderPath, folderPath);
+    await linkNodeModules(repoRoot, folderPath);
   } catch {
     await ensureNodeModulesInstalled(folderPath);
   }
@@ -100,7 +145,7 @@ export async function createSessionWorktree(mainFolderPath: string, tabId: TabId
     worktree: {
       branch,
       baseBranch,
-      mainFolderPath,
+      mainFolderPath: repoRoot,
     },
   };
 }
@@ -130,188 +175,60 @@ export async function removeSessionWorktree(tab: Pick<Tab, "folderPath" | "workt
   }
 }
 
-export async function getSessionChanges(tab: Pick<Tab, "worktree">): Promise<{ isWorktree: boolean; changedFiles: number; canApply: boolean }> {
+export async function getSessionChanges(
+  tab: Pick<Tab, "worktree" | "folderPath">,
+): Promise<{ isWorktree: boolean; changedFiles: number; canApply: boolean }> {
   if (!tab.worktree) {
     return { isWorktree: false, changedFiles: 0, canApply: false };
   }
+
   const repoRoot = await getRepoRoot(tab.worktree.mainFolderPath);
-  const output = await git(`diff --name-only "${tab.worktree.baseBranch}".."${tab.worktree.branch}"`, repoRoot);
-  const changedFiles = output ? output.split("\n").filter(Boolean).length : 0;
+  const worktreePath = tab.folderPath;
+  if (!worktreePath) {
+    return { isWorktree: true, changedFiles: 0, canApply: false };
+  }
+
+  const [porcelainOutput, committedOutput] = await Promise.all([
+    git("status --porcelain", worktreePath).catch(() => ""),
+    git(
+      `diff --name-only "${tab.worktree.baseBranch}...${tab.worktree.branch}"`,
+      repoRoot,
+    ).catch(() => ""),
+  ]);
+
+  const uncommittedPaths = parsePorcelainPaths(porcelainOutput);
+  const committedPaths = committedOutput ? committedOutput.split("\n").filter(Boolean) : [];
+  const changedFiles = unionFileCount(uncommittedPaths, committedPaths);
+
   return { isWorktree: true, changedFiles, canApply: changedFiles > 0 };
 }
 
-async function hasChanges(cwd: string): Promise<boolean> {
-  const status = await git("status --porcelain", cwd);
-  return status.length > 0;
-}
-
-async function commitIfDirty(cwd: string, message: string): Promise<void> {
-  if (!(await hasChanges(cwd))) return;
-  await git("add -A", cwd);
-  await git(`-c user.email=herman@local -c user.name=Herman commit -m "${message}"`, cwd);
-}
-
-async function listConflicts(cwd: string): Promise<string[]> {
-  const files = await git("diff --name-only --diff-filter=U", cwd);
-  return files ? files.split("\n").filter(Boolean) : [];
-}
-
-async function useSessionVersionForConflicts(cwd: string, files: string[]): Promise<void> {
-  for (const file of files) {
-    await git(`checkout --theirs -- "${file}"`, cwd);
-  }
-}
-
-function hasConflictMarkers(content: string): boolean {
-  return content.includes("<<<<<<<") || content.includes("=======") || content.includes(">>>>>>>");
-}
-
-function clipText(text: string, max = 1200): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}\n...<truncated>`;
-}
-
-function summarizeSnippet(label: string, content: string): string {
-  const trimmed = content.trim();
-  const firstLine = trimmed.split("\n").find((line) => line.trim().length > 0) ?? "(empty)";
-  return `${label}: ${trimmed.length} chars, first line: ${firstLine.slice(0, 120)}`;
-}
-
-async function readStageFile(
-  repoRoot: string,
-  stage: 1 | 2 | 3,
-  filePath: string,
-): Promise<string | undefined> {
-  try {
-    // Stage slots during conflict: 1=base, 2=ours, 3=theirs
-    return await git(`show ":${stage}:${filePath}"`, repoRoot);
-  } catch {
-    return undefined;
-  }
-}
-
-async function buildConflictContext(repoRoot: string, conflictedFiles: string[]): Promise<string> {
-  const sections: string[] = [];
-  for (const filePath of conflictedFiles) {
-    const [base, ours, theirs] = await Promise.all([
-      readStageFile(repoRoot, 1, filePath),
-      readStageFile(repoRoot, 2, filePath),
-      readStageFile(repoRoot, 3, filePath),
-    ]);
-    const details = [
-      `File: ${filePath}`,
-      base ? summarizeSnippet("Base", base) : "Base: unavailable",
-      ours ? summarizeSnippet("Ours(main)", ours) : "Ours(main): unavailable",
-      theirs ? summarizeSnippet("Theirs(session)", theirs) : "Theirs(session): unavailable",
-      "",
-      "Ours snippet:",
-      "```",
-      clipText(ours ?? ""),
-      "```",
-      "",
-      "Theirs snippet:",
-      "```",
-      clipText(theirs ?? ""),
-      "```",
-    ].join("\n");
-    sections.push(details);
-  }
-  return sections.join("\n\n");
-}
-
-async function assertNoConflictMarkers(repoRoot: string, conflictedFiles: string[]): Promise<boolean> {
-  for (const file of conflictedFiles) {
-    const path = join(repoRoot, file);
-    if (!existsSync(path)) continue;
-    const content = await Bun.file(path).text();
-    if (hasConflictMarkers(content)) return false;
-  }
-  return true;
-}
-
-function buildConflictPrompt(
-  repoRoot: string,
-  conflictedFiles: string[],
-  contextByFile: string,
-): string {
-  const fileList = conflictedFiles.map((file) => `- ${file}`).join("\n");
+export function buildSessionSyncPrompt(opts: {
+  worktreePath: string;
+  mainFolderPath: string;
+  baseBranch: string;
+  sessionBranch: string;
+}): string {
   return [
-    "You are resolving git merge conflicts for a rookie user.",
-    `Repository root: ${repoRoot}`,
-    "Conflicted files:",
-    fileList,
+    "Please save my work to the real project folder. This is an automated save request from the Save button.",
     "",
-    "Requirements:",
-    "1) Resolve every conflict carefully and keep valid, working code.",
-    "2) Remove all conflict markers (<<<<<<<, =======, >>>>>>>).",
-    "3) Do not run git commit. Do not explain. Just edit files to resolve.",
-    "4) Prefer preserving the user's intent from both sides when possible.",
-    "5) Use the Base/Ours/Theirs context below to infer intent before editing.",
+    "Paths:",
+    `- Draft copy (where you are working): ${opts.worktreePath}`,
+    `- Real project folder: ${opts.mainFolderPath}`,
+    `- Real project branch: ${opts.baseBranch}`,
+    `- Draft branch: ${opts.sessionBranch}`,
     "",
-    "Conflict context per file:",
-    contextByFile,
+    "Do all of the following without asking me questions:",
+    "1. Commit any uncommitted changes in the draft copy with message \"Session changes\".",
+    "2. In the draft copy, merge the latest changes from the real project branch into the draft. Resolve any conflicts carefully using your knowledge of this session.",
+    "3. Commit conflict resolutions in the draft if needed.",
+    "4. In the real project folder, merge the draft branch into the real project branch (use git -C with the real project path). Resolve any conflicts.",
+    "5. Commit the merge in the real project folder.",
+    "6. Back in the draft copy, merge the real project branch so the draft and real project stay aligned.",
+    "7. Leave both folders with clean working trees (no uncommitted files, no conflict markers).",
+    "",
+    "Do not remove the draft copy or delete branches. Do not explain what you did unless something failed.",
   ].join("\n");
-}
-
-async function resolveConflictsWithAgent(repoRoot: string, conflictedFiles: string[]): Promise<"resolved"> {
-  const tempTabId = `merge-resolver-${Date.now()}`;
-  const bridge = new AgentBridge(tempTabId, () => {}, () => {});
-  try {
-    const contextByFile = await buildConflictContext(repoRoot, conflictedFiles);
-    await bridge.start(repoRoot);
-    await bridge.sendCommand({
-      type: "prompt",
-      message: buildConflictPrompt(repoRoot, conflictedFiles, contextByFile),
-    });
-    const unresolved = await listConflicts(repoRoot);
-    const hasMarkers = !(await assertNoConflictMarkers(repoRoot, conflictedFiles));
-    if (unresolved.length > 0 || hasMarkers) {
-      throw new Error("Agent did not fully resolve conflicts");
-    }
-    return "resolved";
-  } catch (error) {
-    logger.warning("Agent conflict resolution failed; using session version fallback", {
-      repoRoot,
-      error: error instanceof Error ? error.message : String(error),
-      conflictedFiles,
-    });
-    await useSessionVersionForConflicts(repoRoot, conflictedFiles);
-    return "resolved";
-  } finally {
-    await bridge.stop().catch(() => undefined);
-  }
-}
-
-export async function applySessionToMainProject(tab: Pick<Tab, "id" | "worktree">): Promise<{ status: "applied" | "resolving" | "error"; error?: string }> {
-  if (!tab.worktree) {
-    return { status: "error", error: "Session is not a worktree" };
-  }
-
-  const worktreePath = join(homedir(), "Herman", ".worktrees", tab.id);
-  const mainFolder = tab.worktree.mainFolderPath;
-  const repoRoot = await getRepoRoot(mainFolder);
-
-  try {
-    await commitIfDirty(worktreePath, "Session changes");
-    await commitIfDirty(mainFolder, "WIP before merge");
-    await git(`merge --no-ff --no-commit "${tab.worktree.branch}"`, mainFolder);
-    await git(`-c user.email=herman@local -c user.name=Herman commit -m "Merge ${tab.worktree.branch}"`, mainFolder);
-    return { status: "applied" };
-  } catch {
-    const conflicts = await listConflicts(mainFolder);
-    if (conflicts.length === 0) {
-      await git("merge --abort", mainFolder).catch(() => undefined);
-      return { status: "error", error: "Merge failed without conflict details" };
-    }
-    await resolveConflictsWithAgent(mainFolder, conflicts);
-    await git("add -A", mainFolder);
-    await git(
-      `-c user.email=herman@local -c user.name=Herman commit -m "Merge ${tab.worktree.branch} (auto-resolved)"`,
-      mainFolder,
-    );
-    logger.info("Conflicts auto-resolved with session version", { repoRoot, conflicts });
-    return { status: "resolving" };
-  }
 }
 
 export async function ensureGitAndDependencies(projectPath: string): Promise<void> {

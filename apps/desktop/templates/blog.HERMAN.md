@@ -6,6 +6,7 @@ description: A place to write and publish articles online. Think of it like a si
 suitable_for: With an admin panel where you can write posts, upload images and manage your blog in general. Good if you want to share stories, news, tutorials, or updates regularly. Works well for writers, journalists, hobby bloggers, or small media projects.
 icon: "📝"
 category: content
+setup_goal: Seeding works, dev server starts without issues and open the page, there should be no errors in the console
 ---
 
 ## Setup

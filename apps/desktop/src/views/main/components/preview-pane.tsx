@@ -1,9 +1,31 @@
 import { cn } from "@herman/ui/lib/utils";
-import { Monitor, Smartphone, Tablet, RefreshCw, Loader2, Rocket, ExternalLink, Play } from "lucide-react";
+import { Button } from "@herman/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@herman/ui/components/dialog";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  Loader2,
+  Monitor,
+  Play,
+  RefreshCw,
+  Rocket,
+  Smartphone,
+  Tablet,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DevServer, ProjectManifestView } from "../../../shared/herman-manifest.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
+import { useAgentStore } from "../lib/agent-store.js";
+import { useIsActiveTabWorking } from "../lib/agent-store/hooks.js";
 
 type DeviceMode = "desktop" | "tablet" | "mobile";
 
@@ -36,9 +58,30 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
   const [isRunning, setIsRunning] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [applyState, setApplyState] = useState<"idle" | "working">("idle");
-  const [sessionChanges, setSessionChanges] = useState<number>(0);
+  const [sessionChanges, setSessionChanges] = useState(0);
+  const [canApply, setCanApply] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [deviceMode, setDeviceMode] = useState<DeviceMode>("desktop");
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const prevThinkingRef = useRef(false);
+
+  const isThinking = useAgentStore((state) =>
+    tabId ? (state.tabs[tabId]?.isThinking ?? false) : false,
+  );
+  const isTabWorking = useIsActiveTabWorking();
+
+  const refreshSessionChanges = useCallback(() => {
+    if (!tabId || !isWorktree) {
+      setSessionChanges(0);
+      setCanApply(false);
+      return;
+    }
+    void desktopRpc.request.getSessionChanges({ tabId }).then((state) => {
+      setSessionChanges(state.changedFiles);
+      setCanApply(state.canApply);
+    });
+  }, [tabId, isWorktree]);
 
   useEffect(() => {
     if (!folderPath || folderPath.length < 3) {
@@ -74,14 +117,15 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
   }, [folderPath]);
 
   useEffect(() => {
-    if (!tabId || !isWorktree) {
-      setSessionChanges(0);
-      return;
+    refreshSessionChanges();
+  }, [refreshSessionChanges]);
+
+  useEffect(() => {
+    if (prevThinkingRef.current && !isThinking) {
+      refreshSessionChanges();
     }
-    void desktopRpc.request.getSessionChanges({ tabId }).then((state) => {
-      setSessionChanges(state.changedFiles);
-    });
-  }, [tabId, isWorktree]);
+    prevThinkingRef.current = isThinking;
+  }, [isThinking, refreshSessionChanges]);
 
   const handleStartPreview = useCallback(async () => {
     if (!manifest) return;
@@ -184,16 +228,29 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
   );
 
   const handleApplySession = useCallback(() => {
-    if (!tabId) return;
+    if (!tabId || !canApply) return;
     setApplyState("working");
+    setSaveError(null);
     void desktopRpc.request
       .applySession({ tabId })
+      .then((result) => {
+        if (result.status === "error") {
+          setSaveError(result.error ?? "Could not save to your project. Try again.");
+        } else {
+          setSaveError(null);
+        }
+        refreshSessionChanges();
+      })
+      .catch(() => {
+        setSaveError("Could not save to your project. Try again.");
+      })
       .finally(() => setApplyState("idle"));
-  }, [tabId]);
+  }, [tabId, canApply, refreshSessionChanges]);
 
   const handleDiscardSession = useCallback(() => {
     if (!tabId) return;
     setApplyState("working");
+    setDiscardOpen(false);
     void desktopRpc.request
       .discardSession({ tabId })
       .finally(() => setApplyState("idle"));
@@ -207,6 +264,15 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
 
   const deviceWidth = DEVICE_WIDTHS[deviceMode];
   const servers = manifest?.servers ?? [];
+  const isSaving = applyState === "working";
+  const saveDisabled = isSaving || !canApply || isTabWorking;
+  const isSynced = !canApply && !isSaving;
+
+  const statusCopy = isSaving
+    ? "Saving to your project…"
+    : isSynced
+      ? "Working in a safe draft copy · Up to date"
+      : `Working in a safe draft copy · Unsaved changes${sessionChanges > 0 ? ` · ${sessionChanges} file(s) changed` : ""}`;
 
   return (
     <div className="flex h-full flex-col bg-[#0a0a0b]">
@@ -292,26 +358,38 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
       </div>
 
       {isWorktree && (
-        <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] bg-white/[0.02] px-3 py-2">
-          <p className="text-ghost text-xs">
-            Working in a safe draft copy{sessionChanges > 0 ? ` · ${sessionChanges} file(s) changed` : ""}.
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleDiscardSession}
-              disabled={applyState === "working"}
-              className="text-ghost hover:text-dim rounded-md border border-white/[0.08] px-2 py-1 text-xs disabled:opacity-50"
-            >
-              Discard
-            </button>
-            <button
-              onClick={handleApplySession}
-              disabled={applyState === "working"}
-              className="bg-signal hover:bg-signal-dim rounded-md px-2 py-1 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-            >
-              Save to my project
-            </button>
+        <div className="shrink-0 border-b border-white/[0.06] bg-white/[0.02] px-3 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-ghost flex items-center gap-1.5 text-xs">
+              {isSaving ? (
+                <Loader2 size={13} className="text-signal animate-spin" />
+              ) : isSynced ? (
+                <CheckCircle2 size={13} className="text-signal shrink-0" aria-hidden />
+              ) : (
+                <AlertCircle size={13} className="text-warning shrink-0" aria-hidden />
+              )}
+              {statusCopy}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setDiscardOpen(true)}
+                disabled={isSaving}
+                className="text-ghost hover:text-dim rounded-md border border-white/[0.08] px-2 py-1 text-xs disabled:opacity-50"
+              >
+                Discard
+              </button>
+              <button
+                onClick={handleApplySession}
+                disabled={saveDisabled}
+                className="bg-signal hover:bg-signal-dim rounded-md px-2 py-1 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+              >
+                Save to my project
+              </button>
+            </div>
           </div>
+          {saveError && (
+            <p className="mt-1.5 text-xs text-red-400">{saveError}</p>
+          )}
         </div>
       )}
 
@@ -377,6 +455,31 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
           </div>
         )}
       </div>
+
+      <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Throw away this draft?</DialogTitle>
+            <DialogDescription className="text-left leading-relaxed">
+              Your real project won&apos;t change. This draft and everything you did here will be
+              removed.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDiscardOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isSaving}
+              onClick={handleDiscardSession}
+            >
+              Throw away draft
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

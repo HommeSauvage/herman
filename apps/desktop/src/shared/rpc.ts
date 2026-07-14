@@ -235,6 +235,8 @@ export type PersistedSession = {
   id: TabId;
   title: string;
   folderPath: string;
+  /** Stable project identity: git root if the folder is in a repo, otherwise folderPath. */
+  projectRoot: string;
   projectColor: string;
   /** Latest PI session UUID observed for this tab. */
   piSessionId?: string;
@@ -314,6 +316,8 @@ export type Tab = {
   id: TabId;
   title: string;
   folderPath: string;
+  /** Stable project identity: git root if the folder is in a repo, otherwise folderPath. */
+  projectRoot: string;
   projectColor: string;
   worktree?: SessionWorktree;
   messages: Message[];
@@ -360,10 +364,10 @@ export type OutgoingMessages = {
   tabMessagesHydrated: TabMessagesHydrated;
   tabClosed: { tabId: TabId };
   tabActivated: { tabId: TabId };
-  tabFolderChanged: { tabId: TabId; folderPath?: string };
+  tabFolderChanged: { tabId: TabId; folderPath?: string; projectRoot?: string };
   projectsChanged: { projects: string[] };
   sessionsChanged: { sessions: PersistedSession[] };
-  projectOpened: { folderPath: string; projects: string[] };
+  projectOpened: { folderPath: string; projectRoot: string; projects: string[] };
   agentEvent: { tabId: TabId; event: AgentEvent };
   wizardEvent: { event: WizardSessionEvent };
   agentStatusChanged: { tabId: TabId; state: AgentStatus["state"]; stderr?: string };
@@ -444,7 +448,7 @@ export type HermanDesktopRPC = {
       };
       setTabFolder: {
         params: { tabId: TabId; folderPath?: string };
-        response: { folderPath?: string };
+        response: { folderPath?: string; projectRoot?: string };
       };
       selectTabProject: {
         params: { tabId: TabId; folderPath: string };
@@ -470,7 +474,7 @@ export type HermanDesktopRPC = {
       };
       openProject: {
         params: { folderPath?: string };
-        response: { folderPath?: string };
+        response: { folderPath?: string; projectRoot?: string };
       };
       closeProject: {
         params: { folderPath: string };

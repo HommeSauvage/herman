@@ -1,7 +1,8 @@
 ---
 version: 1
 name: Herman Starter
-description: Shared Bun + TanStack + Drizzle with Bun SQLite foundation. 
+description: A starter code that is versatil and can work for most of the web apps
+suitable_for: If there are no predefined templates for your project, this is probably a good place to start. It might require a bit more work after the project is implemented, but this is a solid start.
 category: base
 source:
   repo: https://github.com/HommeSauvage/herman-starter

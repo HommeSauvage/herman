@@ -61,7 +61,7 @@ function AppContent() {
         if (currentSession && settings.mode === undefined) {
           // First launch — show mode choice
           setShowModeChoice(true);
-        } else if (currentSession && settings.mode === "rookie" && tabs.length === 0) {
+        } else if (currentSession && settings.mode === "rookie" && tabs.length === 0 && projects.length === 0) {
           // Rookie mode with no existing projects — show onboarding
           setShowOnboarding(true);
         }
@@ -107,19 +107,21 @@ function AppContent() {
     const onTabCreated = ({ tab }: { tab: Tab }) => addTab(tab);
     const onTabClosed = ({ tabId }: { tabId: TabId }) => closeTab(tabId);
     const onTabActivated = ({ tabId }: { tabId: TabId }) => activateTab(tabId);
-    const onTabFolderChanged = ({ tabId, folderPath }: { tabId: TabId; folderPath?: string }) => {
-      if (folderPath) setProjectForTab(tabId, folderPath);
+    const onTabFolderChanged = ({ tabId, folderPath, projectRoot }: { tabId: TabId; folderPath?: string; projectRoot?: string }) => {
+      if (folderPath) setProjectForTab(tabId, projectRoot ?? folderPath);
     };
     const onProjectsChanged = ({ projects }: { projects: string[] }) => setProjects(projects);
     const onSessionsChanged = ({ sessions }: { sessions: PersistedSession[] }) =>
       setSessions(sessions);
     const onProjectOpened = ({
       folderPath,
+      projectRoot,
       projects,
     }: {
       folderPath: string;
+      projectRoot: string;
       projects: string[];
-    }) => handleProjectOpened(folderPath, projects);
+    }) => handleProjectOpened(projectRoot, projects);
     desktopRpc.addMessageListener("sessionChanged", onSessionChanged);
     desktopRpc.addMessageListener("activationComplete", onActivationComplete);
     desktopRpc.addMessageListener("updateStatus", onUpdateStatus);

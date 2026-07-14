@@ -14,9 +14,9 @@ type ProjectSelectProps = {
 
 export function ProjectSelect({ tabId }: ProjectSelectProps) {
   const projects = useAgentStore((s) => s.projects);
-  // Subscribe directly to the tab's folderPath so this component re-renders
+  // Subscribe directly to the tab's projectRoot so this component re-renders
   // independently when it changes (even if the parent doesn't propagate).
-  const currentFolder = useAgentStore((s) => s.tabs[tabId]?.folderPath ?? "");
+  const currentProjectRoot = useAgentStore((s) => s.tabs[tabId]?.projectRoot ?? "");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -29,17 +29,17 @@ export function ProjectSelect({ tabId }: ProjectSelectProps) {
   );
 
   const handleSelect = useCallback(
-    (folderPath: string) => {
-      if (folderPath !== currentFolder) {
+    (projectRoot: string) => {
+      if (projectRoot !== currentProjectRoot) {
         // Optimistic update: immediately reflect the selection so the UI is always
         // responsive. The RPC call restarts the agent bridge with the new folder.
-        useAgentStore.getState().setProjectForTab(tabId, folderPath);
-        void selectTabProject(tabId, folderPath);
+        useAgentStore.getState().setProjectForTab(tabId, projectRoot);
+        void selectTabProject(tabId, projectRoot);
       }
       setOpen(false);
       setSearch("");
     },
-    [tabId, currentFolder],
+    [tabId, currentProjectRoot],
   );
 
   const handleOpenFolder = useCallback(async () => {
@@ -95,7 +95,7 @@ export function ProjectSelect({ tabId }: ProjectSelectProps) {
     }
   }
 
-  const displayName = currentFolder ? getProjectName(currentFolder) : "Select project";
+  const displayName = currentProjectRoot ? getProjectName(currentProjectRoot) : "Select project";
 
   return (
     <div className="relative">
@@ -104,9 +104,9 @@ export function ProjectSelect({ tabId }: ProjectSelectProps) {
         onClick={() => setOpen((prev) => !prev)}
         className="text-dim hover:text-text flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.04] px-3 py-1.5 text-xs transition hover:border-white/[0.12] active:scale-[0.98]"
       >
-        {currentFolder ? (
+        {currentProjectRoot ? (
           <>
-            <ProjectIcon folderPath={currentFolder} size="sm" />
+            <ProjectIcon folderPath={currentProjectRoot} size="sm" />
             <span>{displayName}</span>
           </>
         ) : (
@@ -168,7 +168,7 @@ export function ProjectSelect({ tabId }: ProjectSelectProps) {
                   >
                     <ProjectIcon folderPath={project} size="sm" />
                     <span className="flex-1 truncate">{getProjectName(project)}</span>
-                    {currentFolder === project && (
+                    {currentProjectRoot === project && (
                       <Check size={12} className="text-signal shrink-0" />
                     )}
                   </button>

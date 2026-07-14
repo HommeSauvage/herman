@@ -31,7 +31,14 @@ import { rewindManager, getUserMessageIds, readPiSessionId, RevertConflictError 
 import { deleteTabHistory, saveTabHistory } from "./tab-history.js";
 import { loadInstantHydration } from "./tab-message-hydration.js";
 import { resolvePiSessionFile, deletePiSessionFile } from "./pi-session.js";
-import { createSessionWorktree, ensureSessionWorktree, removeSessionWorktree } from "./worktree.js";
+import {
+  buildSessionSyncPrompt,
+  createSessionWorktree,
+  ensureSessionWorktree,
+  getSessionChanges,
+  removeSessionWorktree,
+  resolveProjectRoot,
+} from "./worktree.js";
 import { TabSessionStore } from "./tab-session-store.js";
 import { loadWindowState, saveWindowState, type PersistedSession } from "./window-state.js";
 import { isGitRepo } from "./rewind-core.js";
@@ -55,6 +62,7 @@ function createDeferred<T>(): {
 const COMPOSER_DRAFT_SAVE_DEBOUNCE_MS = 1000;
 const BACKGROUND_SYNC_READY_ATTEMPTS = 4;
 const BACKGROUND_SYNC_RETRY_MS = 100;
+const SESSION_SYNC_TIMEOUT_MS = 180_000;
 
 export type MessageHydrationResult = {
   status: TabMessageHydrationStatus;
@@ -75,7 +83,7 @@ export type WebviewSender = {
       state: AgentBridgeState;
       stderr?: string;
     }) => void;
-    tabFolderChanged: (payload: { tabId: TabId; folderPath?: string }) => void;
+    tabFolderChanged: (payload: { tabId: TabId; folderPath?: string; projectRoot?: string }) => void;
     sessionsChanged: (payload: { sessions: PersistedSession[] }) => void;
     tabMessagesHydrated: (payload: TabMessagesHydrated) => void;
   };
@@ -94,6 +102,7 @@ export class AgentProcessManager {
   private bridges = new Map<TabId, AgentBridge>();
   private composerDraftTimers = new Map<TabId, ReturnType<typeof setTimeout>>();
   private hydrationResults = new Map<TabId, MessageHydrationResult>();
+  private turnWaiters = new Map<TabId, Set<() => void>>();
   private agentRuntime: AgentRuntime;
   private webviewRpc: WebviewSender;
   private getToken: () => Promise<string | undefined>;
@@ -141,15 +150,34 @@ export class AgentProcessManager {
       const state = await loadWindowState();
       const persistedSessions = state.sessions ?? [];
       const openTabIds = state.openTabIds ?? [];
-      this.store.projects = state.projects ?? [];
+      this.store.projects = [];
       this.store.openTabIds = openTabIds;
       this.store.activeTabId = state.activeTabId;
 
       for (const persisted of persistedSessions) {
         this.store.sessions.set(persisted.id, persisted);
-        if (!persisted.folderPath || this.store.projects.includes(persisted.folderPath)) continue;
-        if (openTabIds.includes(persisted.id)) {
-          this.store.projects.push(persisted.folderPath);
+      }
+
+      // Compute project roots for all sessions: prefer worktree.mainFolderPath
+      // (already normalized to git root), then resolve from folderPath.
+      for (const persisted of persistedSessions) {
+        if (!persisted.folderPath) continue;
+        const root =
+          persisted.projectRoot ??
+          persisted.worktree?.mainFolderPath ??
+          await resolveProjectRoot(persisted.folderPath);
+        persisted.projectRoot = root;
+        if (root && !this.store.projects.includes(root)) {
+          this.store.projects.push(root);
+        }
+      }
+
+      // Build project list from legacy state, skipping stale worktree paths.
+      for (const legacyProject of (state.projects ?? [])) {
+        if (legacyProject.includes("/.worktrees/")) continue;
+        const root = await resolveProjectRoot(legacyProject);
+        if (root && !this.store.projects.includes(root)) {
+          this.store.projects.push(root);
         }
       }
 
@@ -204,87 +232,67 @@ export class AgentProcessManager {
     const rawPath = folderPath ?? inheritedTab?.folderPath ?? lastFolder ?? "";
     const tab = this.makeTab(rawPath, title);
     const mode = this.getMode();
-    let projectPath = rawPath;
-    if (mode === "rookie" && rawPath && (await isGitRepo(rawPath))) {
-      const mainPath =
-        folderPath ??
-        inheritedTab?.worktree?.mainFolderPath ??
-        lastFolder ??
-        rawPath;
-      projectPath = mainPath;
-      const created = await createSessionWorktree(mainPath, tab.id);
+    const projectRoot = rawPath ? await resolveProjectRoot(rawPath) : "";
+    if (projectRoot) {
+      tab.projectRoot = projectRoot;
+      tab.projectColor = getProjectColor(projectRoot);
+      if (!title) {
+        tab.title = getProjectName(projectRoot);
+      }
+    }
+    if (mode === "rookie" && projectRoot && (await isGitRepo(projectRoot))) {
+      const created = await createSessionWorktree(projectRoot, tab.id);
       tab.folderPath = created.folderPath;
       tab.worktree = created.worktree;
-      tab.projectColor = getProjectColor(mainPath);
-      if (!title) {
-        tab.title = getProjectName(mainPath);
-      }
     }
     this.store.sessions.set(tab.id, this.toPersistedSession(tab));
     this.store.tabs.set(tab.id, tab);
     this.store.openTabIds.push(tab.id);
     this.store.activeTabId = tab.id;
 
-    if (projectPath && !this.store.projects.includes(projectPath)) {
-      this.store.projects.push(projectPath);
+    if (projectRoot && !this.store.projects.includes(projectRoot)) {
+      this.store.projects.push(projectRoot);
     }
 
     if (tab.folderPath) {
       this.agentRuntime.schedule(tab.id);
     }
     await this.persist();
-    logger.debug("Created tab", { tabId: tab.id, folderPath: tab.folderPath });
+    logger.debug("Created tab", { tabId: tab.id, folderPath: tab.folderPath, projectRoot });
     return tab;
   }
 
   /**
-   * Adopt a finished wizard session as a normal project tab: create a tab at
-   * `projectPath` and resume the wizard agent's pi session in it, so the
-   * conversation context (manifest, Q&A, setup actions) carries into chat.
-   * The wizard's session JSONL already lives in the shared sessions dir, so
-   * no copy is needed — we just record the wizard's piSessionId as the tab's.
+   * Open a finished wizard project as a real tab with a **fresh** pi session.
+   * Coding and QA already ran on the main project tree; open that path directly
+   * (no session worktree) so uncommitted wizard changes remain visible.
+   * Do not resume wizard history or send a post-handoff `/goal`.
    */
-  async adoptWizardSession(
-    projectPath: string,
-    wizardSessionId: string,
-    wizardPiSessionId?: string,
-  ): Promise<Tab> {
-    const tab = this.makeTab(projectPath);
-    const mode = this.getMode();
-    if (mode === "rookie" && (await isGitRepo(projectPath))) {
-      const created = await createSessionWorktree(projectPath, tab.id);
-      tab.folderPath = created.folderPath;
-      tab.worktree = created.worktree;
-      tab.projectColor = getProjectColor(projectPath);
-      tab.title = getProjectName(projectPath);
-    }
+  async adoptWizardSession(projectPath: string, wizardSessionId: string): Promise<Tab> {
+    const projectRoot = await resolveProjectRoot(projectPath);
+    const tab = this.makeTab(projectRoot);
+    tab.projectRoot = projectRoot;
+    tab.folderPath = projectRoot;
+    tab.projectColor = getProjectColor(projectRoot);
+    tab.title = getProjectName(projectRoot);
+    // Intentionally no createSessionWorktree: wizard coding/QA wrote into the
+    // main clone; a fresh worktree from HEAD would drop those changes.
     this.store.sessions.set(tab.id, this.toPersistedSession(tab));
     this.store.tabs.set(tab.id, tab);
     this.store.openTabIds.push(tab.id);
     this.store.activeTabId = tab.id;
-    if (projectPath && !this.store.projects.includes(projectPath)) {
-      this.store.projects.push(projectPath);
-    }
-
-    // The wizard's session JSONL is already in the shared sessions dir; just
-    // record its pi session id so the new tab resumes it.
-    const wizardPiSession = wizardPiSessionId;
-    if (wizardPiSession) {
-      const persisted = this.store.sessions.get(tab.id);
-      if (persisted) {
-        this.store.sessions.set(tab.id, { ...persisted, piSessionId: wizardPiSession });
-      }
+    if (projectRoot && !this.store.projects.includes(projectRoot)) {
+      this.store.projects.push(projectRoot);
     }
 
     if (tab.folderPath) {
       this.agentRuntime.schedule(tab.id);
     }
     await this.persist();
-    logger.info("Adopted wizard session into tab", {
+    logger.info("Opened wizard project as fresh tab", {
       tabId: tab.id,
       projectPath,
       wizardSessionId,
-      piSessionId: wizardPiSession,
     });
     return tab;
   }
@@ -292,6 +300,11 @@ export class AgentProcessManager {
   async openSession(sessionId: TabId): Promise<Tab | undefined> {
     const persisted = this.store.sessions.get(sessionId);
     if (!persisted) return undefined;
+
+    // Ensure projectRoot is populated for legacy sessions.
+    if (!persisted.projectRoot && persisted.folderPath) {
+      persisted.projectRoot = await resolveProjectRoot(persisted.folderPath);
+    }
 
     if (this.store.tabs.has(sessionId)) {
       this.store.activeTabId = sessionId;
@@ -312,9 +325,9 @@ export class AgentProcessManager {
     const instant = await loadInstantHydration(sessionId, persisted);
     let tab = { ...this.materializeTabFromHydration(persisted, instant, composerValue), updatedAt: now };
     const mode = this.getMode();
-    if (mode === "rookie" && tab.folderPath && (await isGitRepo(tab.folderPath))) {
+    if (mode === "rookie" && tab.folderPath && (await isGitRepo(tab.projectRoot))) {
       if (!tab.worktree) {
-        const created = await createSessionWorktree(tab.folderPath, tab.id);
+        const created = await createSessionWorktree(tab.projectRoot, tab.id);
         tab.folderPath = created.folderPath;
         tab.worktree = created.worktree;
       } else {
@@ -330,8 +343,8 @@ export class AgentProcessManager {
     // Mark as recently active so it sorts to the top in the home view
     this.store.sessions.set(sessionId, { ...persisted, updatedAt: now });
 
-    if (persisted.folderPath && !this.store.projects.includes(persisted.folderPath)) {
-      this.store.projects.push(persisted.folderPath);
+    if (tab.projectRoot && !this.store.projects.includes(tab.projectRoot)) {
+      this.store.projects.push(tab.projectRoot);
     }
 
     if (tab.folderPath) {
@@ -346,28 +359,30 @@ export class AgentProcessManager {
    * The session JSONL already lives in the shared sessions dir.
    */
   async openPiSession(folderPath: string, piSessionId: string): Promise<Tab> {
-    const tab = this.makeTab(folderPath);
+    const projectRoot = await resolveProjectRoot(folderPath);
+    const tab = this.makeTab(projectRoot);
+    tab.projectRoot = projectRoot;
+    tab.projectColor = getProjectColor(projectRoot);
+    tab.title = getProjectName(projectRoot);
     const mode = this.getMode();
-    if (mode === "rookie" && (await isGitRepo(folderPath))) {
-      const created = await createSessionWorktree(folderPath, tab.id);
+    if (mode === "rookie" && (await isGitRepo(projectRoot))) {
+      const created = await createSessionWorktree(projectRoot, tab.id);
       tab.folderPath = created.folderPath;
       tab.worktree = created.worktree;
-      tab.projectColor = getProjectColor(folderPath);
-      tab.title = getProjectName(folderPath);
     }
     const persisted = { ...this.toPersistedSession(tab), piSessionId, updatedAt: Date.now() };
     this.store.sessions.set(tab.id, persisted);
     this.store.tabs.set(tab.id, tab);
     this.store.openTabIds.push(tab.id);
     this.store.activeTabId = tab.id;
-    if (folderPath && !this.store.projects.includes(folderPath)) {
-      this.store.projects.push(folderPath);
+    if (projectRoot && !this.store.projects.includes(projectRoot)) {
+      this.store.projects.push(projectRoot);
     }
     if (tab.folderPath) {
       this.agentRuntime.schedule(tab.id);
     }
     await this.persist();
-    logger.info("Opened pi session as tab", { tabId: tab.id, folderPath, piSessionId });
+    logger.info("Opened pi session as tab", { tabId: tab.id, folderPath, projectRoot, piSessionId });
     return tab;
   }
 
@@ -439,7 +454,7 @@ export class AgentProcessManager {
     return state.lastFolderPath ?? homedir();
   }
 
-  async openProject(folderPath?: string): Promise<{ folderPath?: string }> {
+  async openProject(folderPath?: string): Promise<{ folderPath?: string; projectRoot?: string }> {
     const path =
       folderPath ??
       (
@@ -452,22 +467,24 @@ export class AgentProcessManager {
 
     if (!path) return {};
 
-    if (!this.store.projects.includes(path)) {
-      this.store.projects.push(path);
+    const projectRoot = await resolveProjectRoot(path);
+    if (!this.store.projects.includes(projectRoot)) {
+      this.store.projects.push(projectRoot);
     }
 
     // Always mark this as the last active folder, even without an active tab
     await saveWindowState({ lastFolderPath: path });
     await this.persist();
 
-    return { folderPath: path };
+    return { folderPath: path, projectRoot };
   }
 
   async closeProject(folderPath: string): Promise<void> {
-    this.store.projects = this.store.projects.filter((project) => project !== folderPath);
+    const projectRoot = await resolveProjectRoot(folderPath);
+    this.store.projects = this.store.projects.filter((project) => project !== projectRoot);
 
     const openTabIdsForProject = this.store.openTabIds.filter(
-      (tabId) => this.store.sessions.get(tabId)?.folderPath === folderPath,
+      (tabId) => this.store.sessions.get(tabId)?.projectRoot === projectRoot,
     );
     for (const tabId of openTabIdsForProject) {
       await this.closeTab(tabId);
@@ -505,15 +522,17 @@ export class AgentProcessManager {
 
   private async applyFolderToTab(tabId: TabId, path: string) {
     const tab = this.store.tabs.get(tabId)!;
+    const projectRoot = await resolveProjectRoot(path);
     const updated = this.patchTab(tab, {
       folderPath: path,
-      projectColor: getProjectColor(path),
+      projectRoot,
+      projectColor: getProjectColor(projectRoot),
     });
     this.store.tabs.set(tabId, updated);
     this.store.sessions.set(tabId, this.toPersistedSession(updated));
 
-    if (!this.store.projects.includes(path)) {
-      this.store.projects.push(path);
+    if (projectRoot && !this.store.projects.includes(projectRoot)) {
+      this.store.projects.push(projectRoot);
     }
 
     const bridge = this.bridges.get(tabId);
@@ -523,7 +542,7 @@ export class AgentProcessManager {
       this.agentRuntime.schedule(tabId);
     }
 
-    this.webviewRpc.send.tabFolderChanged({ tabId, folderPath: path });
+    this.webviewRpc.send.tabFolderChanged({ tabId, folderPath: path, projectRoot });
     await this.persist();
   }
 
@@ -589,6 +608,108 @@ export class AgentProcessManager {
       this.appendUserMessage(tabId, command.message, command.messageId);
     }
     return bridge.sendCommand(command);
+  }
+
+  async syncSessionToMain(
+    tabId: TabId,
+  ): Promise<{ status: "applied" | "error"; error?: string }> {
+    const tab = this.store.tabs.get(tabId);
+    if (!tab?.worktree) {
+      return { status: "error", error: "No draft session found" };
+    }
+
+    const before = await getSessionChanges(tab);
+    if (!before.canApply) {
+      return { status: "applied" };
+    }
+
+    if (tab.isThinking) {
+      return {
+        status: "error",
+        error: "Wait for the assistant to finish its current task first.",
+      };
+    }
+
+    let bridge = this.bridges.get(tabId);
+    if (!bridge || bridge.getState() !== "running") {
+      await this.startBridge(tabId, tab.folderPath);
+      bridge = this.bridges.get(tabId);
+    }
+    if (!bridge) {
+      return { status: "error", error: "Could not start the assistant for this session." };
+    }
+
+    if (!(await this.waitForAgentReady(bridge))) {
+      return {
+        status: "error",
+        error: "The assistant is not ready yet. Try again in a moment.",
+      };
+    }
+
+    const prompt = buildSessionSyncPrompt({
+      worktreePath: tab.folderPath,
+      mainFolderPath: tab.worktree.mainFolderPath,
+      baseBranch: tab.worktree.baseBranch,
+      sessionBranch: tab.worktree.branch,
+    });
+
+    const turnDone = this.waitForAgentTurnComplete(tabId, SESSION_SYNC_TIMEOUT_MS);
+
+    try {
+      await this.sendCommand(tabId, { type: "prompt", message: prompt });
+    } catch (error) {
+      logger.warning("Session sync prompt failed", {
+        tabId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { status: "error", error: "Could not send the save request to the assistant." };
+    }
+
+    await turnDone;
+
+    const after = await getSessionChanges(tab);
+    if (!after.canApply) {
+      logger.info("Session synced to main project", { tabId });
+      return { status: "applied" };
+    }
+
+    return {
+      status: "error",
+      error: "Some changes could not be saved. Check the chat for details and try again.",
+    };
+  }
+
+  private waitForAgentTurnComplete(tabId: TabId, timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const waiters = this.turnWaiters.get(tabId);
+        waiters?.delete(done);
+        if (waiters && waiters.size === 0) {
+          this.turnWaiters.delete(tabId);
+        }
+        resolve();
+      };
+
+      const timer = setTimeout(done, timeoutMs);
+      let waiters = this.turnWaiters.get(tabId);
+      if (!waiters) {
+        waiters = new Set();
+        this.turnWaiters.set(tabId, waiters);
+      }
+      waiters.add(done);
+    });
+  }
+
+  private resolveTurnWaiters(tabId: TabId): void {
+    const waiters = this.turnWaiters.get(tabId);
+    if (!waiters) return;
+    for (const done of waiters) {
+      done();
+    }
   }
 
   sendRaw(tabId: TabId, command: AgentCommand): void {
@@ -852,6 +973,7 @@ export class AgentProcessManager {
       id,
       title: title ?? (folderPath ? getProjectName(folderPath) : "New session"),
       folderPath,
+      projectRoot: folderPath,
       projectColor: getProjectColor(folderPath),
       messages: [],
       isThinking: false,
@@ -890,6 +1012,7 @@ export class AgentProcessManager {
         patch.isThinking = false;
         patch.connectionError =
           errorMessage || `The assistant stopped unexpectedly (${stopReason ?? "error"}).`;
+        this.resolveTurnWaiters(tabId);
       }
     } else if (event.type === "agent_end" || event.type === "agent_complete") {
       // Only clear isThinking when this event still describes the current turn.
@@ -897,6 +1020,7 @@ export class AgentProcessManager {
       // must not downgrade the working state.
       if (isAgentEndCurrent(event, tab.messages)) {
         patch.isThinking = false;
+        this.resolveTurnWaiters(tabId);
       } else {
         const eventMsgs = (event as { messages?: unknown[] }).messages;
         logger.debug("Ignoring stale agent_end event", {
@@ -911,6 +1035,7 @@ export class AgentProcessManager {
       if (event.error) {
         patch.connectionError = event.error;
       }
+      this.resolveTurnWaiters(tabId);
     }
 
     // Track model info on the bun side so the renderer's full sync can

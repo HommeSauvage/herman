@@ -1,7 +1,7 @@
 /**
  * Herman wizard extension (loaded by the pi agent subprocess in wizard mode).
  *
- * Registers two tools:
+ * Registers three tools:
  *
  *  - `herman_wizard_ask` — ask the user a batch of structured questions
  *    (text / choice / multi-select / secret) and get the answers back, with no
@@ -10,9 +10,11 @@
  *    detects the sentinel and routes it to the React wizard, which returns the
  *    answers as the editor `value`. See `docs/rpc.md`.
  *
- *  - `herman_complete_wizard` — signal that project setup is finished and
- *    report the final project path. Informational; the host captures the args
- *    from the tool-execution event stream.
+ *  - `herman_complete_planning` — signal that planning is done (plan MD written).
+ *
+ *  - `herman_complete_wizard` — signal that a coding or QA phase is finished
+ *    and report the final project path. Informational; the host captures the
+ *    args from the tool-execution event stream.
  *
  * ZERO-RUNTIME-IMPORT by design: this file is loaded by pi's jiti from an
  * absolute path inside the bundled app, where `typebox` / `@earendil-works/pi-ai`
@@ -23,11 +25,13 @@
  *     jiti at runtime — no module resolution needed).
  *   - Parameter schemas are plain JSON Schema objects (pi does NOT Compile/Check
  *     custom tool parameters — it passes the schema straight to the LLM).
+ *   - `node:fs` is a Node builtin and safe to import here for path checks.
  *
  * The wire shapes MUST match `apps/desktop/src/shared/wizard-protocol.ts`;
  * keep them in sync.
  */
 
+import { existsSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // ── Wire shapes (mirror shared/wizard-protocol.ts) ────────────────────────────
@@ -62,6 +66,11 @@ type WizardAskAnswers = { answers: WizardAnswer[]; cancelled: boolean };
 
 type WizardAskParams = { header?: string; questions: WizardAskQuestion[] };
 type WizardCompleteParams = { projectPath: string; summary?: string };
+type WizardCompletePlanningParams = {
+	projectPath: string;
+	planPath: string;
+	summary?: string;
+};
 
 const DEFAULT_PROJECT_NAME_QUESTION: WizardAskQuestion = {
 	id: PROJECT_NAME_QUESTION_ID,
@@ -181,23 +190,45 @@ const WizardAskParams: JsonSchema = obj(
 		header: str("Optional overall title for the question batch."),
 		questions: arr(
 			QuestionSchema,
-			"One or more template-specific questions. Herman auto-injects `projectName` first and " +
-				"`visualTone` last on the appropriate ask batch. Ask only what you still need given the project " +
-				"description and manifest you already have — do not re-ask answered questions.",
+			`One or more template-specific questions. Herman auto-injects \`projectName\` first and \`visualTone\` last on the appropriate ask batch. Ask only what you still need given the project description and manifest you already have — do not re-ask answered questions.`,
 		),
 	},
 	["questions"],
 	"",
 );
 
+const WizardCompletePlanningParams: JsonSchema = obj(
+	{
+		projectPath: str("Absolute path to the cloned project directory (e.g. ~/Herman/my-blog)."),
+		planPath: str("Absolute path to HERMAN_PLAN.md in the project root."),
+		summary: str("Optional short summary of the plan / discovery findings."),
+	},
+	["projectPath", "planPath"],
+	"",
+);
+
 const WizardCompleteParams: JsonSchema = obj(
 	{
 		projectPath: str("Absolute path to the created project directory (e.g. ~/Herman/my-blog)."),
-		summary: str("Short human-readable summary of what was set up."),
+		summary: str("Short human-readable summary of what was done."),
 	},
 	["projectPath"],
 	"",
 );
+
+const ANSWER_CLARIFY_NUDGE = [
+	"",
+	"Next steps (in order):",
+	"1. If you have NOT cloned yet: clone into ~/Herman/<projectName> now (after you have projectName).",
+	"2. Once the repo exists: read README, AGENTS.md, and other useful markdown in the clone.",
+	"3. If you still need clarifying questions based on the answers + docs, call `herman_wizard_ask` with only those remaining questions.",
+	"4. If you are clear (cloned + docs reviewed): write the full plan to `HERMAN_PLAN.md` in the project root",
+	"   (checkbox task list), then call `herman_complete_planning` with { projectPath, planPath }.",
+	"Do not write the plan or call herman_complete_planning until the project is cloned.",
+].join("\n");
+
+const ASK_REJECTED_MESSAGE =
+	`herman_wizard_ask is only allowed during the planning phase. Continue without user questions and call herman_complete_wizard when done.`;
 
 // ── Extension ─────────────────────────────────────────────────────────────────
 
@@ -208,12 +239,13 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 		description:
 			"Ask the user a batch of structured onboarding questions (text, choice, or " +
 			"multi-select) and receive the answers immediately, with no extra model " +
-			"round-trip. Use this during project wizard setup to collect any details you " +
+			"round-trip. Use this ONLY during wizard planning to collect any details you " +
 			"still need that are not already answered by the user's project description or " +
-			"the manifest. Ask via herman_wizard_ask before cloning; the project name is collected on your first call.",
+			"the manifest. Ask via herman_wizard_ask before cloning; the project name is collected on your first call. " +
+			"Do not use this tool during coding or QA phases.",
 		promptSnippet: "Ask the user wizard onboarding questions and get their answers",
 		promptGuidelines: [
-			"Use herman_wizard_ask during wizard setup whenever you need information from the " +
+			"Use herman_wizard_ask only during wizard planning whenever you need information from the " +
 				"user that you don't already have from their project description or the template manifest.",
 			"Ask only what you still need. Do NOT re-ask things the description or manifest already answer.",
 			"Prefer 'choice' questions with a small option set over free text when the answer is " +
@@ -225,11 +257,10 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 				"on your first call and appends visualTone last once template-specific questions are ready. " +
 				"projectName is also the public display name (blog title, store name, site title) — never ask " +
 				"a separate naming question from the manifest. Clone into ~/Herman/<projectName> after you have " +
-				"the name, then apply it in app/title strings, package.json name, etc. Apply the visualTone " +
-				"answer to typography, color, imagery, and layout.",
-			"After receiving answers, decide whether you have enough to proceed. If you need more, " +
-				"call herman_wizard_ask again with only the remaining questions. When you have " +
-				"everything, proceed with setup and call herman_complete_wizard at the end.",
+				"the name. Capture visualTone in the plan for later styling.",
+			"After receiving answers: clone if needed, then read repo docs. If you need more, " +
+				"call herman_wizard_ask again. When clear, write HERMAN_PLAN.md and call " +
+				"herman_complete_planning — do not install or customize in the planning phase.",
 		],
 		parameters: WizardAskParams as any,
 
@@ -242,7 +273,7 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 					content: [
 						{
 							type: "text",
-							text: "Wizard questions are only available in Herman's wizard mode. Proceed with sensible defaults and continue setup.",
+							text: "Wizard questions are only available in Herman's wizard mode. Proceed with sensible defaults and continue planning.",
 						},
 					],
 					details: { answers: [], cancelled: false } satisfies WizardAskAnswers,
@@ -289,7 +320,7 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 				};
 			}
 
-			let parsed: WizardAskAnswers | undefined;
+			let parsed: (WizardAskAnswers & { __herman_ask_rejected__?: boolean }) | undefined;
 			try {
 				const obj = JSON.parse(responseText) as unknown;
 				if (obj && typeof obj === "object" && !Array.isArray(obj)) {
@@ -297,6 +328,7 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 					parsed = {
 						answers: Array.isArray(o.answers) ? (o.answers as WizardAnswer[]) : [],
 						cancelled: o.cancelled === true,
+						...(o.__herman_ask_rejected__ === true ? { __herman_ask_rejected__: true } : {}),
 					};
 				}
 			} catch {
@@ -315,6 +347,13 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 				};
 			}
 
+			if (parsed.__herman_ask_rejected__) {
+				return {
+					content: [{ type: "text", text: ASK_REJECTED_MESSAGE }],
+					details: { answers: [], cancelled: false } satisfies WizardAskAnswers,
+				};
+			}
+
 			if (parsed.cancelled) {
 				return {
 					content: [{ type: "text", text: "User cancelled the wizard." }],
@@ -322,14 +361,15 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 				};
 			}
 
-			// Return a compact, LLM-readable summary of the answers.
+			// Return a compact, LLM-readable summary of the answers + clone-aware nudge.
 			const lines = parsed.answers.map((a) => {
 				const q = questions.find((x) => x.id === a.id);
 				const label = q?.label ?? q?.prompt ?? a.id;
 				if (a.values && a.values.length > 1) return `${label} (${a.id}): ${a.values.join(", ")}`;
 				return `${label} (${a.id}): ${a.value}`;
 			});
-			const text = lines.length > 0 ? lines.join("\n") : "(no answers)";
+			const answerBlock = lines.length > 0 ? lines.join("\n") : "(no answers)";
+			const text = `Here are the user's answers:\n${answerBlock}${ANSWER_CLARIFY_NUDGE}`;
 
 			return {
 				content: [{ type: "text", text }],
@@ -339,18 +379,81 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
-		name: "herman_complete_wizard",
-		label: "Complete Wizard",
+		name: "herman_complete_planning",
+		label: "Complete Planning",
 		description:
-			"Signal that wizard project setup is complete. Call this once, at the very end, " +
-			"after cloning, installing dependencies, running migrations, writing env files, and " +
-			"applying the project name. Reports the final project directory path so Herman can " +
-			"open it. Do not call any other tools after this in the wizard turn.",
-		promptSnippet: "Report that the wizard setup is finished and give the project path",
+			"Signal that wizard planning is complete. Call this once after cloning the project " +
+			"and writing HERMAN_PLAN.md with a full checkbox task list. Do not install, migrate, " +
+			"or customize the project in the planning phase — that happens in a later session.",
+		promptSnippet: "Report that planning is finished and give the project + plan paths",
 		promptGuidelines: [
-			"Call herman_complete_wizard exactly once, as the LAST tool call of the wizard, " +
-				"after all setup work (clone, install, migrate, env, naming) is done.",
-			"projectPath must be the absolute path to the created project directory.",
+			"Call herman_complete_planning exactly once as the LAST tool call of the planning phase, " +
+				"after HERMAN_PLAN.md is written.",
+			"projectPath must be the absolute path to the cloned project directory.",
+			"planPath must be the absolute path to HERMAN_PLAN.md.",
+		],
+		parameters: WizardCompletePlanningParams as any,
+
+		async execute(_toolCallId, _params, _signal, _onUpdate, _ctx: ExtensionContext) {
+			const params = _params as WizardCompletePlanningParams;
+			const projectPath = (params.projectPath ?? "").trim();
+			const planPath = (params.planPath ?? "").trim();
+
+			if (!projectPath || !existsSync(projectPath)) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								"Error: projectPath is missing or does not exist. " +
+								"Clone the project into ~/Herman/<projectName>, then call herman_complete_planning again.",
+						},
+					],
+					details: { projectPath, planPath, ok: false },
+				};
+			}
+			if (!planPath || !existsSync(planPath)) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								"Error: planPath is missing or HERMAN_PLAN.md was not found. " +
+								"Write the plan file with checkbox tasks, then call herman_complete_planning again.",
+						},
+					],
+					details: { projectPath, planPath, ok: false },
+				};
+			}
+
+			const summary = (params.summary ?? "").trim();
+			const text = summary
+				? `Planning complete. Project: ${projectPath}\nPlan: ${planPath}\n${summary}`
+				: `Planning complete. Project: ${projectPath}\nPlan: ${planPath}`;
+			return {
+				content: [{ type: "text", text }],
+				details: {
+					projectPath,
+					planPath,
+					summary: summary || undefined,
+					ok: true,
+				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "herman_complete_wizard",
+		label: "Complete Wizard Phase",
+		description:
+			"Signal that the current wizard coding or QA phase is complete. Call this once at the " +
+			"end of the phase after all work is done. Reports the project directory path so Herman " +
+			"can continue. Do not call any other tools after this in the turn.",
+		promptSnippet: "Report that the current wizard phase is finished and give the project path",
+		promptGuidelines: [
+			"Call herman_complete_wizard exactly once as the LAST tool call of the coding or QA phase.",
+			"projectPath must be the absolute path to the project directory.",
+			"Include a short summary of what was done (coding) or verified/fixed (QA).",
 		],
 		parameters: WizardCompleteParams as any,
 
@@ -358,8 +461,8 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 			const params = _params as WizardCompleteParams;
 			const summary = (params.summary ?? "").trim();
 			const text = summary
-				? `Wizard complete. Project ready at: ${params.projectPath}\n${summary}`
-				: `Wizard complete. Project ready at: ${params.projectPath}`;
+				? `Wizard phase complete. Project ready at: ${params.projectPath}\n${summary}`
+				: `Wizard phase complete. Project ready at: ${params.projectPath}`;
 			return {
 				content: [{ type: "text", text }],
 				details: {

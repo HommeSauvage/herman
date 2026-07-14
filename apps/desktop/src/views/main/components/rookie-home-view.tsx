@@ -1,10 +1,10 @@
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowLeft, Sparkles, Plus, FolderOpen, Globe, Search } from "lucide-react";
+import { ArrowLeft, Sparkles, Plus, SquarePen, FolderOpen, Globe, Search } from "lucide-react";
 import { useMemo, useState, useCallback } from "react";
 
 import { getProjectName, getProjectColor, getProjectInitial } from "../../../shared/tab-utils.js";
 import type { PersistedSession } from "../../../shared/rpc.js";
-import { openSession } from "../lib/agent-actions.js";
+import { createTab, openSession } from "../lib/agent-actions.js";
 import { useAgentStore, useActiveTabStable } from "../lib/agent-store.js";
 import { filterSessions, groupSessionsByDate } from "../lib/home-utils.js";
 import {
@@ -16,7 +16,7 @@ import {
   formatTimeAgo,
 } from "./ui/index.js";
 
-type ViewState = { mode: "projects" } | { mode: "sessions"; folderPath: string };
+type ViewState = { mode: "projects" } | { mode: "sessions"; projectRoot: string };
 
 /** Derives a stable gradient from the project path */
 function projectGradient(folderPath: string): string {
@@ -35,18 +35,18 @@ function projectGradient(folderPath: string): string {
 }
 
 function ProjectCard({
-  folderPath,
+  projectRoot,
   sessionCount,
   lastUpdated,
   onClick,
 }: {
-  folderPath: string;
+  projectRoot: string;
   sessionCount: number;
   lastUpdated: number;
   onClick: () => void;
 }) {
-  const name = getProjectName(folderPath);
-  const initial = getProjectInitial(folderPath);
+  const name = getProjectName(projectRoot);
+  const initial = getProjectInitial(projectRoot);
 
   return (
     <motion.button
@@ -55,7 +55,7 @@ function ProjectCard({
       className="group relative flex h-full w-full min-w-0 flex-col overflow-hidden rounded-2xl border border-mist bg-white/[0.02] text-left transition hover:border-white/[0.14] hover:bg-fog"
     >
       <div
-        className={`relative flex h-36 items-center justify-center bg-gradient-to-br ${projectGradient(folderPath)}`}
+        className={`relative flex h-36 items-center justify-center bg-gradient-to-br ${projectGradient(projectRoot)}`}
       >
         <div
           className="absolute inset-0 opacity-[0.03]"
@@ -95,11 +95,11 @@ function ProjectCard({
 
 function SessionList({
   sessions,
-  folderPath,
+  projectRoot,
   onBack,
 }: {
   sessions: PersistedSession[];
-  folderPath: string;
+  projectRoot: string;
   onBack: () => void;
 }) {
   const activeTab = useActiveTabStable();
@@ -127,9 +127,16 @@ function SessionList({
             All projects
           </button>
           <div className="text-ghost h-4 w-px bg-white/[0.08]" />
-          <div className="text-text min-w-0 truncate text-sm font-semibold">
-            {getProjectName(folderPath)}
+          <div className="text-text min-w-0 flex-1 truncate text-sm font-semibold">
+            {getProjectName(projectRoot)}
           </div>
+          <button
+            onClick={() => void createTab(projectRoot)}
+            className="text-ghost hover:text-text flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition hover:bg-fog"
+          >
+            <SquarePen size={13} />
+            New session
+          </button>
         </ContentWidth>
       </div>
 
@@ -185,10 +192,10 @@ export function RookieHomeView() {
   const projectData = useMemo(() => {
     const map = new Map<string, PersistedSession[]>();
     for (const session of sessions) {
-      if (session.folderPath) {
-        const existing = map.get(session.folderPath) ?? [];
+      if (session.projectRoot) {
+        const existing = map.get(session.projectRoot) ?? [];
         existing.push(session);
-        map.set(session.folderPath, existing);
+        map.set(session.projectRoot, existing);
       }
     }
     return map;
@@ -196,14 +203,14 @@ export function RookieHomeView() {
 
   const projectCards = useMemo(() => {
     return [...projects]
-      .map((folderPath) => {
-        const projectSessions = projectData.get(folderPath) ?? [];
+      .map((projectRoot) => {
+        const projectSessions = projectData.get(projectRoot) ?? [];
         const lastUpdated = projectSessions.reduce(
           (max, s) => Math.max(max, s.updatedAt),
           0,
         );
         return {
-          folderPath,
+          projectRoot,
           sessionCount: projectSessions.length,
           lastUpdated,
         };
@@ -216,11 +223,11 @@ export function RookieHomeView() {
   }, []);
 
   if (view.mode === "sessions") {
-    const projectSessions = projectData.get(view.folderPath) ?? [];
+    const projectSessions = projectData.get(view.projectRoot) ?? [];
     return (
       <SessionList
         sessions={projectSessions}
-        folderPath={view.folderPath}
+        projectRoot={view.projectRoot}
         onBack={handleBackToProjects}
       />
     );
@@ -280,18 +287,18 @@ export function RookieHomeView() {
               <AnimatePresence>
                 {projectCards.map((project, index) => (
                   <motion.div
-                    key={project.folderPath}
+                    key={project.projectRoot}
                     className="min-w-0 w-full"
                     initial={{ opacity: 0, y: 16 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.04, duration: 0.25 }}
                   >
                     <ProjectCard
-                      folderPath={project.folderPath}
+                      projectRoot={project.projectRoot}
                       sessionCount={project.sessionCount}
                       lastUpdated={project.lastUpdated}
                       onClick={() =>
-                        setView({ mode: "sessions", folderPath: project.folderPath })
+                        setView({ mode: "sessions", projectRoot: project.projectRoot })
                       }
                     />
                   </motion.div>

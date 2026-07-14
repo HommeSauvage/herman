@@ -64,6 +64,9 @@ export type HermanFrontmatter = {
   icon?: string;
   snapshot?: string;
   category?: string;
+  /** Goal that the wizard coding session passes to pi-goal (tick plan boxes).
+   *  Falls back to a sensible default when omitted. */
+  setup_goal?: string;
   source?: HermanSource;
   requirements?: Requirement[];
   env?: EnvConfig;

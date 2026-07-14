@@ -68,7 +68,7 @@ export function useTabSummaries() {
       state.tabOrder
         .map((id) => {
           const tab = state.tabs[id];
-          return tab ? `${id}\x00${tab.title}\x00${tab.folderPath}` : "";
+          return tab ? `${id}\x00${tab.title}\x00${tab.projectRoot}` : "";
         })
         .join("\x01"),
     ),
@@ -79,9 +79,9 @@ export function useTabSummaries() {
     return state.tabOrder
       .map((id) => {
         const tab = state.tabs[id];
-        return tab ? { id: tab.id, title: tab.title, folderPath: tab.folderPath } : null;
+        return tab ? { id: tab.id, title: tab.title, folderPath: tab.folderPath, projectRoot: tab.projectRoot } : null;
       })
-      .filter(Boolean) as { id: TabId; title: string; folderPath: string }[];
+      .filter(Boolean) as { id: TabId; title: string; folderPath: string; projectRoot: string }[];
   }, [version]);
 }
 

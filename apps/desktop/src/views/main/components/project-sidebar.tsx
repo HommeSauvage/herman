@@ -22,12 +22,12 @@ import { useAgentStore } from "../lib/agent-store.js";
 import { CommandButton } from "./command-button.js";
 import { ProjectIcon } from "./project-icon.js";
 
-function ProjectRow({ folderPath }: { folderPath: string }) {
+function ProjectRow({ projectRoot }: { projectRoot: string }) {
   const selectedProject = useAgentStore((s) => s.ui.selectedProject);
   const view = useAgentStore((s) => s.ui.view);
   const setSelectedProject = useAgentStore((s) => s.setSelectedProject);
   const setView = useAgentStore((s) => s.setView);
-  const isSelected = view === "home" && selectedProject === folderPath;
+  const isSelected = view === "home" && selectedProject === projectRoot;
 
   return (
     <div
@@ -38,13 +38,13 @@ function ProjectRow({ folderPath }: { folderPath: string }) {
     >
       <button
         onClick={() => {
-          setSelectedProject(folderPath);
+          setSelectedProject(projectRoot);
           setView("home");
         }}
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
-        <ProjectIcon folderPath={folderPath} size="md" active={isSelected} />
-        <span className="truncate text-sm">{getProjectName(folderPath)}</span>
+        <ProjectIcon folderPath={projectRoot} size="md" active={isSelected} />
+        <span className="truncate text-sm">{getProjectName(projectRoot)}</span>
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -56,7 +56,7 @@ function ProjectRow({ folderPath }: { folderPath: string }) {
         <DropdownMenuContent align="end" className="min-w-40">
           <DropdownMenuItem
             onClick={() => {
-              void createTab(folderPath);
+              void createTab(projectRoot);
             }}
           >
             <Plus size={14} />
@@ -65,7 +65,7 @@ function ProjectRow({ folderPath }: { folderPath: string }) {
           <DropdownMenuItem
             variant="destructive"
             onClick={() => {
-              void closeProject(folderPath);
+              void closeProject(projectRoot);
             }}
           >
             Close project
@@ -126,7 +126,7 @@ export function ProjectSidebar() {
             Open a folder to add a project.
           </CommandButton>
         ) : (
-          projects.map((folderPath) => <ProjectRow key={folderPath} folderPath={folderPath} />)
+          projects.map((projectRoot) => <ProjectRow key={projectRoot} projectRoot={projectRoot} />)
         )}
       </div>
 

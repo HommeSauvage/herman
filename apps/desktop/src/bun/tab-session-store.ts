@@ -47,6 +47,7 @@ export class TabSessionStore {
       id: tab.id,
       title: tab.title,
       folderPath: tab.folderPath,
+      projectRoot: tab.projectRoot,
       projectColor: tab.projectColor,
       piSessionId: readPiSessionId(persistedId) ?? persistedId,
       worktree: tab.worktree,
@@ -69,7 +70,8 @@ export class TabSessionStore {
   ): Tab {
     return {
       ...persisted,
-      projectColor: getProjectColor(persisted.folderPath),
+      projectRoot: persisted.projectRoot ?? persisted.folderPath,
+      projectColor: getProjectColor(persisted.projectRoot ?? persisted.folderPath),
       messages: finalizeStreamingMessages(messages),
       isThinking: false,
       showThinking: false,

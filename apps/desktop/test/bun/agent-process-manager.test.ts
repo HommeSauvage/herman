@@ -241,11 +241,16 @@ describe("AgentProcessManager", () => {
     const manager = await createManager({ getMode: () => "rookie" });
     const first = await manager.createTab(tempDir);
     const second = await manager.createTab(tempDir);
-    expect(first.worktree?.mainFolderPath).toBe(tempDir);
+    // mainFolderPath is now normalized to the canonical git root (resolves symlinks)
+    expect(first.worktree?.mainFolderPath).toBe(first.projectRoot);
     expect(first.folderPath).toContain(".worktrees");
-    expect(second.worktree?.mainFolderPath).toBe(tempDir);
+    expect(second.worktree?.mainFolderPath).toBe(second.projectRoot);
     expect(second.folderPath).toContain(".worktrees");
     expect(first.folderPath).not.toBe(second.folderPath);
+    // Both tabs share the same project root
+    expect(first.projectRoot).toBe(second.projectRoot);
+    // The project root matches the canonical git path
+    expect(first.projectRoot).toBe(second.worktree?.mainFolderPath);
   });
 
   it("closeTab removes the open tab and stops the bridge", async () => {

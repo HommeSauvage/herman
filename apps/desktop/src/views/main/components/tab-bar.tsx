@@ -178,7 +178,7 @@ function TabItem({
   isActive,
   showShortcuts,
 }: {
-  tab: { id: string; title: string; folderPath: string };
+  tab: { id: string; title: string; folderPath: string; projectRoot: string };
   index: number;
   isActive: boolean;
   showShortcuts: boolean;
@@ -224,7 +224,7 @@ function TabItem({
         <TooltipTrigger
           render={
             <div className="flex min-w-0 flex-1 items-center gap-2">
-              <ProjectIcon folderPath={tab.folderPath} size="sm" />
+              <ProjectIcon folderPath={tab.projectRoot} size="sm" />
               <span className="flex-1 truncate text-left">{title}</span>
               {showShortcuts && (
                 <span
@@ -314,6 +314,7 @@ export function TabBar() {
                 id: tab.id,
                 title: tab.title,
                 folderPath: tab.folderPath,
+                projectRoot: tab.projectRoot,
               }}
               index={index}
               isActive={showActiveTab && tab.id === activeTabId}

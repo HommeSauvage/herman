@@ -196,7 +196,7 @@ export async function openProject() {
   if (!result.folderPath) return;
 
   const { projects } = await desktopRpc.request.getProjectsAndSessions();
-  useAgentStore.getState().handleProjectOpened(result.folderPath, projects);
+  useAgentStore.getState().handleProjectOpened(result.projectRoot ?? result.folderPath, projects);
 }
 
 /** Fetch native pi sessions for a project (via pi session JSONL headers). */
@@ -219,7 +219,7 @@ export async function openPiSession(folderPath: string, piSessionId: string) {
 
 export async function openProjectPath(folderPath: string) {
   const result = await desktopRpc.request.openProject({ folderPath });
-  return result.folderPath;
+  return result.projectRoot ?? result.folderPath;
 }
 
 export async function closeProject(folderPath: string) {

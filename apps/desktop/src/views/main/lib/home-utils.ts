@@ -5,6 +5,7 @@ export type SessionLike = {
   id: string;
   title: string;
   folderPath: string;
+  projectRoot: string;
   updatedAt: number;
 };
 
@@ -37,14 +38,14 @@ export function filterSessions<T extends SessionLike>(sessions: T[], query: stri
   return sessions.filter(
     (session) =>
       session.title.toLowerCase().includes(normalized) ||
-      getProjectName(session.folderPath).toLowerCase().includes(normalized),
+      getProjectName(session.projectRoot ?? session.folderPath).toLowerCase().includes(normalized),
   );
 }
 
 export function filterSessionsByProject<T extends SessionLike>(
   sessions: T[],
-  folderPath: string | null,
+  projectRoot: string | null,
 ): T[] {
-  if (!folderPath) return sessions;
-  return sessions.filter((session) => session.folderPath === folderPath);
+  if (!projectRoot) return sessions;
+  return sessions.filter((session) => session.projectRoot === projectRoot);
 }

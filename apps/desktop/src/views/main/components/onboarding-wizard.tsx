@@ -368,7 +368,7 @@ export function OnboardingWizard({
     setStep("describe");
   }, [wizardSessionId, setWizardSessionIdStore]);
 
-  // ── Adopt the finished session as a project tab ────────────────────────────
+  // ── Open the finished project as a fresh tab ───────────────────────────────
   const handleDone = useCallback(async () => {
     if (!projectPath || !wizardSessionId) {
       onComplete();
@@ -662,7 +662,7 @@ export function OnboardingWizard({
                   Open Project
                 </SignalButton>
                 <p className="text-ghost mt-2 text-center text-[11px]">
-                  Opens in a new tab with your session ready.
+                  Opens your project in a new tab.
                 </p>
               </motion.div>
               </ContentWidth>

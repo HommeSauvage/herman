@@ -67,7 +67,7 @@ export function deriveStatus(
 }
 
 export function StatusBar() {
-  const { label, isActive, isCrashed, isRetrying, currentModel, folderPath } = useAgentStore(
+  const { label, isActive, isCrashed, isRetrying, currentModel, folderPath, projectRoot } = useAgentStore(
     useShallow((s) => {
       const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
       if (!tab) {
@@ -78,6 +78,7 @@ export function StatusBar() {
           isRetrying: false,
           currentModel: undefined as string | undefined,
           folderPath: undefined as string | undefined,
+          projectRoot: undefined as string | undefined,
         };
       }
       const status = deriveStatus(
@@ -94,6 +95,7 @@ export function StatusBar() {
         isRetrying: status.kind === "retrying",
         currentModel: tab.currentModel,
         folderPath: tab.folderPath,
+        projectRoot: tab.projectRoot,
       };
     }),
   );
@@ -126,7 +128,23 @@ export function StatusBar() {
         </span>
       </div>
       <div className="flex min-w-0 items-center gap-3">
-        <span className="text-ghost truncate">{folderPath ?? "No project folder"}</span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="text-ghost truncate cursor-default">
+                {projectRoot ?? "No project folder"}
+              </span>
+            }
+          />
+          <TooltipContent side="top">
+            <div className="flex flex-col gap-0.5">
+              <span className="font-medium">{projectRoot ?? "No project folder"}</span>
+              {folderPath && folderPath !== projectRoot ? (
+                <span className="text-[10px] opacity-70">{folderPath}</span>
+              ) : null}
+            </div>
+          </TooltipContent>
+        </Tooltip>
         <span className="text-ghost">·</span>
         <Tooltip>
           <TooltipTrigger

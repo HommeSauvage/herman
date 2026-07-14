@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 import { git } from "../../src/bun/rewind-core.js";
 import {
-  applySessionToMainProject,
   createSessionWorktree,
+  getSessionChanges,
   initProjectRepo,
   removeSessionWorktree,
 } from "../../src/bun/worktree.js";
@@ -53,21 +53,70 @@ describe("worktree helpers", () => {
     });
   });
 
-  it("applies worktree changes back to main", async () => {
-    const project = makeProject("merge");
+  it("counts uncommitted changes in the draft copy", async () => {
+    const project = makeProject("uncommitted");
     writeFileSync(join(project, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
     writeFileSync(join(project, "index.txt"), "hello\n");
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
 
-    const tabId = `tab-merge-${Date.now()}`;
+    const tabId = "tab-uncommitted";
     const created = await createSessionWorktree(project, tabId);
     writeFileSync(join(created.folderPath, "index.txt"), "updated\n");
-    const result = await applySessionToMainProject({
-      id: tabId,
+
+    const changes = await getSessionChanges({
+      folderPath: created.folderPath,
       worktree: created.worktree,
     });
-    expect(result.status === "applied" || result.status === "resolving").toBe(true);
+    expect(changes.canApply).toBe(true);
+    expect(changes.changedFiles).toBe(1);
+  });
+
+  it("uses triple-dot so unrelated main-only commits are not counted", async () => {
+    const project = makeProject("triple-dot");
+    writeFileSync(join(project, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
+    writeFileSync(join(project, "index.txt"), "hello\n");
+    mkdirSync(join(project, "node_modules"), { recursive: true });
+    await initProjectRepo(project);
+
+    const tabId = "tab-triple-dot";
+    const created = await createSessionWorktree(project, tabId);
+
+    writeFileSync(join(project, "other.txt"), "main-only\n");
+    await git("add other.txt", project);
+    await git('-c user.email=herman@local -c user.name=Herman commit -m "Main only"', project);
+
+    const changes = await getSessionChanges({
+      folderPath: created.folderPath,
+      worktree: created.worktree,
+    });
+    expect(changes.canApply).toBe(false);
+    expect(changes.changedFiles).toBe(0);
+  });
+
+  it("reports zero unsaved changes after draft work is merged into main", async () => {
+    const project = makeProject("merged");
+    writeFileSync(join(project, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
+    writeFileSync(join(project, "index.txt"), "hello\n");
+    mkdirSync(join(project, "node_modules"), { recursive: true });
+    await initProjectRepo(project);
+
+    const tabId = "tab-merged";
+    const created = await createSessionWorktree(project, tabId);
+    writeFileSync(join(created.folderPath, "index.txt"), "updated\n");
+    await git("add index.txt", created.folderPath);
+    await git('-c user.email=herman@local -c user.name=Herman commit -m "Session changes"', created.folderPath);
+
+    await git(`merge --no-ff "${created.worktree.branch}"`, project);
+    await git(`merge "${created.worktree.baseBranch}"`, created.folderPath);
+
+    const changes = await getSessionChanges({
+      folderPath: created.folderPath,
+      worktree: created.worktree,
+    });
+    expect(changes.canApply).toBe(false);
+    expect(changes.changedFiles).toBe(0);
+
     await removeSessionWorktree({
       folderPath: created.folderPath,
       worktree: created.worktree,

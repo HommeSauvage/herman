@@ -48,7 +48,7 @@ import { checkRequirements } from "./requirements.js";
 import { getGalleryTemplates as loadGalleryTemplates, resolveTemplateManifest } from "./template-registry.js";
 import { WizardSessionManager } from "./wizard-session.js";
 import { listAllSkills, installSkill, removeSkill, searchSkills, installSkillFromCommand, setSkillEnabled as toggleSkill } from "./skills.js";
-import { applySessionToMainProject, getSessionChanges, removeSessionWorktree } from "./worktree.js";
+import { getSessionChanges, removeSessionWorktree } from "./worktree.js";
 import {
   loadWindowState,
   saveWindowState,
@@ -170,6 +170,11 @@ function readHermanModelsCache(): string[] {
 
 function getMode() {
   return desktopSettings.mode;
+}
+
+async function syncAgentConfigAndRefreshAgents(): Promise<void> {
+  await syncAgentConfig();
+  void agentProcessManager.refreshSession();
 }
 
 function assertRevertAllowed(): void {
@@ -400,7 +405,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         logger.trace("Opening project", { folderPath });
         const result = await agentProcessManager.openProject(folderPath);
         if (result.folderPath) {
-          notifyProjectOpened(result.folderPath);
+          notifyProjectOpened(result.folderPath, result.projectRoot ?? result.folderPath);
         }
         return result;
       },
@@ -566,14 +571,23 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       saveSettings: async ({ settings }) => {
         const wasEnabled = isHermanEnabled();
         const { settingsActiveTab, credentialStoreError: _, ...rest } = settings;
+        const previousProviders = desktopSettings.providers;
         desktopSettings = rest as typeof desktopSettings;
         await saveSettings(desktopSettings);
         if (settingsActiveTab) {
           await saveWindowState({ settingsActiveTab });
         }
-        if (wasEnabled !== isHermanEnabled()) {
-          ApplicationMenu.setApplicationMenu(buildApplicationMenu());
-          void agentProcessManager.refreshSession();
+        const providersChanged =
+          JSON.stringify(previousProviders) !== JSON.stringify(desktopSettings.providers);
+        if (wasEnabled !== isHermanEnabled() || providersChanged) {
+          if (wasEnabled !== isHermanEnabled()) {
+            ApplicationMenu.setApplicationMenu(buildApplicationMenu());
+          }
+          if (providersChanged) {
+            await syncAgentConfigAndRefreshAgents();
+          } else {
+            void agentProcessManager.refreshSession();
+          }
         }
       },
       getProviderCredentials: async ({ providerId }) => {
@@ -581,11 +595,11 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       saveProviderCredentials: async ({ providerId, credential }) => {
         await setCredential(providerId, credential);
-        void agentProcessManager.refreshSession();
+        await syncAgentConfigAndRefreshAgents();
       },
       removeProviderCredentials: async ({ providerId }) => {
         await removeCredential(providerId);
-        void agentProcessManager.refreshSession();
+        await syncAgentConfigAndRefreshAgents();
       },
       startOAuthLogin: async ({ providerId }) => {
         logger.info("Starting OAuth login", { providerId });
@@ -641,13 +655,8 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         await wizardSessionManager.cancel(wizardSessionId);
       },
       adoptWizardSession: async ({ projectPath, wizardSessionId }) => {
-        const wizardPiSessionId = wizardSessionManager.get(wizardSessionId)?.getPiSessionId();
-        const tab = await agentProcessManager.adoptWizardSession(
-          projectPath,
-          wizardSessionId,
-          wizardPiSessionId,
-        );
-        // Detach the wizard bridge (keep its session file for the tab resume).
+        const tab = await agentProcessManager.adoptWizardSession(projectPath, wizardSessionId);
+        // Stop the wizard bridge; the new tab starts a fresh pi session.
         await wizardSessionManager.get(wizardSessionId)?.detach();
         wizardSessionManager.remove(wizardSessionId);
         webviewRpc.send.tabCreated({ tab });
@@ -664,20 +673,9 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       applySession: async ({ tabId }) => {
         const tab = agentProcessManager.getTab(tabId);
         if (!tab || !tab.worktree) {
-          return { status: "error" as const, error: "No worktree session found" };
+          return { status: "error" as const, error: "No draft session found" };
         }
-        const result = await applySessionToMainProject(tab);
-        if (result.status === "applied" || result.status === "resolving") {
-          await stopDevServer(tab.folderPath);
-          await removeSessionWorktree(tab);
-          const newActiveId = await agentProcessManager.closeTab(tabId);
-          webviewRpc.send.tabClosed({ tabId });
-          if (newActiveId) {
-            webviewRpc.send.tabActivated({ tabId: newActiveId });
-          }
-          notifySessionsChanged();
-        }
-        return result;
+        return agentProcessManager.syncSessionToMain(tabId);
       },
       discardSession: async ({ tabId }) => {
         const tab = agentProcessManager.getTab(tabId);
@@ -952,15 +950,15 @@ function notifySessionsChanged() {
   webviewRpc.send.sessionsChanged({ sessions });
 }
 
-function notifyProjectOpened(folderPath: string) {
+function notifyProjectOpened(folderPath: string, projectRoot: string) {
   const { projects } = agentProcessManager.getProjectsAndSessions();
-  webviewRpc.send.projectOpened({ folderPath, projects });
+  webviewRpc.send.projectOpened({ folderPath, projectRoot, projects });
 }
 
 async function openProjectFolder() {
   const result = await agentProcessManager.openProject();
   if (result.folderPath) {
-    notifyProjectOpened(result.folderPath);
+    notifyProjectOpened(result.folderPath, result.projectRoot ?? result.folderPath);
   }
 }
 
@@ -1180,7 +1178,7 @@ async function restoreApp() {
       webviewRpc.send.tabActivated({ tabId: activeTabId });
     }
     for (const tab of tabs) {
-      webviewRpc.send.tabFolderChanged({ tabId: tab.id, folderPath: tab.folderPath });
+      webviewRpc.send.tabFolderChanged({ tabId: tab.id, folderPath: tab.folderPath, projectRoot: tab.projectRoot });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
