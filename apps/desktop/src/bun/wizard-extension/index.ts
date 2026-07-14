@@ -216,16 +216,14 @@ const WizardCompleteParams: JsonSchema = obj(
 	"",
 );
 
-const ANSWER_CLARIFY_NUDGE = [
-	"",
-	"Next steps (in order):",
-	"1. If you have NOT cloned yet: clone into ~/Herman/<projectName> now (after you have projectName).",
-	"2. Once the repo exists: read README, AGENTS.md, and other useful markdown in the clone.",
-	"3. If you still need clarifying questions based on the answers + docs, call `herman_wizard_ask` with only those remaining questions.",
-	"4. If you are clear (cloned + docs reviewed): write the full plan to `HERMAN_PLAN.md` in the project root",
-	"   (checkbox task list), then call `herman_complete_planning` with { projectPath, planPath }.",
-	"Do not write the plan or call herman_complete_planning until the project is cloned.",
-].join("\n");
+const ANSWER_CLARIFY_NUDGE = `
+Next steps (in order):
+1. If you have NOT cloned yet: clone into ~/Herman/<projectName> now (after you have projectName).
+2. Once the repo exists: read README, AGENTS.md, and other useful markdown in the clone.
+3. If you still need clarifying questions based on the answers + docs, call \`herman_wizard_ask\` with only those remaining questions.
+4. If you are clear (cloned + docs reviewed): write the full plan to \`HERMAN_PLAN.md\` in the project root
+   (checkbox task list), then call \`herman_complete_planning\` with { projectPath, planPath }.
+Do not write the plan or call herman_complete_planning until the project is cloned.`;
 
 const ASK_REJECTED_MESSAGE =
 	`herman_wizard_ask is only allowed during the planning phase. Continue without user questions and call herman_complete_wizard when done.`;
@@ -237,30 +235,15 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 		name: "herman_wizard_ask",
 		label: "Ask Wizard Questions",
 		description:
-			"Ask the user a batch of structured onboarding questions (text, choice, or " +
-			"multi-select) and receive the answers immediately, with no extra model " +
-			"round-trip. Use this ONLY during wizard planning to collect any details you " +
-			"still need that are not already answered by the user's project description or " +
-			"the manifest. Ask via herman_wizard_ask before cloning; the project name is collected on your first call. " +
-			"Do not use this tool during coding or QA phases.",
+			`Ask the user a batch of structured onboarding questions (text, choice, or multi-select) and receive the answers immediately, with no extra model round-trip. Use this ONLY during wizard planning to collect any details you still need that are not already answered by the user's project description or the manifest. Ask via herman_wizard_ask before cloning; the project name is collected on your first call. Do not use this tool during coding or QA phases.`,
 		promptSnippet: "Ask the user wizard onboarding questions and get their answers",
 		promptGuidelines: [
-			"Use herman_wizard_ask only during wizard planning whenever you need information from the " +
-				"user that you don't already have from their project description or the template manifest.",
+			`Use herman_wizard_ask only during wizard planning whenever you need information from the user that you don't already have from their project description or the template manifest.`,
 			"Ask only what you still need. Do NOT re-ask things the description or manifest already answer.",
-			"Prefer 'choice' questions with a small option set over free text when the answer is " +
-				"from a known set (e.g. payments now vs catalog first). Use 'multiple: true' for " +
-				"multi-select. Always provide an option set for choice questions.",
-			"Use 'secret: true' for API keys / credentials the user must paste. Never log or echo " +
-				"secret values in your response text.",
-			"You do NOT need to include `projectName` or `visualTone` — Herman injects projectName " +
-				"on your first call and appends visualTone last once template-specific questions are ready. " +
-				"projectName is also the public display name (blog title, store name, site title) — never ask " +
-				"a separate naming question from the manifest. Clone into ~/Herman/<projectName> after you have " +
-				"the name. Capture visualTone in the plan for later styling.",
-			"After receiving answers: clone if needed, then read repo docs. If you need more, " +
-				"call herman_wizard_ask again. When clear, write HERMAN_PLAN.md and call " +
-				"herman_complete_planning — do not install or customize in the planning phase.",
+			`Prefer 'choice' questions with a small option set over free text when the answer is from a known set (e.g. payments now vs catalog first). Use 'multiple: true' for multi-select. Always provide an option set for choice questions.`,
+			`Use 'secret: true' for API keys / credentials the user must paste. Never log or echo secret values in your response text.`,
+			`You do NOT need to include \`projectName\` or \`visualTone\` — Herman injects projectName on your first call and appends visualTone last once template-specific questions are ready. projectName is also the public display name (blog title, store name, site title) — never ask a separate naming question from the manifest. Clone into ~/Herman/<projectName> after you have the name. Capture visualTone in the plan for later styling.`,
+			`After receiving answers: clone if needed, then read repo docs. If you need more, call herman_wizard_ask again. When clear, write HERMAN_PLAN.md and call herman_complete_planning — do not install or customize in the planning phase.`,
 		],
 		parameters: WizardAskParams as any,
 
@@ -382,13 +365,10 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 		name: "herman_complete_planning",
 		label: "Complete Planning",
 		description:
-			"Signal that wizard planning is complete. Call this once after cloning the project " +
-			"and writing HERMAN_PLAN.md with a full checkbox task list. Do not install, migrate, " +
-			"or customize the project in the planning phase — that happens in a later session.",
+			`Signal that wizard planning is complete. Call this once after cloning the project and writing HERMAN_PLAN.md with a full checkbox task list. Do not install, migrate, or customize the project in the planning phase — that happens in a later session.`,
 		promptSnippet: "Report that planning is finished and give the project + plan paths",
 		promptGuidelines: [
-			"Call herman_complete_planning exactly once as the LAST tool call of the planning phase, " +
-				"after HERMAN_PLAN.md is written.",
+			`Call herman_complete_planning exactly once as the LAST tool call of the planning phase, after HERMAN_PLAN.md is written.`,
 			"projectPath must be the absolute path to the cloned project directory.",
 			"planPath must be the absolute path to HERMAN_PLAN.md.",
 		],
@@ -405,8 +385,7 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 						{
 							type: "text",
 							text:
-								"Error: projectPath is missing or does not exist. " +
-								"Clone the project into ~/Herman/<projectName>, then call herman_complete_planning again.",
+								`Error: projectPath is missing or does not exist. Clone the project into ~/Herman/<projectName>, then call herman_complete_planning again.`,
 						},
 					],
 					details: { projectPath, planPath, ok: false },
@@ -418,8 +397,7 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 						{
 							type: "text",
 							text:
-								"Error: planPath is missing or HERMAN_PLAN.md was not found. " +
-								"Write the plan file with checkbox tasks, then call herman_complete_planning again.",
+								`Error: planPath is missing or HERMAN_PLAN.md was not found. Write the plan file with checkbox tasks, then call herman_complete_planning again.`,
 						},
 					],
 					details: { projectPath, planPath, ok: false },
@@ -446,9 +424,7 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 		name: "herman_complete_wizard",
 		label: "Complete Wizard Phase",
 		description:
-			"Signal that the current wizard coding or QA phase is complete. Call this once at the " +
-			"end of the phase after all work is done. Reports the project directory path so Herman " +
-			"can continue. Do not call any other tools after this in the turn.",
+			`Signal that the current wizard coding or QA phase is complete. Call this once at the end of the phase after all work is done. Reports the project directory path so Herman can continue. Do not call any other tools after this in the turn.`,
 		promptSnippet: "Report that the current wizard phase is finished and give the project path",
 		promptGuidelines: [
 			"Call herman_complete_wizard exactly once as the LAST tool call of the coding or QA phase.",
