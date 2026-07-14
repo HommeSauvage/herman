@@ -245,6 +245,20 @@ export type PersistedSession = {
   revertMessageId?: string;
 };
 
+/** A browseable pi session (from pi session JSONL headers), for the home screen. */
+export type PiSessionSummary = {
+  /** Pi session UUID (the `{timestamp}_{uuid}.jsonl` suffix). */
+  id: string;
+  /** Absolute project folder the session was started in. */
+  cwd: string;
+  /** User-defined display name, if any. */
+  name?: string;
+  created: number;
+  modified: number;
+  messageCount: number;
+  firstMessage: string;
+};
+
 /** Aggregated token / context / cost statistics for a tab. */
 export type ContextStats = {
   totalTokens: number;
@@ -444,6 +458,16 @@ export type HermanDesktopRPC = {
         params: undefined;
         response: { projects: string[]; sessions: PersistedSession[] };
       };
+      /** List real pi sessions for a project folder (native pi SessionManager.list). */
+      getProjectSessions: {
+        params: { folderPath: string };
+        response: { sessions: PiSessionSummary[] };
+      };
+      /** List every pi session across all projects + the derived project list. */
+      getAllPiSessions: {
+        params: undefined;
+        response: { projects: string[]; sessions: PiSessionSummary[] };
+      };
       openProject: {
         params: { folderPath?: string };
         response: { folderPath?: string };
@@ -455,6 +479,11 @@ export type HermanDesktopRPC = {
       openSession: {
         params: { sessionId: TabId };
         response: Tab | undefined;
+      };
+      /** Open a native pi session (by UUID) as a new tab, resuming that conversation. */
+      openPiSession: {
+        params: { folderPath: string; piSessionId: string };
+        response: Tab;
       };
       retryTabMessageHydration: {
         params: { tabId: TabId };

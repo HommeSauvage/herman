@@ -44,7 +44,7 @@ describe("loadInstantHydration", () => {
     const tabId = "tab-pi";
     await saveTabHistory(tabId, [{ id: "m1", role: "user", content: "cached" }]);
 
-    const sessionsDir = join(tempDir, "agent-configs", tabId, "sessions");
+    const sessionsDir = join(tempDir, "agent", "sessions");
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
       join(sessionsDir, "2026-07-09T00-00-00-000Z_sess-1.jsonl"),

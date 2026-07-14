@@ -199,6 +199,24 @@ export async function openProject() {
   useAgentStore.getState().handleProjectOpened(result.folderPath, projects);
 }
 
+/** Fetch native pi sessions for a project (via pi session JSONL headers). */
+export async function getPiSessionsForProject(folderPath: string) {
+  const result = await desktopRpc.request.getProjectSessions({ folderPath });
+  return result.sessions;
+}
+
+/** Fetch all native pi sessions across every project. */
+export async function getAllPiSessions() {
+  const result = await desktopRpc.request.getAllPiSessions();
+  return result;
+}
+
+/** Open a native pi session (by UUID) as a new tab that resumes that conversation. */
+export async function openPiSession(folderPath: string, piSessionId: string) {
+  await desktopRpc.request.openPiSession({ folderPath, piSessionId });
+  useAgentStore.getState().setView("session");
+}
+
 export async function openProjectPath(folderPath: string) {
   const result = await desktopRpc.request.openProject({ folderPath });
   return result.folderPath;

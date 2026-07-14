@@ -3,20 +3,21 @@
 	"version": "0.0.1",
 	"private": true,
 	"bin": {
-		"herman": "dist/cli.js"
+		"herman": "dist/herman-agent"
 	},
 	"type": "module",
 	"exports": {
 		"./protected-keys": "./src/protected-keys.ts"
 	},
 	"scripts": {
-		"build": "rm -rf dist && bun build src/cli.ts --outdir dist --target bun --minify && mkdir -p dist/modes/interactive/theme && cp src/modes/interactive/theme/dark.json dist/modes/interactive/theme/dark.json && cp src/modes/interactive/theme/light.json dist/modes/interactive/theme/light.json",
+		"build": "rm -rf dist && bun build src/cli.ts --compile --outfile dist/herman-agent --target bun --minify && mkdir -p dist/theme && cp src/modes/interactive/theme/dark.json src/modes/interactive/theme/light.json dist/theme/ && cp package.json dist/package.json",
 		"dev": "bun run --watch src/cli.ts",
 		"test": "bun test test",
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
 		"@bacnh85/pi-fff": "^0.7.0",
+		"@narumitw/pi-goal": "^0.15.1",
 		"@earendil-works/pi-agent-core": "catalog:",
 		"@earendil-works/pi-coding-agent": "catalog:",
 		"@herman/pi-context-reporter": "workspace:*",

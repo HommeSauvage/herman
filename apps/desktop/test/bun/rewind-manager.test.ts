@@ -40,7 +40,7 @@ describe("rewindManager", () => {
 
   it("scopes checkpoints to the tab's pi session", async () => {
     // Write a session file so RewindManager can discover the tab's UUID.
-    const sessionDir = join(appDir, "agent-configs", tabId, "sessions");
+    const sessionDir = join(appDir, "agent", "sessions");
     mkdirSync(sessionDir, { recursive: true });
     writeFileSync(join(sessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
 
@@ -89,7 +89,7 @@ describe("rewindManager", () => {
   });
 
   it("returns a safety checkpoint id from restoreToCheckpoint", async () => {
-    const sessionDir = join(appDir, "agent-configs", tabId, "sessions");
+    const sessionDir = join(appDir, "agent", "sessions");
     mkdirSync(sessionDir, { recursive: true });
     writeFileSync(join(sessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
 
@@ -115,7 +115,7 @@ describe("rewindManager", () => {
 
   it("restores files from a safety checkpoint", async () => {
     const { readFileSync } = await import("node:fs");
-    const sessionDir = join(appDir, "agent-configs", tabId, "sessions");
+    const sessionDir = join(appDir, "agent", "sessions");
     mkdirSync(sessionDir, { recursive: true });
     writeFileSync(join(sessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
 

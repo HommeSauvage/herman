@@ -31,7 +31,7 @@ describe("readSessionSnapshot", () => {
 
   it("reads messages and context totals from pi session JSONL", () => {
     const tabId = "tab-1";
-    const sessionsDir = join(tempDir, "agent-configs", tabId, "sessions");
+    const sessionsDir = join(tempDir, "agent", "sessions");
     mkdirSync(sessionsDir, { recursive: true });
     const file = join(sessionsDir, "2026-07-09T00-00-00-000Z_sess-1.jsonl");
     writeFileSync(
@@ -87,7 +87,7 @@ describe("readSessionSnapshot", () => {
 
   it("uses persisted piSessionId instead of the newest session file", () => {
     const tabId = "tab-2";
-    const sessionsDir = join(tempDir, "agent-configs", tabId, "sessions");
+    const sessionsDir = join(tempDir, "agent", "sessions");
     mkdirSync(sessionsDir, { recursive: true });
     const older = join(sessionsDir, "2026-07-08T00-00-00-000Z_sess-1.jsonl");
     const newer = join(sessionsDir, "2026-07-09T00-00-00-000Z_empty-new.jsonl");

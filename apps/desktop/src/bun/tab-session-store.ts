@@ -48,7 +48,7 @@ export class TabSessionStore {
       title: tab.title,
       folderPath: tab.folderPath,
       projectColor: tab.projectColor,
-      piSessionId: readPiSessionId(tab.id, persistedId) ?? persistedId,
+      piSessionId: readPiSessionId(persistedId) ?? persistedId,
       worktree: tab.worktree,
       createdAt: tab.createdAt,
       updatedAt: tab.updatedAt,

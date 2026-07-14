@@ -131,11 +131,6 @@ beforeEach(() => {
   setHermantAppDir(tempDir);
   mock.module("../../src/bun/agent-bridge.js", () => ({
     AgentBridge: MockAgentBridge,
-    cleanupTabAgentDir: () => {},
-    mergeAgentSettings: (existing: Record<string, unknown>, skills: string[]) => ({
-      ...existing,
-      skills,
-    }),
   }));
 });
 
@@ -154,7 +149,7 @@ function writePiSessionFile(
   lines: string[],
   sessionId = "sess-1",
 ): void {
-  const sessionsDir = join(tempDir, "agent-configs", tabId, "sessions");
+  const sessionsDir = join(tempDir, "agent", "sessions");
   mkdirSync(sessionsDir, { recursive: true });
   writeFileSync(
     join(sessionsDir, `2026-07-09T00-00-00-000Z_${sessionId}.jsonl`),
@@ -796,7 +791,7 @@ describe("AgentProcessManager", () => {
   it("passes piSessionId when restarting the agent bridge", async () => {
     const manager = await createManager();
     const tab = await manager.createTab("/project");
-    const sessionsDir = join(tempDir, "agent-configs", tab.id, "sessions");
+    const sessionsDir = join(tempDir, "agent", "sessions");
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
       join(
@@ -825,7 +820,7 @@ describe("AgentProcessManager", () => {
     );
     await manager.closeTab(tab.id);
 
-    const sessionsDir = join(tempDir, "agent-configs", tab.id, "sessions");
+    const sessionsDir = join(tempDir, "agent", "sessions");
     writeFileSync(
       join(sessionsDir, "2026-07-10T00-00-00-000Z_empty-new.jsonl"),
       JSON.stringify({
@@ -898,7 +893,7 @@ describe("AgentProcessManager", () => {
     await drainAgent(manager);
 
     const appDir = process.env.HERMAN_APP_DIR!;
-    const piSessionDir = join(appDir, "agent-configs", tab.id, "sessions");
+    const piSessionDir = join(appDir, "agent", "sessions");
     mkdirSync(piSessionDir, { recursive: true });
     writeFileSync(join(piSessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
 

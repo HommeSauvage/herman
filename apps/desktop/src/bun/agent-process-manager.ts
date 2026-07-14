@@ -19,8 +19,7 @@ import {
   hasUserOrAssistantMessage,
   truncateTitle,
 } from "../shared/tab-utils.js";
-import { AgentBridge, cleanupTabAgentDir, type AgentBridgeState } from "./agent-bridge.js";
-import { agentConfigsDir } from "./app-paths.js";
+import { AgentBridge, type AgentBridgeState } from "./agent-bridge.js";
 import { AgentRuntime } from "./agent-runtime.js";
 import { deleteComposerDraft, loadComposerDraft, saveComposerDraft } from "./composer-drafts.js";
 import {
@@ -31,7 +30,7 @@ import { stopDevServer } from "./preview-server.js";
 import { rewindManager, getUserMessageIds, readPiSessionId, RevertConflictError } from "./rewind-manager.js";
 import { deleteTabHistory, saveTabHistory } from "./tab-history.js";
 import { loadInstantHydration } from "./tab-message-hydration.js";
-import { resolvePiSessionFile, piSessionDir } from "./pi-session.js";
+import { resolvePiSessionFile, deletePiSessionFile } from "./pi-session.js";
 import { createSessionWorktree, ensureSessionWorktree, removeSessionWorktree } from "./worktree.js";
 import { TabSessionStore } from "./tab-session-store.js";
 import { loadWindowState, saveWindowState, type PersistedSession } from "./window-state.js";
@@ -66,37 +65,6 @@ export type MessageHydrationResult = {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Copy the wizard session's newest pi session JSONL into a new tab's session
- * dir so the tab's agent resumes it. Returns the pi session id (uuid) or
- * undefined if the wizard has no session file.
- */
-async function copyWizardSessionToTab(
-  wizardSessionId: string,
-  tabId: TabId,
-): Promise<string | undefined> {
-  const { existsSync, readdirSync } = await import("node:fs");
-  const { copyFile, mkdir } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-
-  const wizardSessionsDir = join(agentConfigsDir(), wizardSessionId, "sessions");
-  if (!existsSync(wizardSessionsDir)) return undefined;
-  const files = readdirSync(wizardSessionsDir)
-    .filter((n) => n.endsWith(".jsonl"))
-    .sort((a, b) => b.localeCompare(a));
-  const newest = files[0];
-  if (!newest) return undefined;
-
-  const destDir = piSessionDir(tabId);
-  await mkdir(destDir, { recursive: true });
-  await copyFile(join(wizardSessionsDir, newest), join(destDir, newest));
-
-  const stem = newest.slice(0, -".jsonl".length);
-  const idx = stem.lastIndexOf("_");
-  const uuid = idx >= 0 ? stem.slice(idx + 1) : undefined;
-  return uuid && uuid.length >= 20 ? uuid : undefined;
 }
 
 export type WebviewSender = {
@@ -273,10 +241,14 @@ export class AgentProcessManager {
    * Adopt a finished wizard session as a normal project tab: create a tab at
    * `projectPath` and resume the wizard agent's pi session in it, so the
    * conversation context (manifest, Q&A, setup actions) carries into chat.
-   * The wizard's session JSONL is copied into the new tab's session dir and
-   * its id is recorded as the tab's piSessionId.
+   * The wizard's session JSONL already lives in the shared sessions dir, so
+   * no copy is needed — we just record the wizard's piSessionId as the tab's.
    */
-  async adoptWizardSession(projectPath: string, wizardSessionId: string): Promise<Tab> {
+  async adoptWizardSession(
+    projectPath: string,
+    wizardSessionId: string,
+    wizardPiSessionId?: string,
+  ): Promise<Tab> {
     const tab = this.makeTab(projectPath);
     const mode = this.getMode();
     if (mode === "rookie" && (await isGitRepo(projectPath))) {
@@ -294,13 +266,13 @@ export class AgentProcessManager {
       this.store.projects.push(projectPath);
     }
 
-    // Copy the wizard's newest session JSONL into the tab's session dir so
-    // resolvePiSessionId(tabId) finds it and the agent resumes it.
-    const wizardPiSessionId = await copyWizardSessionToTab(wizardSessionId, tab.id);
-    if (wizardPiSessionId) {
+    // The wizard's session JSONL is already in the shared sessions dir; just
+    // record its pi session id so the new tab resumes it.
+    const wizardPiSession = wizardPiSessionId;
+    if (wizardPiSession) {
       const persisted = this.store.sessions.get(tab.id);
       if (persisted) {
-        this.store.sessions.set(tab.id, { ...persisted, piSessionId: wizardPiSessionId });
+        this.store.sessions.set(tab.id, { ...persisted, piSessionId: wizardPiSession });
       }
     }
 
@@ -312,7 +284,7 @@ export class AgentProcessManager {
       tabId: tab.id,
       projectPath,
       wizardSessionId,
-      piSessionId: wizardPiSessionId,
+      piSessionId: wizardPiSession,
     });
     return tab;
   }
@@ -369,6 +341,36 @@ export class AgentProcessManager {
     return this.store.tabs.get(sessionId);
   }
 
+  /**
+   * Open a native pi session by UUID as a new tab, resuming that conversation.
+   * The session JSONL already lives in the shared sessions dir.
+   */
+  async openPiSession(folderPath: string, piSessionId: string): Promise<Tab> {
+    const tab = this.makeTab(folderPath);
+    const mode = this.getMode();
+    if (mode === "rookie" && (await isGitRepo(folderPath))) {
+      const created = await createSessionWorktree(folderPath, tab.id);
+      tab.folderPath = created.folderPath;
+      tab.worktree = created.worktree;
+      tab.projectColor = getProjectColor(folderPath);
+      tab.title = getProjectName(folderPath);
+    }
+    const persisted = { ...this.toPersistedSession(tab), piSessionId, updatedAt: Date.now() };
+    this.store.sessions.set(tab.id, persisted);
+    this.store.tabs.set(tab.id, tab);
+    this.store.openTabIds.push(tab.id);
+    this.store.activeTabId = tab.id;
+    if (folderPath && !this.store.projects.includes(folderPath)) {
+      this.store.projects.push(folderPath);
+    }
+    if (tab.folderPath) {
+      this.agentRuntime.schedule(tab.id);
+    }
+    await this.persist();
+    logger.info("Opened pi session as tab", { tabId: tab.id, folderPath, piSessionId });
+    return tab;
+  }
+
   async closeTab(tabId: TabId): Promise<TabId | undefined> {
     logger.debug("Closing tab in manager", { tabId });
     const tab = this.store.tabs.get(tabId);
@@ -406,7 +408,7 @@ export class AgentProcessManager {
       }
       this.bridges.delete(tabId);
     } else if (!hasConversation) {
-      cleanupTabAgentDir(tabId);
+      deletePiSessionFile(this.resolvePiSessionId(tabId));
     }
     rewindManager.dispose(tabId);
     this.store.tabs.delete(tabId);
@@ -1132,7 +1134,7 @@ export class AgentProcessManager {
 
   private resolvePiSessionId(tabId: TabId): string | undefined {
     const persisted = this.store.sessions.get(tabId)?.piSessionId;
-    return readPiSessionId(tabId, persisted) ?? persisted;
+    return readPiSessionId(persisted) ?? persisted;
   }
 
   private async waitForAgentReady(
@@ -1259,19 +1261,19 @@ export class AgentProcessManager {
 
     if (!observed) {
       if (!session.piSessionId) {
-        observed = readPiSessionId(tabId);
+        observed = readPiSessionId();
       } else {
         return;
       }
     }
 
-    const observedFile = resolvePiSessionFile(tabId, observed);
+    const observedFile = resolvePiSessionFile(observed);
     if (!observedFile) {
       return;
     }
 
     if (session.piSessionId && session.piSessionId !== observed) {
-      const persistedFile = resolvePiSessionFile(tabId, session.piSessionId);
+      const persistedFile = resolvePiSessionFile(session.piSessionId);
       if (persistedFile) return;
     }
 

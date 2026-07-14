@@ -1,5 +1,5 @@
 import { getLogger } from "@logtape/logtape";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -8,8 +8,8 @@ import type { AgentEvent, WizardSessionEvent } from "../shared/agent-protocol.js
 import { tryParseWizardRequest } from "../shared/agent-protocol.js";
 import { encodeWizardAnswers } from "../shared/wizard-protocol.js";
 import type { ResolvedManifest } from "../shared/herman-manifest.js";
-import { agentConfigsDir } from "./app-paths.js";
 import { AgentBridge, type AgentBridgeState } from "./agent-bridge.js";
+import { resolveWizardExtensionPath } from "./agent-config-sync.js";
 import { resolveTemplateManifest } from "./template-registry.js";
 
 const logger = getLogger(["herman-desktop", "wizard-session"]);
@@ -78,6 +78,8 @@ export class WizardSession {
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private templateId: string | undefined;
   private description: string | undefined;
+  /** The wizard agent's pi session id, captured from get_state for handoff. */
+  private wizardPiSessionId: string | undefined;
 
   constructor(private opts: WizardSessionOptions) {
     this.id = createWizardSessionId();
@@ -93,10 +95,10 @@ export class WizardSession {
 
     await mkdir(projectsDir(), { recursive: true });
 
-    // Isolated agent config dir so the wizard extension + session are scoped.
-    const agentDir = join(agentConfigsDir(), this.id);
-    await mkdir(agentDir, { recursive: true });
-
+    // The wizard shares the single agent config dir (~/.herman/agent) with all
+    // tabs; its session is a normal pi session there, scoped to the projects
+    // parent cwd. The wizard extension is loaded via a --extension CLI arg set
+    // by AgentBridge, not via a per-wizard settings dir.
     await this.startAttempt();
 
     logger.info("Wizard session started", { id: this.id, templateId, modelId: this.preferredModel });
@@ -166,7 +168,13 @@ export class WizardSession {
     this.bridge = bridge;
 
     const projects = projectsDir();
-    await bridge.start(projects, { mode: "rookie" });
+    const wizardExtensions = resolveWizardExtensionPath();
+    await bridge.start(projects, { mode: "rookie", extensions: wizardExtensions });
+
+    // Capture the wizard's pi session id for handoff. With a shared sessions
+    // dir the wizard's JSONL lives alongside every other session, so we must
+    // read the id from the agent's state rather than scanning a per-wizard dir.
+    void this.capturePiSessionId().catch(() => undefined);
 
     // Wait briefly for models_sync so we can override the auto-selected default
     // before sending the prompt. Fall through on timeout so we don't hang.
@@ -291,13 +299,22 @@ export class WizardSession {
 
   /** The pi session id used by the wizard agent (for handoff/resume). */
   getPiSessionId(): string | undefined {
-    // The wizard's agent dir sessions live under agentConfigsDir()/this.id/sessions.
-    // The newest JSONL there is the wizard session; extract its id for resume.
+    return this.wizardPiSessionId;
+  }
+
+  /** Capture the wizard agent's pi session id from its get_state response. */
+  private async capturePiSessionId(): Promise<void> {
+    if (!this.bridge || this.wizardPiSessionId) return;
     try {
-      const sessionsDir = join(agentConfigsDir(), this.id, "sessions");
-      return readNewestPiSessionId(sessionsDir);
+      const response = await this.bridge.sendCommand({ type: "get_state" });
+      if (response.success) {
+        const data = response.data as Record<string, unknown> | undefined;
+        if (data && typeof data.sessionId === "string") {
+          this.wizardPiSessionId = data.sessionId;
+        }
+      }
     } catch {
-      return undefined;
+      // Agent RPC may not be ready yet; the id is only needed at handoff.
     }
   }
 
@@ -610,17 +627,4 @@ function formatToolActivity(toolName: string, args: unknown): string | undefined
     if (typeof path === "string") return `Reading: ${path}`;
   }
   return undefined;
-}
-
-function readNewestPiSessionId(sessionsDir: string): string | undefined {
-  if (!existsSync(sessionsDir)) return undefined;
-  const files = readdirSync(sessionsDir)
-    .filter((n) => n.endsWith(".jsonl"))
-    .sort((a, b) => b.localeCompare(a));
-  const newest = files[0];
-  if (!newest) return undefined;
-  const stem = newest.slice(0, -".jsonl".length);
-  const idx = stem.lastIndexOf("_");
-  const uuid = idx >= 0 ? stem.slice(idx + 1) : undefined;
-  return uuid && uuid.length >= 20 ? uuid : undefined;
 }

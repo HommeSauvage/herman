@@ -1,48 +1,43 @@
 import { dispose, getLogger } from "@logtape/logtape";
 import { $ } from "bun";
 import { parseArgs } from "node:util";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
+import { readFile } from "node:fs/promises";
 
 import { configureLogging } from "../src/logging.js";
 
 const logger = getLogger(["herman-desktop", "prebuild"]);
 
 /**
- * Pi's extension loader uses `import.meta.resolve` (ESM resolution) to alias
- * these packages. They must be resolvable from the bundled agent's location.
- * The agent is a `bun build` bundle (not `--compile`), so these aren't in its
- * node_modules. Copy dereferenced copies into `packages/agent/dist/node_modules/`
- * so the wizard extension (and any future external extension) can load in
- * production. Each specifier matches what getAliases() resolves.
+ * The photon wasm is used by pi's image-resize path (read tool). The JS is
+ * bundled into the compiled agent binary, but the wasm file must be co-located
+ * next to the binary — pi's own build:binary does the same copy. Without it,
+ * loadPhoton() degrades gracefully (images are omitted rather than resized),
+ * but we copy it to preserve full image-reading functionality.
  */
-const AGENT_EXT_DEPS: [packageName: string, resolveSpec: string][] = [
-  ["typebox", "typebox"],
-  ["@earendil-works/pi-ai", "@earendil-works/pi-ai/compat"],
-  ["@earendil-works/pi-tui", "@earendil-works/pi-tui"],
-  ["@earendil-works/pi-agent-core", "@earendil-works/pi-agent-core"],
-];
-
-async function copyAgentExtensionDeps(): Promise<void> {
-  // Resolve using Bun's ESM resolution from @herman/agent's location.
-  const workspaceRoot = join(process.cwd(), "..", "..");
-  const agentPkg = join(workspaceRoot, "packages", "agent", "package.json");
-  const agentDist = join(workspaceRoot, "packages", "agent", "dist");
-  const destModules = join(agentDist, "node_modules");
-  await rm(destModules, { recursive: true, force: true });
-  for (const [pkgName, resolveSpec] of AGENT_EXT_DEPS) {
-    const entry = Bun.resolveSync(resolveSpec, agentPkg);
-    const srcPkgRoot = await resolvePkgRoot(pkgName, entry);
-    const destPkgRoot = join(destModules, pkgName);
-    await mkdir(dirname(destPkgRoot), { recursive: true });
-    await cp(srcPkgRoot, destPkgRoot, { recursive: true, dereference: true });
-    logger.info(`Copied agent ext dep ${pkgName} -> ${relative(process.cwd(), destPkgRoot)}`);
+async function copyPhotonWasm(agentDist: string): Promise<void> {
+  const desktopPkg = join(process.cwd(), "package.json");
+  let wasmSrc: string | undefined;
+  try {
+    // @silvia-odwyer/photon-node is a transitive dep of @earendil-works/pi-coding-agent.
+    // Resolve through that chain, then walk to the package root for the wasm.
+    const piPkg = Bun.resolveSync("@earendil-works/pi-coding-agent", desktopPkg);
+    const photonEntry = Bun.resolveSync("@silvia-odwyer/photon-node", piPkg);
+    wasmSrc = join(await resolvePkgRoot("@silvia-odwyer/photon-node", photonEntry), "photon_rs_bg.wasm");
+  } catch {
+    logger.warning("Could not resolve @silvia-odwyer/photon-node; image resize will be unavailable");
+    return;
+  }
+  try {
+    await cp(wasmSrc, join(agentDist, "photon_rs_bg.wasm"), { force: true });
+    logger.info(`Copied photon wasm -> ${relative(process.cwd(), join(agentDist, "photon_rs_bg.wasm"))}`);
+  } catch {
+    logger.warning(`Could not copy photon wasm from ${wasmSrc}; image resize will be unavailable`);
   }
 }
 
 async function resolvePkgRoot(spec: string, entry: string): Promise<string> {
-  // Walk up from the resolved entry to the nearest package.json whose name matches the spec.
-  const { readFile } = await import("node:fs/promises");
   let dir = dirname(entry);
   while (dir !== "/") {
     const pkgPath = join(dir, "package.json");
@@ -73,10 +68,11 @@ try {
   if (isDev) {
     logger.info("Herman dev prebuild complete (renderer handled by electrobun dev).");
   } else {
-    logger.info("Building Herman agent…");
+    logger.info("Building Herman agent (compiled binary)…");
     await $`bun run --filter=@herman/agent build`;
-    logger.info("Copying agent extension deps…");
-    await copyAgentExtensionDeps();
+    const agentDist = join(process.cwd(), "..", "..", "packages", "agent", "dist");
+    logger.info("Copying photon wasm for image resize…");
+    await copyPhotonWasm(agentDist);
     logger.info("Building Herman renderer…");
     await $`bun node_modules/vite/dist/node/cli.js build`;
     logger.info("Herman prebuild complete.");

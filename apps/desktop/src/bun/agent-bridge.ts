@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
@@ -7,11 +7,10 @@ import { config } from "../env.js";
 import type { AgentCommand, AgentEvent } from "../shared/agent-protocol.js";
 import { parseAdEventFromNotify, parseHermanEventFromNotify } from "../shared/agent-protocol.js";
 import type { TabId } from "../shared/rpc.js";
-import { agentConfigsDir, hermanDir, skillsDir } from "./app-paths.js";
+import { agentDir, hermanDir } from "./app-paths.js";
+import { awaitAgentConfigSynced, resolveWizardExtensionPath } from "./agent-config-sync.js";
 import { AgentProcess } from "./agent-process.js";
-import { refreshAllOAuthCredentials } from "./credentials.js";
-import { writeFileAtomically } from "./fs-utils.js";
-import { resolvePiSessionResumeArg } from "./pi-session.js";
+import { deletePiSessionFile, resolvePiSessionResumeArg } from "./pi-session.js";
 
 const logger = getLogger(["herman-desktop", "agent-bridge"]);
 
@@ -43,24 +42,28 @@ export class AgentBridge {
     return this.state;
   }
 
-  async start(folderPath?: string, opts?: { piSessionId?: string; mode?: string }) {
+  async start(folderPath?: string, opts?: { piSessionId?: string; mode?: string; extensions?: string[] }) {
     this.folderPath = folderPath || undefined;
     this.piSessionId = opts?.piSessionId;
     if (this.process) {
       await this.stop();
     }
 
+    // The shared agent config (~/.herman/agent) is synced once at startup (and
+    // on credential/settings changes) by agent-config-sync. Await the latest
+    // sync so the subprocess sees a ready config. No per-tab config is written.
+    await awaitAgentConfigSynced();
+
     const { loadSettings } = await import("./settings.js");
     const settings = await loadSettings();
     const hermanEnabled = settings.providers.herman.enabled;
 
     const binaryPath = config.agentPath || resolveAgentCliPath();
-    const packageDir = resolve(realpathSync(binaryPath), "..", "..");
-    const agentDir = await prepareAgentDir(this.tabId, settings);
-    this.agentDir = agentDir;
+    const dir = agentDir();
+    this.agentDir = dir;
 
     const env: Record<string, string> = {
-      HERMAN_AGENT_DIR: agentDir,
+      HERMAN_AGENT_DIR: dir,
       HERMAN_APP_DIR: hermanDir(),
       HERMAN_CLIENT_VERSION: "0.0.1",
       HERMAN_TAB_ID: this.tabId,
@@ -73,7 +76,15 @@ export class AgentBridge {
       env.HERMAN_PINNED_PROVIDERS = await this.getPinnedProvidersJson();
     }
 
-    const sessionArg = resolvePiSessionResumeArg(agentDir, opts?.piSessionId);
+    const sessionArg = resolvePiSessionResumeArg(dir, opts?.piSessionId);
+
+    // Wizard/headless-only extensions are passed via pi's --extension CLI arg
+    // (additionalExtensionPaths), so they don't leak into normal tabs via the
+    // shared settings.json.
+    const extensionArgs: string[] = [];
+    for (const ext of opts?.extensions ?? []) {
+      extensionArgs.push("--extension", ext);
+    }
 
     logger.info("Starting agent subprocess", {
       tabId: this.tabId,
@@ -85,10 +96,9 @@ export class AgentBridge {
 
     this.process = new AgentProcess({
       binaryPath,
-      packageDir,
       cwd: this.folderPath,
       env,
-      args: sessionArg ? ["--session", sessionArg] : [],
+      args: [...extensionArgs, ...(sessionArg ? ["--session", sessionArg] : [])],
     });
 
     this.process.rpc.onEvent((event) => {
@@ -151,7 +161,7 @@ export class AgentBridge {
   }
 
   cleanupPersistentState() {
-    cleanupTabAgentDir(this.tabId);
+    deletePiSessionFile(this.piSessionId);
   }
 
   async restart(folderPath?: string, opts?: { piSessionId?: string; mode?: string }) {
@@ -259,143 +269,46 @@ export class AgentBridge {
   }
 }
 
-async function prepareAgentDir(
-  tabId: TabId,
-  settings: Awaited<ReturnType<typeof import("./settings.js").loadSettings>>,
-): Promise<string> {
-  const { loadCredentials } = await import("./credentials.js");
-  const baseDir = resolve(agentConfigsDir(), tabId);
-  mkdirSync(baseDir, { recursive: true });
-
-  const credentials = await loadCredentials();
-  // Refresh OAuth tokens in the background — never block tab open on this.
-  void refreshAllOAuthCredentials().catch(() => {});
-  const authJson: Record<string, unknown> = {};
-  for (const [providerId, credential] of Object.entries(credentials)) {
-    if (credential.type === "apiKey") {
-      authJson[providerId] = {
-        type: "api_key",
-        key: credential.key,
-        ...(credential.metadata ? { env: credential.metadata } : {}),
-      };
-    } else if (credential.type === "oauth") {
-      authJson[providerId] = {
-        type: "oauth",
-        access: credential.accessToken,
-        refresh: credential.refreshToken,
-        expires: credential.expiresAt,
-      };
-    }
-  }
-  writeAgentConfigFile(join(baseDir, "auth.json"), authJson);
-
-  const modelsJson: Record<string, unknown> = { providers: {} };
-  const modelsProviders = modelsJson.providers as Record<string, unknown>;
-  for (const [providerId, providerSettings] of Object.entries(settings.providers.custom)) {
-    if (!providerSettings?.enabled) continue;
-    const options = (providerSettings as { options?: Record<string, string> }).options;
-    if (!options?.baseUrl) continue;
-
-    modelsProviders[providerId] = {
-      baseUrl: options.baseUrl,
-      api: "openai-completions",
-      apiKey: options.apiKey,
-      models: {
-        default: {
-          id: "default",
-          name: options.name || providerId,
-        },
-      },
-    };
-  }
-  writeAgentConfigFile(join(baseDir, "models.json"), modelsJson);
-
-  // Write agent settings.json with skills discovery path and disable patterns.
-  // Pi auto-discovers skills from the skillsDir() path and applies !name patterns
-  // to exclude disabled skills.
-  const disabledSkills = settings.disabledSkills ?? [];
-  const skillsPatterns: string[] = [skillsDir()];
-  for (const name of disabledSkills) {
-    skillsPatterns.push(`!${name}`);
-  }
-
-  const settingsPath = join(baseDir, "settings.json");
-  let existingSettings: Record<string, unknown> = {};
-  if (existsSync(settingsPath)) {
-    try {
-      existingSettings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
-    } catch {
-      // Overwrite corrupt settings below.
-    }
-  }
-  const extensionPaths = resolveWizardExtensionPath();
-  writeAgentConfigFile(
-    settingsPath,
-    mergeAgentSettings(existingSettings, skillsPatterns, extensionPaths),
-  );
-
-  return baseDir;
-}
-
-export function cleanupTabAgentDir(tabId: TabId) {
-  const dir = resolve(agentConfigsDir(), tabId);
-  try {
-    rmSync(dir, { recursive: true, force: true });
-  } catch {
-    // Directory may not exist or be locked; ignore cleanup failures.
-  }
-}
-
-function writeAgentConfigFile(path: string, data: Record<string, unknown>) {
-  writeFileAtomically(path, JSON.stringify(data, null, 2));
-}
-
-/** Merge Herman-managed settings into an existing pi agent settings file. */
-export function mergeAgentSettings(
-  existing: Record<string, unknown>,
-  skills: string[],
-  extensions: string[] = [],
-): Record<string, unknown> {
-  // Preserve any non-Herman-managed extension paths already in the file.
-  const existingExtensions = Array.isArray(existing.extensions)
-    ? (existing.extensions as unknown[]).filter((p): p is string => typeof p === "string")
-    : [];
-  const mergedExtensions = [...new Set([...extensions, ...existingExtensions])];
-  const { extensions: _e, ...rest } = existing;
-  const out: Record<string, unknown> = { ...rest, skills };
-  if (mergedExtensions.length > 0) out.extensions = mergedExtensions;
-  return out;
-}
-
 /**
- * Absolute path to the bundled wizard extension directory.
- * Production (bundled): app/bun -> app/wizard-extension
- * Local dev: apps/desktop/src/bun -> apps/desktop/src/bun/wizard-extension
- * Returns [] if not found (wizard tools just won't register).
+ * Resolve the agent binary path.
+ *
+ * Production: the compiled binary at packages/agent/dist/herman-agent
+ *   (co-located with theme/ and package.json so pi's getPackageDir() — which
+ *   falls back to dirname(process.execPath) — finds everything it needs).
+ *
+ * Dev: run from source at packages/agent/src/cli.ts. Bun.spawn can execute a
+ *   .ts file directly; pi runs in non-binary mode (isBunBinary=false) and
+ *   resolves @earendil-works/* from the workspace node_modules. This gives
+ *   fast iteration with no agent rebuild needed.
  */
-function resolveWizardExtensionPath(): string[] {
-  const bundled = resolve(import.meta.dir, "..", "wizard-extension");
-  if (existsSync(join(bundled, "index.ts")) || existsSync(join(bundled, "index.js"))) {
-    return [bundled];
-  }
-  const dev = resolve(import.meta.dir, "wizard-extension");
-  if (existsSync(join(dev, "index.ts")) || existsSync(join(dev, "index.js"))) {
-    return [dev];
-  }
-  logger.warning("Wizard extension directory not found; wizard tools will not load");
-  return [];
-}
-
 function resolveAgentCliPath(): string {
   const envPath = config.agentPath;
   if (envPath) return envPath;
 
-  // Production bundle: app/bun/index.js -> app/packages/agent/dist/cli.js
-  const bundledPath = resolve(import.meta.dir, "..", "packages", "agent", "dist", "cli.js");
-  if (existsSync(bundledPath)) return bundledPath;
+  // bun --compile produces herman-agent (unix) or herman-agent.exe (win)
+  const exeSuffix = process.platform === "win32" ? ".exe" : "";
+  const binaryName = `herman-agent${exeSuffix}`;
 
-  // Local dev from apps/herman-desktop/src/bun
-  const devPath = resolve(
+  // Production: app/bun/index.js -> app/packages/agent/dist/herman-agent
+  const compiledPath = resolve(import.meta.dir, "..", "packages", "agent", "dist", binaryName);
+  if (existsSync(compiledPath)) return compiledPath;
+
+  // Dev: run from source — apps/desktop/src/bun -> packages/agent/src/cli.ts
+  const devSrcPath = resolve(
+    import.meta.dir,
+    "..",
+    "..",
+    "..",
+    "..",
+    "packages",
+    "agent",
+    "src",
+    "cli.ts",
+  );
+  if (existsSync(devSrcPath)) return devSrcPath;
+
+  // Dev fallback: a previously compiled binary in dist/
+  const devDistPath = resolve(
     import.meta.dir,
     "..",
     "..",
@@ -404,9 +317,9 @@ function resolveAgentCliPath(): string {
     "packages",
     "agent",
     "dist",
-    "cli.js",
+    binaryName,
   );
-  if (existsSync(devPath)) return devPath;
+  if (existsSync(devDistPath)) return devDistPath;
 
   return join(process.cwd(), "node_modules", ".bin", "herman");
 }

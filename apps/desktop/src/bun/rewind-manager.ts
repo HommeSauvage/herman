@@ -63,8 +63,8 @@ export function getUserMessageIds(messages: Message[]): string[] {
  * Read pi's session UUID from the resolved session JSONL file.
  * Uses persisted id for file selection when provided.
  */
-export function readPiSessionId(tabId: TabId, piSessionId?: string): string | undefined {
-  return readPiSessionIdFromFile(tabId, piSessionId);
+export function readPiSessionId(piSessionId?: string): string | undefined {
+  return readPiSessionIdFromFile(piSessionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ export class RewindManager {
       // Read pi's session UUID from disk so we can scope checkpoints.
       // At init time the agent process may not have started yet — we
       // retry on every reload() until the session file appears.
-      const sessionId = readPiSessionId(tabId);
+      const sessionId = readPiSessionId();
 
       const all = sessionId ? await loadAllCheckpoints(repoRoot, sessionId) : [];
       const { checkpoints, byTurn } = this.indexCheckpoints(all);
@@ -174,7 +174,7 @@ export class RewindManager {
 
     // Re-read session UUID every time — handles agent restarts and the
     // initial race where the agent hasn't started yet.
-    const latestUuid = readPiSessionId(tabId);
+    const latestUuid = readPiSessionId();
     if (latestUuid && latestUuid !== state.sessionId) {
       state.sessionId = latestUuid;
       logger.debug("Rewind session UUID updated", { tabId, sessionId: latestUuid });

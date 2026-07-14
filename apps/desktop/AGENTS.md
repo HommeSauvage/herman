@@ -78,14 +78,18 @@ Herman supports multiple LLM providers alongside the built-in Herman proxy.
 | Settings page | `src/views/main/components/settings-view.tsx` (Providers, Models, General tabs) |
 | Provider auth dialog | `src/views/main/components/settings/provider-auth-dialog.tsx` |
 | Model selector | `src/views/main/components/model-selector.tsx` (grouped by provider) |
-| Agent spawn | `src/bun/agent-bridge.ts` — writes per-tab agent config |
+| Agent spawn | `src/bun/agent-bridge.ts` — spawns against the shared agent config |
+| Shared agent config | `src/bun/agent-config-sync.ts` — `syncAgentConfig()` writes `~/.herman/agent/{auth,models,settings}.json` once + installs bundled extensions |
+| Project → sessions | `src/bun/pi-sessions.ts` — native pi `SessionManager.list(cwd)` / `listAll()` (session JSONL headers carry `cwd`) |
 | Herman gating | `src/bun/index.ts`, `src/bun/agent-process-manager.ts` — gated on `providers.herman.enabled` |
 
 ## Agent lifecycle
 
-Each open tab has its own agent subprocess, spawned via `agent-bridge.ts`. The subprocess runs `packages/agent/src/cli.ts` (the `@herman/agent` package), which is bundled into `dist/cli.js` and copied into the app bundle at build time.
+Each open tab has its own agent subprocess, spawned via `agent-bridge.ts`. The subprocess runs `packages/agent/src/cli.ts` (the `@herman/agent` package), which is compiled into a self-contained binary (`dist/herman-agent` via `bun build --compile`) and copied into the app bundle at build time. In dev, the agent runs directly from source (`src/cli.ts`) with no build step needed.
 
 Communication between the main process and the agent uses JSON-RPC over stdin/stdout. Events flow through `agent-process-manager.ts`, which persists messages, manages session archives, and broadcasts state changes to the renderer.
+
+All tabs/wizards/headless runs share **one pi config root** (`~/.herman/agent`): `auth.json`, `models.json`, `settings.json`, and `npm/node_modules/` (bundled extensions). `syncAgentConfig()` writes it once at startup (serialized, single-flight) and on credential/settings changes; tab spawn awaits it but does no per-tab config writing. A tab is just a pi session (new or resumed by UUID) in the shared `sessions/` dir. Closing a tab with no conversation deletes only its JSONL file. Projects (folders) → sessions is handled natively via pi session JSONL headers (each carries `cwd`), surfaced by `pi-sessions.ts`.
 
 ## Environment variables
 

@@ -96,11 +96,6 @@ beforeEach(() => {
   setHermantAppDir(tempDir);
   mock.module("../../src/bun/agent-bridge.js", () => ({
     AgentBridge: MockAgentBridge,
-    cleanupTabAgentDir: () => {},
-    mergeAgentSettings: (existing: Record<string, unknown>, skills: string[]) => ({
-      ...existing,
-      skills,
-    }),
   }));
 });
 

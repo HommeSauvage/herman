@@ -1,10 +1,19 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+// In a compiled binary, import.meta.dir is the read-only virtual filesystem
+// (/$bunfs/root). Fall back to dirname(process.execPath) so the standalone
+// CLI path resolves to a real writable location (packages/agent/.pi-agent,
+// same as dev). The desktop spawner always sets HERMAN_AGENT_DIR, so this
+// fallback only matters for standalone CLI use.
+const _scriptDir = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN")
+  ? dirname(process.execPath)
+  : import.meta.dir;
 
 const PI_AGENT_DIR = process.env.HERMAN_AGENT_DIR
   ? resolve(process.env.HERMAN_AGENT_DIR)
-  : resolve(join(import.meta.dir, "..", ".pi-agent"));
+  : resolve(join(_scriptDir, "..", ".pi-agent"));
 mkdirSync(PI_AGENT_DIR, { recursive: true });
 process.env.PI_CODING_AGENT_DIR = PI_AGENT_DIR;
 process.env.PI_CODING_AGENT_SESSION_DIR = join(PI_AGENT_DIR, "sessions");
@@ -19,60 +28,7 @@ import { configureLogging } from "./logging.js";
 
 const logger = getLogger(["herman-agent", "cli"]);
 
-/**
- * Extensions that herman bundles as packages. Pi auto-discovers and auto-installs
- * them from the agent settings, giving each its own node_modules so native
- * dependencies (e.g. fff's native binary) resolve correctly.
- */
-const BUNDLED_EXTENSIONS = [
-  "@bacnh85/pi-fff",
-  "@narumitw/pi-goal"
-];
-
-/**
- * Ensure bundled extension sources are registered in the agent settings.
- * Pi's PackageManager auto-installs missing packages on startup, so extensions
- * are available on the first run without manual `pi install` steps.
- */
-function ensureBundledExtensions(agentDir: string, sources: string[]): void {
-  const settingsPath = join(agentDir, "settings.json");
-
-  let settings: Record<string, unknown> = {};
-  if (existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
-    } catch {
-      logger.warning("Failed to parse settings.json, overwriting");
-    }
-  }
-
-  const existing = (Array.isArray(settings.packages) ? settings.packages : []) as string[];
-  const toAdd = sources.filter((s) => !existing.includes(s));
-
-  // Older versions of this CLI registered `@herman/pi-context-reporter`
-  // as a bundled extension. Pi's PackageManager would then run
-  // `bun install` to fetch it, but that install emits ANSI-colored
-  // progress to stdout — which the desktop's JSONL parser cannot
-  // read. We now load the reporter via `extensionFactories` instead,
-  // so strip the stale entry from `settings.json` to keep Pi quiet.
-  const stale = "@herman/pi-context-reporter";
-  const filtered = existing.filter((p) => p !== stale);
-
-  if (toAdd.length === 0 && filtered.length === existing.length) return;
-
-  settings.packages = [...filtered, ...toAdd];
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-  if (filtered.length !== existing.length) {
-    logger.info("Removed stale bundled extension", { extension: stale });
-  }
-  if (toAdd.length > 0) {
-    logger.info("Registered bundled extensions", { extensions: toAdd });
-  }
-}
-
 await configureLogging();
-
-ensureBundledExtensions(PI_AGENT_DIR, BUNDLED_EXTENSIONS);
 
 logger.info("Starting agent", {
   serverUrl: config.serverUrl,

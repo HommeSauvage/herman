@@ -5,6 +5,7 @@ import { mkdir } from "node:fs/promises";
 
 import type { AgentEvent } from "../shared/agent-protocol.js";
 import { AgentBridge } from "./agent-bridge.js";
+import { deletePiSessionFile } from "./pi-session.js";
 import { extractMessagesFromAgentPayload } from "./pi-messages.js";
 
 const logger = getLogger(["herman-desktop", "headless-agent"]);
@@ -101,8 +102,20 @@ export async function runHeadlessAgentPrompt(opts: {
     },
   );
 
+  let headlessPiSessionId: string | undefined;
   try {
     await bridge.start(cwd, { mode: "rookie" });
+    // Capture the new session's id so we can delete its JSONL on cleanup (the
+    // shared sessions dir is not per-tab, so we must not leave orphan files).
+    try {
+      const state = await bridge.sendCommand({ type: "get_state" });
+      if (state.success) {
+        const data = state.data as Record<string, unknown> | undefined;
+        if (data && typeof data.sessionId === "string") headlessPiSessionId = data.sessionId;
+      }
+    } catch {
+      // Non-fatal; cleanup just won't delete the file.
+    }
     try {
       await bridge.sendCommand({ type: "prompt", message: opts.prompt });
     } catch (error) {
@@ -150,6 +163,6 @@ export async function runHeadlessAgentPrompt(opts: {
     return "";
   } finally {
     await bridge.stop().catch(() => undefined);
-    bridge.cleanupPersistentState();
+    if (headlessPiSessionId) deletePiSessionFile(headlessPiSessionId);
   }
 }

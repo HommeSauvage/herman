@@ -18,7 +18,7 @@ export type SessionSnapshot = {
 
 /** Synchronous read of pi session JSONL — the instant paint path for tab open. */
 export function readSessionSnapshot(tabId: TabId, piSessionId?: string): SessionSnapshot {
-  const sessionFile = resolvePiSessionFile(tabId, piSessionId);
+  const sessionFile = resolvePiSessionFile(piSessionId);
   const resolvedPiSessionId = sessionFile
     ? extractPiSessionIdFromFilePath(sessionFile)
     : piSessionId;

@@ -55,9 +55,15 @@ export function draftsDir(): string {
   return join(hermanDir(), "drafts");
 }
 
-/** Per-tab agent configuration (auth.json, models.json). */
+/**
+ * Shared pi agent configuration root (auth.json, models.json, settings.json,
+ * npm/node_modules/, sessions/). One dir for all tabs/wizards/headless runs —
+ * a tab is just a pi session (new or resumed by UUID) in this shared root.
+ *
+ * @deprecated alias of {@link agentDir}; prefer `agentDir()` for new code.
+ */
 export function agentConfigsDir(): string {
-  return join(hermanDir(), "agent-configs");
+  return agentDir();
 }
 
 /** Encrypted provider credentials. */
@@ -70,7 +76,12 @@ export function skillsDir(): string {
   return join(agentDir(), "skills");
 }
 
-/** CLI / headless agent runtime directory (sessions, extensions, etc.). */
+/** Shared pi sessions directory (flat: {timestamp}_{uuid}.jsonl). */
+export function agentSessionsDir(): string {
+  return join(agentDir(), "sessions");
+}
+
+/** Shared pi agent runtime directory (config, extensions, sessions). */
 export function agentDir(): string {
   return join(hermanDir(), "agent");
 }

@@ -109,7 +109,6 @@ async function createProcess(state: "idle" | "running" = "running", sub?: PipedS
   const { AgentProcess } = await import("../../src/bun/agent-process.js");
   const proc = new AgentProcess({
     binaryPath: "/usr/bin/herman",
-    packageDir: "/opt/herman",
   });
 
   const p = proc as unknown as Record<string, unknown>;
@@ -217,7 +216,6 @@ describe("AgentProcess properties", () => {
     const { AgentProcess } = await import("../../src/bun/agent-process.js");
     const proc = new AgentProcess({
       binaryPath: "/usr/bin/herman",
-      packageDir: "/opt/herman",
     });
 
     getMockClient()._stderr = "some error output";

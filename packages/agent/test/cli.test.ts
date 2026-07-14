@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { $ } from "bun";
 
-const CLI_PATH = resolve(import.meta.dir, "..", "dist", "cli.js");
+const CLI_PATH = resolve(import.meta.dir, "..", "dist", "herman-agent");
 type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
 
 const SPAWN_ENV = {
@@ -20,7 +20,7 @@ async function ensureBuiltCli() {
 
 function spawnRpcAgent(): PipedSubprocess {
   return Bun.spawn({
-    cmd: ["bun", CLI_PATH, "--mode", "rpc"],
+    cmd: [CLI_PATH, "--mode", "rpc"],
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

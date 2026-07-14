@@ -12,7 +12,6 @@ export type AgentProcessState = "idle" | "starting" | "running" | "stopped" | "c
 
 export type AgentProcessOptions = {
   binaryPath: string;
-  packageDir: string;
   cwd?: string;
   env?: Record<string, string>;
   /** Additional CLI arguments passed to the agent binary (e.g. --skill). */
@@ -75,8 +74,6 @@ export class AgentProcess {
         if (value !== undefined) env[key] = value;
       }
     }
-    env.PI_PACKAGE_DIR = this.options.packageDir;
-
     try {
       const spawnArgs = [this.options.binaryPath, "--mode", "rpc"];
       if (this.options.args) {

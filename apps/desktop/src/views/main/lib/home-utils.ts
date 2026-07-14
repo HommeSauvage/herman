@@ -1,5 +1,12 @@
-import type { PersistedSession } from "../../../shared/rpc.js";
 import { getProjectName } from "../../../shared/tab-utils.js";
+
+/** Minimal shape needed for session filtering/grouping (open tabs + native sessions). */
+export type SessionLike = {
+  id: string;
+  title: string;
+  folderPath: string;
+  updatedAt: number;
+};
 
 export function startOfToday() {
   const now = new Date();
@@ -12,7 +19,7 @@ export function startOfYesterday() {
   return today - 24 * 60 * 60 * 1000;
 }
 
-export function groupSessionsByDate(sessions: PersistedSession[]) {
+export function groupSessionsByDate<T extends SessionLike>(sessions: T[]) {
   const todayThreshold = startOfToday();
   const yesterdayThreshold = startOfYesterday();
   return {
@@ -24,7 +31,7 @@ export function groupSessionsByDate(sessions: PersistedSession[]) {
   };
 }
 
-export function filterSessions(sessions: PersistedSession[], query: string) {
+export function filterSessions<T extends SessionLike>(sessions: T[], query: string): T[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return sessions;
   return sessions.filter(
@@ -34,7 +41,10 @@ export function filterSessions(sessions: PersistedSession[], query: string) {
   );
 }
 
-export function filterSessionsByProject(sessions: PersistedSession[], folderPath: string | null) {
+export function filterSessionsByProject<T extends SessionLike>(
+  sessions: T[],
+  folderPath: string | null,
+): T[] {
   if (!folderPath) return sessions;
   return sessions.filter((session) => session.folderPath === folderPath);
 }

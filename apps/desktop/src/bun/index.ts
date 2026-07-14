@@ -13,6 +13,12 @@ import { startDeviceActivation, checkDeviceActivation } from "./activation.js";
 import { AdTelemetry } from "./ad-telemetry.js";
 import { AgentProcessManager } from "./agent-process-manager.js";
 import { hermanDir } from "./app-paths.js";
+import { syncAgentConfig } from "./agent-config-sync.js";
+import {
+  getProjectFoldersFromPiSessions,
+  listAllPiSessions,
+  listPiSessionsForProject,
+} from "./pi-sessions.js";
 import { clearAllComposerDrafts } from "./composer-drafts.js";
 import {
   getCredential,
@@ -381,6 +387,15 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         await agentProcessManager.waitForRestore();
         return agentProcessManager.getProjectsAndSessions();
       },
+      getProjectSessions: async ({ folderPath }) => {
+        const sessions = await listPiSessionsForProject(folderPath);
+        return { sessions };
+      },
+      getAllPiSessions: async () => {
+        const sessions = await listAllPiSessions();
+        const projects = await getProjectFoldersFromPiSessions();
+        return { projects, sessions };
+      },
       openProject: async ({ folderPath }) => {
         logger.trace("Opening project", { folderPath });
         const result = await agentProcessManager.openProject(folderPath);
@@ -407,6 +422,15 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
           }
           notifySessionsChanged();
         }
+        return tab;
+      },
+      openPiSession: async ({ folderPath, piSessionId }) => {
+        logger.trace("Opening pi session as tab", { folderPath, piSessionId });
+        const tab = await agentProcessManager.openPiSession(folderPath, piSessionId);
+        webviewRpc.send.tabCreated({ tab });
+        webviewRpc.send.tabActivated({ tabId: tab.id });
+        notifyProjectsChanged();
+        notifySessionsChanged();
         return tab;
       },
       retryTabMessageHydration: async ({ tabId }) => {
@@ -617,7 +641,12 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         await wizardSessionManager.cancel(wizardSessionId);
       },
       adoptWizardSession: async ({ projectPath, wizardSessionId }) => {
-        const tab = await agentProcessManager.adoptWizardSession(projectPath, wizardSessionId);
+        const wizardPiSessionId = wizardSessionManager.get(wizardSessionId)?.getPiSessionId();
+        const tab = await agentProcessManager.adoptWizardSession(
+          projectPath,
+          wizardSessionId,
+          wizardPiSessionId,
+        );
         // Detach the wizard bridge (keep its session file for the tab resume).
         await wizardSessionManager.get(wizardSessionId)?.detach();
         wizardSessionManager.remove(wizardSessionId);
@@ -1123,6 +1152,12 @@ async function validateSession(token: string): Promise<boolean> {
 
 async function restoreApp() {
   try {
+    // Kick off the shared agent config sync (non-blocking): writes auth/models/
+    // settings into ~/.herman/agent and installs bundled extensions once. Tab
+    // spawns await it before spawning the subprocess, but UI hydration from
+    // session JSONL runs in parallel and is not blocked.
+    void syncAgentConfig();
+
     const state = await loadState();
 
     if (state.session && !(await validateSession(state.session.token))) {

@@ -1,12 +1,11 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import type { TabId } from "../shared/rpc.js";
-import { agentConfigsDir } from "./app-paths.js";
+import { agentSessionsDir } from "./app-paths.js";
 
-/** Directory where pi writes session JSONL files for a tab. */
-export function piSessionDir(tabId: TabId): string {
-  return join(agentConfigsDir(), tabId, "sessions");
+/** Shared directory where pi writes all session JSONL files (flat). */
+export function piSessionDir(): string {
+  return agentSessionsDir();
 }
 
 function listSessionJsonlFiles(sessionsDir: string): string[] {
@@ -36,8 +35,8 @@ function newestSessionFile(sessionsDir: string): string | undefined {
  * Resolve the pi session JSONL file for a tab.
  * Prefers a persisted session id, then falls back to the newest JSONL on disk.
  */
-export function resolvePiSessionFile(tabId: TabId, piSessionId?: string): string | undefined {
-  const sessionsDir = piSessionDir(tabId);
+export function resolvePiSessionFile(piSessionId?: string): string | undefined {
+  const sessionsDir = piSessionDir();
   if (piSessionId) {
     const byId = resolvePiSessionFileById(sessionsDir, piSessionId);
     if (byId) return byId;
@@ -49,12 +48,24 @@ export function resolvePiSessionFile(tabId: TabId, piSessionId?: string): string
  * Path to the pi session JSONL file for a tab, if any.
  * Session files are named `{timestamp}_{uuid}.jsonl`.
  */
-export function readPiSessionFilePath(tabId: TabId, piSessionId?: string): string | undefined {
-  return resolvePiSessionFile(tabId, piSessionId);
+export function readPiSessionFilePath(piSessionId?: string): string | undefined {
+  return resolvePiSessionFile(piSessionId);
 }
 
-export function hasPiSessionFile(tabId: TabId, piSessionId?: string): boolean {
-  return readPiSessionFilePath(tabId, piSessionId) !== undefined;
+export function hasPiSessionFile(piSessionId?: string): boolean {
+  return readPiSessionFilePath(piSessionId) !== undefined;
+}
+
+/** Delete the session JSONL file for a pi session id (tab close with no conversation). */
+export function deletePiSessionFile(piSessionId?: string): void {
+  if (!piSessionId) return;
+  const file = resolvePiSessionFile(piSessionId);
+  if (!file) return;
+  try {
+    unlinkSync(file);
+  } catch {
+    // File may already be gone or locked; ignore.
+  }
 }
 
 /** Extract the session UUID from a `{timestamp}_{uuid}.jsonl` file path. */
@@ -75,8 +86,8 @@ export function extractPiSessionIdFromFilePath(filePath: string): string | undef
  * Read the pi session id for a tab from the resolved session file.
  * Uses persisted id for file selection when provided.
  */
-export function readPiSessionId(tabId: TabId, piSessionId?: string): string | undefined {
-  const file = resolvePiSessionFile(tabId, piSessionId);
+export function readPiSessionId(piSessionId?: string): string | undefined {
+  const file = resolvePiSessionFile(piSessionId);
   return file ? extractPiSessionIdFromFilePath(file) : undefined;
 }
 

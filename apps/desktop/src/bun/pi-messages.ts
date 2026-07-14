@@ -118,11 +118,11 @@ export function normalizeContentText(value: unknown): string {
 
 /** Load resolved LLM messages directly from pi's on-disk session JSONL. */
 export function loadMessagesFromPiSessionFile(tabId: TabId, piSessionId?: string): Message[] {
-  const filePath = resolvePiSessionFile(tabId, piSessionId);
+  const filePath = resolvePiSessionFile(piSessionId);
   if (!filePath) return [];
 
   try {
-    const sessionManager = SessionManager.open(filePath, piSessionDir(tabId));
+    const sessionManager = SessionManager.open(filePath, piSessionDir());
     const { messages: rawMessages } = sessionManager.buildSessionContext();
     const normalized: Message[] = [];
     for (const raw of rawMessages) {

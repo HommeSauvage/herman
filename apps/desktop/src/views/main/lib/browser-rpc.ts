@@ -153,9 +153,12 @@ function createBrowserRpc(): DesktopRpc {
         projects: [],
         sessions: [toPersistedSession(createTab())],
       }),
+      getProjectSessions: async () => ({ sessions: [] }),
+      getAllPiSessions: async () => ({ projects: [], sessions: [] }),
       openProject: async () => ({ folderPath: "" }),
       closeProject: async () => {},
       openSession: async () => createTab(),
+      openPiSession: async () => createTab(),
       retryTabMessageHydration: async ({ tabId }: { tabId: TabId }) => {
         const tab = useAgentStore.getState().tabs[tabId];
         return {
