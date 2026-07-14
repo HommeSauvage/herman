@@ -128,6 +128,16 @@ export class AgentRpcClient {
     this.subprocess.stdin.write(serializeJsonl(command));
   }
 
+  /**
+   * Write an arbitrary JSONL object to the agent stdin. Used for messages
+   * that are not AgentCommands, e.g. `extension_ui_response` replies to
+   * extension UI dialog requests (see pi docs/rpc.md).
+   */
+  sendRawObject(obj: Record<string, unknown>): void {
+    if (!this.subprocess || this.exited) return;
+    this.subprocess.stdin.write(serializeJsonl(obj));
+  }
+
   onEvent(listener: AgentEventListener): () => void {
     this.eventListeners.push(listener);
     return () => this.removeFromArray(this.eventListeners, listener);
@@ -270,17 +280,17 @@ export class AgentRpcClient {
       data = JSON.parse(line);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.warning("Failed to parse agent JSONL line", {
+      logger.warning("Skipping non-JSON agent stdout line", {
         error: message,
         linePreview: line.slice(0, 200),
       });
-      this.emitError(new Error(`Failed to parse JSONL: ${message}`));
       return;
     }
 
     if (typeof data !== "object" || data === null || !("type" in data)) {
-      logger.warning("Unexpected agent JSONL line", { linePreview: line.slice(0, 200) });
-      this.emitError(new Error(`Unexpected JSONL line (no 'type' field): ${line.slice(0, 200)}`));
+      logger.warning("Skipping agent stdout line without type field", {
+        linePreview: line.slice(0, 200),
+      });
       return;
     }
 

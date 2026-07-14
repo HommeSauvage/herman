@@ -66,7 +66,9 @@
       "dependencies": {
         "@bacnh85/pi-fff": "^0.7.0",
         "@earendil-works/pi-agent-core": "catalog:",
+        "@earendil-works/pi-ai": "catalog:",
         "@earendil-works/pi-coding-agent": "catalog:",
+        "@earendil-works/pi-tui": "catalog:",
         "@herman/pi-context-reporter": "workspace:*",
         "@herman/rpc": "workspace:*",
         "@logtape/logtape": "catalog:",
@@ -75,6 +77,7 @@
         "arkenv": "catalog:",
         "arktype": "catalog:",
         "pi-rewind": "^0.5.0",
+        "typebox": "catalog:",
       },
       "devDependencies": {
         "@herman/tsconfig": "workspace:*",
@@ -155,7 +158,9 @@
   "catalog": {
     "@base-ui/react": "^1.6.0",
     "@earendil-works/pi-agent-core": "0.80.3",
+    "@earendil-works/pi-ai": "0.80.3",
     "@earendil-works/pi-coding-agent": "0.80.3",
+    "@earendil-works/pi-tui": "0.80.3",
     "@fontsource-variable/inter": "^5.2.8",
     "@icons-pack/react-simple-icons": "^13.13.0",
     "@logtape/file": "^2.2.1",
@@ -191,6 +196,7 @@
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0",
     "tw-animate-css": "^1.4.0",
+    "typebox": "1.1.38",
     "typescript": "^6.0.3",
     "vite": "^8.1.3",
     "vitest": "^4.1.9",

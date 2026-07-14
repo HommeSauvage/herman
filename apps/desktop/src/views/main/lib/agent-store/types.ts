@@ -29,6 +29,9 @@ export type Tab = {
   connectionState: AgentStatus["state"];
   connectionError?: string;
   connectionStderr?: string;
+  /** If the current connectionError has been dismissed, this holds the raw
+   *  error string that was hidden. A new/different error will still show. */
+  connectionErrorDismissed?: string;
   createdAt: number;
   updatedAt: number;
   composerValue: string;
@@ -107,6 +110,24 @@ export type AgentState = {
   };
   /** Whether the onboarding wizard is visible (Rookie mode) */
   onboardingVisible: boolean;
+  /**
+   * Shared model catalog fed by agent models_sync events (tabs + wizard).
+   * ModelSelector always reads this list — not a parallel fetch.
+   */
+  modelCatalog: {
+    availableModels: string[];
+  };
+  /**
+   * Model selection context for the onboarding wizard (detached from tabs).
+   * Selection only — the list comes from modelCatalog.
+   */
+  wizard: {
+    /** True while OnboardingWizard is mounted. */
+    active: boolean;
+    currentModel?: string;
+    /** Active wizard session id, if the agent has been started. */
+    sessionId?: string;
+  };
   // Derived views of the active tab, kept for backward compatibility with
   // existing UI components that read global session/connection state.
   session: {
@@ -176,6 +197,11 @@ export type AgentActions = {
   setDiffScope: (scope: DiffScope) => void;
   fetchDiff: (tabId: TabId, scope: DiffScope) => Promise<void>;
   setModelSelectorOpen: (open: boolean) => void;
+  setModelCatalog: (models: string[], opts?: { merge?: boolean }) => void;
+  setWizardCurrentModel: (modelId: string) => void;
+  setWizardSessionId: (sessionId: string | undefined) => void;
+  setWizardActive: (active: boolean) => void;
+  clearWizardState: () => void;
   setAdVisibility: (focused: boolean, visible: boolean) => void;
   setTabAd: (tabId: TabId, placement: AdPlacement, campaign?: AdCampaign) => void;
   clearTabAds: (tabId: TabId) => void;

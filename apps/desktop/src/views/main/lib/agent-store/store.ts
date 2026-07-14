@@ -70,6 +70,8 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
   },
   ads: INITIAL_ADS_STATE,
   onboardingVisible: false,
+  modelCatalog: { availableModels: [] },
+  wizard: { active: false },
   session: { messages: [], isThinking: false, availableModels: [] },
   connection: { state: "idle" },
 
@@ -464,7 +466,15 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         updatedAt: Date.now(),
       };
       const tabs = { ...state.tabs, [tabId]: updated };
-      return { tabs, ...rebuildDerived({ ...state, tabs }, tabs) };
+      const nextCatalog =
+        availableModels && availableModels.length > 0
+          ? { availableModels: [...new Set(availableModels)] }
+          : state.modelCatalog;
+      return {
+        tabs,
+        modelCatalog: nextCatalog,
+        ...rebuildDerived({ ...state, tabs }, tabs),
+      };
     });
   },
 
@@ -532,7 +542,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         messages,
         connectionState: status.state,
         connectionStderr: status.state === "crashed" ? status.stderr : undefined,
-        connectionError: status.state === "crashed" ? status.stderr : undefined,
+        connectionError: status.state === "crashed" ? (status.stderr ?? "Agent process stopped unexpectedly") : undefined,
         isThinking: status.state === "running" ? tab.isThinking : false,
         retryState,
         updatedAt: Date.now(),
@@ -652,8 +662,19 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         }, 0);
       }
 
+      // Keep the shared catalog in sync with every agent models_sync.
+      let modelCatalog = state.modelCatalog;
+      if (
+        (event.type === "models_sync" || event.type === "herman/models_sync") &&
+        Array.isArray(event.models) &&
+        event.models.length > 0
+      ) {
+        modelCatalog = { availableModels: [...new Set(event.models)] };
+      }
+
       return {
         tabs,
+        modelCatalog,
         ...rebuildDerived({ ...state, tabs, ui }, tabs),
         ads: nextAds,
       };
@@ -746,7 +767,51 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
   setModelSelectorOpen: (open) =>
     set((state) => ({ ui: { ...state.ui, modelSelectorOpen: open } })),
 
-  setView: (view) => set((state) => ({ ui: { ...state.ui, view } })),
+  setModelCatalog: (models, opts) =>
+    set((state) => {
+      // Never wipe a populated catalog with an empty payload.
+      if (models.length === 0 && state.modelCatalog.availableModels.length > 0) {
+        return state;
+      }
+      const next = opts?.merge
+        ? [...new Set([...state.modelCatalog.availableModels, ...models])]
+        : [...new Set(models)];
+      if (arraysEqual(state.modelCatalog.availableModels, next)) return state;
+      return { modelCatalog: { availableModels: next } };
+    }),
+
+  setWizardCurrentModel: (modelId) =>
+    set((state) => ({
+      wizard: { ...state.wizard, currentModel: modelId },
+    })),
+
+  setWizardSessionId: (sessionId) =>
+    set((state) => ({
+      wizard: { ...state.wizard, sessionId },
+    })),
+
+  setWizardActive: (active) =>
+    set((state) => ({
+      wizard: { ...state.wizard, active },
+    })),
+
+  clearWizardState: () =>
+    set((state) => ({
+      wizard: { active: false, currentModel: state.wizard.currentModel },
+    })),
+
+  setView: (view) =>
+    set((state) => {
+      // Guard: never allow "session" view without a valid active tab that has
+      // a project folder. If no project is associated, redirect to home.
+      if (view === "session") {
+        const activeTab = state.activeTabId ? state.tabs[state.activeTabId] : undefined;
+        if (!activeTab?.folderPath) {
+          return { ui: { ...state.ui, view: "home" } };
+        }
+      }
+      return { ui: { ...state.ui, view } };
+    }),
 
   setSettings: (settings) => set({ settings }),
 
@@ -963,6 +1028,10 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       }
       syncMessageCounter(Object.values(record).map((t) => t.messages));
       const tabOrder = tabs.map((tab) => tab.id);
+      const catalogModels = new Set<string>(state.modelCatalog.availableModels);
+      for (const tab of Object.values(record)) {
+        for (const modelId of tab.availableModels) catalogModels.add(modelId);
+      }
       const nextState: AgentState = {
         ...state,
         tabs: record,
@@ -970,6 +1039,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         activeTabId,
         projects: projects ?? state.projects,
         sessions: sessions ?? state.sessions,
+        modelCatalog: { availableModels: Array.from(catalogModels) },
         ui: {
           ...state.ui,
           view: activeTabId ? "session" : "home",

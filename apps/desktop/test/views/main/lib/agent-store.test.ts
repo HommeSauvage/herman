@@ -31,6 +31,8 @@ function resetStore() {
     },
     session: { messages: [], isThinking: false, availableModels: [] },
     connection: { state: "idle" },
+    modelCatalog: { availableModels: [] },
+    wizard: { active: false },
   });
 }
 
@@ -1078,5 +1080,53 @@ describe("context stats", () => {
     useAgentStore.getState().restoreTabs([{ ...tab, messages: [] }], id);
 
     expect(useAgentStore.getState().tabs[id]?.messagesHydrationStatus).toBe("pending");
+  });
+});
+describe("modelCatalog", () => {
+  it("updates from models_sync via recordAgentEvent", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().recordAgentEvent(id, {
+      type: "models_sync",
+      models: ["herman/kimi", "openai/gpt-4o"],
+      currentModel: "herman/kimi",
+    });
+
+    expect(useAgentStore.getState().modelCatalog.availableModels).toEqual([
+      "herman/kimi",
+      "openai/gpt-4o",
+    ]);
+    expect(useAgentStore.getState().tabs[id]?.availableModels).toEqual([
+      "herman/kimi",
+      "openai/gpt-4o",
+    ]);
+  });
+
+  it("does not wipe a populated catalog with an empty payload", () => {
+    useAgentStore.getState().setModelCatalog(["herman/a", "herman/b"]);
+    useAgentStore.getState().setModelCatalog([]);
+    expect(useAgentStore.getState().modelCatalog.availableModels).toEqual([
+      "herman/a",
+      "herman/b",
+    ]);
+  });
+
+  it("merges when merge option is set", () => {
+    useAgentStore.getState().setModelCatalog(["herman/a"]);
+    useAgentStore.getState().setModelCatalog(["herman/b"], { merge: true });
+    expect(useAgentStore.getState().modelCatalog.availableModels).toEqual([
+      "herman/a",
+      "herman/b",
+    ]);
+  });
+
+  it("seeds from tab models on restoreTabs", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().updateTab(id, {
+      availableModels: ["herman/from-tab"],
+    });
+    const tab = useAgentStore.getState().tabs[id];
+    useAgentStore.getState().restoreTabs([tab], id);
+
+    expect(useAgentStore.getState().modelCatalog.availableModels).toContain("herman/from-tab");
   });
 });

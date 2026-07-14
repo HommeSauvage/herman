@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { useAgentStore } from "../lib/agent-store.js";
@@ -18,16 +19,27 @@ export function Shell() {
   // Select only the fields Shell actually reads.  Avoid `useActiveTab()`
   // which returns the entire tab reference — any store update that
   // touches `tabs` would produce a new object and force a re-render.
-  const { sidebarOpen, view, activeTabId, tabMessageCount } = useAgentStore(
+  const { sidebarOpen, view, activeTabId, activeTabFolder, tabMessageCount } = useAgentStore(
     useShallow((s) => ({
       sidebarOpen: s.ui.sidebarOpen,
       view: s.ui.view,
       activeTabId: s.activeTabId,
+      activeTabFolder: s.activeTabId ? s.tabs[s.activeTabId]?.folderPath : undefined,
       tabMessageCount: s.activeTabId ? (s.tabs[s.activeTabId]?.messages.length ?? 0) : 0,
     })),
   );
-  const hasActiveTab = activeTabId != null;
+  const hasActiveTab = activeTabId != null && activeTabFolder;
   const isEmptySession = tabMessageCount === 0;
+
+  // Safety net: if view is "session" but there's no valid active tab with a
+  // project, force-redirect to home. This catches edge cases like the wizard
+  // cancel leaving the view in an invalid state.
+  const setView = useAgentStore((s) => s.setView);
+  useEffect(() => {
+    if (view === "session" && !hasActiveTab) {
+      setView("home");
+    }
+  }, [view, hasActiveTab, setView]);
 
   return (
     <div className="bg-ridge flex h-full w-full flex-col">
@@ -44,7 +56,9 @@ export function Shell() {
             <ErrorBoundary>
               <SettingsView />
             </ErrorBoundary>
-          ) : hasActiveTab && isEmptySession ? (
+          ) : !hasActiveTab ? (
+            <HomeView />
+          ) : isEmptySession ? (
             <div className="flex min-w-0 flex-1 flex-col">
               <div className="flex-1 overflow-hidden">
                 <NewSessionView />

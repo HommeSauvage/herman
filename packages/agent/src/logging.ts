@@ -1,4 +1,6 @@
-import { configure, getConsoleSink } from "@logtape/logtape";
+import { Writable } from "node:stream";
+
+import { configure, getStreamSink } from "@logtape/logtape";
 import { getPrettyFormatter } from "@logtape/pretty";
 import { redactByField } from "@logtape/redaction";
 
@@ -15,20 +17,20 @@ const REDACT_FIELD_PATTERNS = [
 ];
 
 export async function configureLogging(): Promise<void> {
-  const consoleSink = redactByField(
-    getConsoleSink({
+  // stdout is reserved for pi RPC JSONL; all agent logs must go to stderr.
+  const stderrSink = redactByField(
+    getStreamSink(Writable.toWeb(process.stderr), {
       formatter: getPrettyFormatter({ properties: true, timestamp: "time" }),
-      // Synchronous writes so stderr is flushed before a subprocess crash.
       nonBlocking: false,
     }),
     { fieldPatterns: REDACT_FIELD_PATTERNS },
   );
 
   await configure({
-    sinks: { console: consoleSink },
+    sinks: { stderr: stderrSink },
     loggers: [
-      { category: ["herman-agent"], lowestLevel: config.logLevel, sinks: ["console"] },
-      { category: ["logtape", "meta"], lowestLevel: "warning", sinks: ["console"] },
+      { category: ["herman-agent"], lowestLevel: config.logLevel, sinks: ["stderr"] },
+      { category: ["logtape", "meta"], lowestLevel: "warning", sinks: ["stderr"] },
     ],
   });
 }

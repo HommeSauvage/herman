@@ -173,6 +173,25 @@ export class AgentBridge {
     this.process.rpc.sendRaw(command);
   }
 
+  /**
+   * Send an `extension_ui_response` to the agent stdin, resolving a pending
+   * extension UI dialog request (e.g. a herman_wizard_ask question batch
+   * carried over an `editor` request). `value` is the string the awaiting
+   * ctx.ui.editor() / select() / input() call resolves to; pass
+   * `{ cancelled: true }` to cancel.
+   */
+  sendExtensionUiResponse(
+    id: string,
+    payload: { value: string } | { cancelled: true },
+  ): void {
+    if (!this.process) return;
+    this.process.rpc.sendRawObject({
+      type: "extension_ui_response",
+      id,
+      ...payload,
+    });
+  }
+
   getRecentEvents(): AgentEvent[] {
     return [...this.messageBuffer];
   }
@@ -309,7 +328,11 @@ async function prepareAgentDir(
       // Overwrite corrupt settings below.
     }
   }
-  writeAgentConfigFile(settingsPath, mergeAgentSettings(existingSettings, skillsPatterns));
+  const extensionPaths = resolveWizardExtensionPath();
+  writeAgentConfigFile(
+    settingsPath,
+    mergeAgentSettings(existingSettings, skillsPatterns, extensionPaths),
+  );
 
   return baseDir;
 }
@@ -331,8 +354,36 @@ function writeAgentConfigFile(path: string, data: Record<string, unknown>) {
 export function mergeAgentSettings(
   existing: Record<string, unknown>,
   skills: string[],
+  extensions: string[] = [],
 ): Record<string, unknown> {
-  return { ...existing, skills };
+  // Preserve any non-Herman-managed extension paths already in the file.
+  const existingExtensions = Array.isArray(existing.extensions)
+    ? (existing.extensions as unknown[]).filter((p): p is string => typeof p === "string")
+    : [];
+  const mergedExtensions = [...new Set([...extensions, ...existingExtensions])];
+  const { extensions: _e, ...rest } = existing;
+  const out: Record<string, unknown> = { ...rest, skills };
+  if (mergedExtensions.length > 0) out.extensions = mergedExtensions;
+  return out;
+}
+
+/**
+ * Absolute path to the bundled wizard extension directory.
+ * Production (bundled): app/bun -> app/wizard-extension
+ * Local dev: apps/desktop/src/bun -> apps/desktop/src/bun/wizard-extension
+ * Returns [] if not found (wizard tools just won't register).
+ */
+function resolveWizardExtensionPath(): string[] {
+  const bundled = resolve(import.meta.dir, "..", "wizard-extension");
+  if (existsSync(join(bundled, "index.ts")) || existsSync(join(bundled, "index.js"))) {
+    return [bundled];
+  }
+  const dev = resolve(import.meta.dir, "wizard-extension");
+  if (existsSync(join(dev, "index.ts")) || existsSync(join(dev, "index.js"))) {
+    return [dev];
+  }
+  logger.warning("Wizard extension directory not found; wizard tools will not load");
+  return [];
 }
 
 function resolveAgentCliPath(): string {

@@ -24,6 +24,9 @@ export async function sendPrompt(tabId: TabId, text: string) {
     store.clearAttachments(tabId);
   }
   store.setThinking(tabId, true);
+  // A new user message means the previous error is no longer the active
+  // error; reset the dismissed flag so a fresh failure is still surfaced.
+  store.updateTab(tabId, { connectionErrorDismissed: undefined });
 
   try {
     await desktopRpc.request.agentRequest({
@@ -89,6 +92,7 @@ export async function retryAgent(tabId: TabId) {
   store.updateTab(tabId, {
     connectionError: undefined,
     connectionStderr: undefined,
+    connectionErrorDismissed: undefined,
   });
 
   try {

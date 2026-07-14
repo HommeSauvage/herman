@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { getLogger } from "@logtape/logtape";
 import { BrowserWindow, BrowserView, ApplicationMenu, Updater, Utils } from "electrobun/bun";
 import type { ApplicationMenuItemConfig } from "electrobun/bun";
@@ -10,6 +12,7 @@ import type { HermanDesktopRPC, ProviderMetadata, TabId, FileDiff } from "../sha
 import { startDeviceActivation, checkDeviceActivation } from "./activation.js";
 import { AdTelemetry } from "./ad-telemetry.js";
 import { AgentProcessManager } from "./agent-process-manager.js";
+import { hermanDir } from "./app-paths.js";
 import { clearAllComposerDrafts } from "./composer-drafts.js";
 import {
   getCredential,
@@ -26,11 +29,20 @@ import { loadSettings, saveSettings } from "./settings.js";
 import { rewindManager, getUserMessageIds } from "./rewind-manager.js";
 import { resolveShellEnv } from "./shell-env.js";
 import { clearAllTabHistory } from "./tab-history.js";
-import { loadTemplates, getTemplateSourceDir } from "./templates.js";
-import { startDevServer, stopDevServer, getDevServerStatus, stopAllDevServers, setPreviewStatusHandler } from "./preview-server.js";
+import {
+  startDevServer,
+  startAllDevServers,
+  stopDevServer,
+  getDevServerStatus,
+  stopAllDevServers,
+  setPreviewStatusHandler,
+} from "./preview-server.js";
 import { readProjectManifest } from "./project-manifest.js";
+import { checkRequirements } from "./requirements.js";
+import { getGalleryTemplates as loadGalleryTemplates, resolveTemplateManifest } from "./template-registry.js";
+import { WizardSessionManager } from "./wizard-session.js";
 import { listAllSkills, installSkill, removeSkill, searchSkills, installSkillFromCommand, setSkillEnabled as toggleSkill } from "./skills.js";
-import { applySessionToMainProject, ensureGitAndDependencies, getSessionChanges, removeSessionWorktree } from "./worktree.js";
+import { applySessionToMainProject, getSessionChanges, removeSessionWorktree } from "./worktree.js";
 import {
   loadWindowState,
   saveWindowState,
@@ -129,6 +141,25 @@ let desktopSettings = await loadSettings();
 
 function isHermanEnabled(): boolean {
   return desktopSettings.providers.herman.enabled;
+}
+
+/** Read herman-models-cache.json written by the agent Herman extension. */
+function readHermanModelsCache(): string[] {
+  try {
+    const cachePath = join(hermanDir(), "herman-models-cache.json");
+    if (!existsSync(cachePath)) return [];
+    const raw = readFileSync(cachePath, "utf-8");
+    const cache = JSON.parse(raw) as { models?: Array<{ id?: string }> };
+    if (!Array.isArray(cache.models)) return [];
+    return cache.models
+      .map((m) => (typeof m.id === "string" && m.id ? `herman/${m.id}` : null))
+      .filter((id): id is string => Boolean(id));
+  } catch (error) {
+    logger.debug("Failed to read Herman models cache", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
 }
 
 function getMode() {
@@ -552,47 +583,49 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
           message: HERMAN_REFRESH_MODELS_MESSAGE,
         });
       },
-      getTemplates: async () => {
-        const templates = await loadTemplates();
-        logger.trace("Returning templates", { count: templates.length });
+      getHermanModelsCache: async () => {
+        return { models: readHermanModelsCache() };
+      },
+      getGalleryTemplates: async () => {
+        const templates = await loadGalleryTemplates();
+        logger.trace("Returning gallery templates", { count: templates.length });
         return templates;
       },
-      createProjectFromTemplate: async ({ templateId, projectName, parentDir }) => {
-        const { cp, mkdir, writeFile, readFile } = await import("node:fs/promises");
-        const { join } = await import("node:path");
-        const { homedir } = await import("node:os");
-
-        const baseDir = parentDir ?? join(homedir(), "Herman");
-        const projectPath = join(baseDir, projectName);
-
-        await mkdir(projectPath, { recursive: true });
-
-        const templateDir = getTemplateSourceDir(templateId);
-        // Copy the template files into the new project directory
-        await cp(templateDir, projectPath, { recursive: true, filter: (src) => !src.includes("node_modules") });
-
-        // Generate herman.json from the template manifest
-        try {
-          const manifestRaw = await readFile(join(templateDir, "template.json"), "utf-8");
-          const manifest = JSON.parse(manifestRaw);
-          if (manifest.deployment) {
-            const hermanJson = {
-              devCommand: manifest.deployment.devCommand ?? "npm run dev",
-              devPort: manifest.deployment.devPort ?? 4321,
-              buildCommand: manifest.deployment.buildCommand ?? "npm run build",
-              outputDir: manifest.deployment.outputDir ?? "dist",
-              deployTarget: manifest.deployment.target ?? "cloudflare-pages",
-              ...(manifest.systemPromptHint ? { systemPromptHint: manifest.systemPromptHint } : {}),
-            };
-            await writeFile(join(projectPath, "herman.json"), JSON.stringify(hermanJson, null, 2));
-          }
-        } catch {
-          // If manifest is missing or invalid, skip herman.json
-        }
-
-        await ensureGitAndDependencies(projectPath);
-
-        return { folderPath: projectPath };
+      getTemplates: async () => {
+        // Back-compat alias
+        return loadGalleryTemplates();
+      },
+      resolveTemplateManifest: async ({ templateId }) => {
+        return resolveTemplateManifest(templateId);
+      },
+      checkTemplateRequirements: async ({ templateId }) => {
+        const manifest = await resolveTemplateManifest(templateId);
+        const results = await checkRequirements(manifest.frontmatter.requirements);
+        return { results };
+      },
+      startWizardSession: async ({ templateId, description, modelId }) => {
+        const wizardSessionId = await wizardSessionManager.start(templateId, description, modelId);
+        return { wizardSessionId };
+      },
+      setWizardModel: async ({ wizardSessionId, modelId }) => {
+        wizardSessionManager.setModel(wizardSessionId, modelId);
+      },
+      respondWizardQuestions: async ({ wizardSessionId, requestId, answers }) => {
+        wizardSessionManager.respond(wizardSessionId, requestId, answers);
+      },
+      cancelWizard: async ({ wizardSessionId }) => {
+        await wizardSessionManager.cancel(wizardSessionId);
+      },
+      adoptWizardSession: async ({ projectPath, wizardSessionId }) => {
+        const tab = await agentProcessManager.adoptWizardSession(projectPath, wizardSessionId);
+        // Detach the wizard bridge (keep its session file for the tab resume).
+        await wizardSessionManager.get(wizardSessionId)?.detach();
+        wizardSessionManager.remove(wizardSessionId);
+        webviewRpc.send.tabCreated({ tab });
+        webviewRpc.send.tabActivated({ tabId: tab.id });
+        notifyProjectsChanged();
+        notifySessionsChanged();
+        return tab;
       },
       getSessionChanges: async ({ tabId }) => {
         const tab = agentProcessManager.getTab(tabId);
@@ -629,18 +662,40 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         }
         notifySessionsChanged();
       },
-      startPreview: async ({ folderPath, devCommand, devPort }) => {
-        return startDevServer(folderPath, devCommand, devPort);
+      startPreview: async ({ folderPath, serverId, devCommand, devPort, all }) => {
+        if (all || (!devCommand && !serverId)) {
+          const manifest = await readProjectManifest(folderPath);
+          if (manifest?.servers?.length) {
+            return startAllDevServers(folderPath, manifest.servers);
+          }
+        }
+        return startDevServer(folderPath, {
+          serverId: serverId ?? "web",
+          command: devCommand,
+          port: devPort,
+          primary: true,
+        });
       },
-      stopPreview: async ({ folderPath }) => {
-        await stopDevServer(folderPath);
+      stopPreview: async ({ folderPath, serverId }) => {
+        await stopDevServer(folderPath, serverId);
       },
-      restartPreview: async ({ folderPath, devCommand, devPort }) => {
-        await stopDevServer(folderPath);
-        return startDevServer(folderPath, devCommand, devPort);
+      restartPreview: async ({ folderPath, serverId, devCommand, devPort, all }) => {
+        await stopDevServer(folderPath, serverId);
+        if (all || (!devCommand && !serverId)) {
+          const manifest = await readProjectManifest(folderPath);
+          if (manifest?.servers?.length) {
+            return startAllDevServers(folderPath, manifest.servers);
+          }
+        }
+        return startDevServer(folderPath, {
+          serverId: serverId ?? "web",
+          command: devCommand,
+          port: devPort,
+          primary: true,
+        });
       },
-      getPreviewStatus: async ({ folderPath }) => {
-        return getDevServerStatus(folderPath);
+      getPreviewStatus: async ({ folderPath, serverId }) => {
+        return getDevServerStatus(folderPath, serverId);
       },
       getProjectManifest: async ({ folderPath }) => {
         return readProjectManifest(folderPath);
@@ -789,6 +844,10 @@ const agentProcessManager = new AgentProcessManager({
 
 setPreviewStatusHandler((payload) => {
   webviewRpc.send.previewStatusChanged(payload);
+});
+
+const wizardSessionManager = new WizardSessionManager((event) => {
+  webviewRpc.send.wizardEvent({ event });
 });
 
 let isFocused = false;

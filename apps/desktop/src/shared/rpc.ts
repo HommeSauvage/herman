@@ -6,8 +6,14 @@ import type {
   AgentResponse,
   AdCampaign,
   AdPlacement,
+  WizardSessionEvent,
 } from "./agent-protocol.js";
-import type { TemplateManifest } from "./templates.js";
+import type {
+  GalleryTemplate,
+  ProjectManifestView,
+  RequirementCheckResult,
+  ResolvedManifest,
+} from "./herman-manifest.js";
 
 export type AuthMethodType = "oauth" | "apiKey";
 
@@ -345,11 +351,18 @@ export type OutgoingMessages = {
   sessionsChanged: { sessions: PersistedSession[] };
   projectOpened: { folderPath: string; projects: string[] };
   agentEvent: { tabId: TabId; event: AgentEvent };
+  wizardEvent: { event: WizardSessionEvent };
   agentStatusChanged: { tabId: TabId; state: AgentStatus["state"]; stderr?: string };
   adEvent: { tabId: TabId; placement: AdPlacement; campaign: AdCampaign };
   adVisibilityChanged: { focused: boolean; visible: boolean };
   activationComplete: Session;
-  previewStatusChanged: { folderPath: string; url?: string; running: boolean; port?: number };
+  previewStatusChanged: {
+    folderPath: string;
+    serverId?: string;
+    url?: string;
+    running: boolean;
+    port?: number;
+  };
 };
 
 export type HermanDesktopRPC = {
@@ -554,13 +567,55 @@ export type HermanDesktopRPC = {
         params: { tabId: TabId };
         response: undefined;
       };
+      /**
+       * Read the Herman models cache file written by the agent extension
+       * (`herman-models-cache.json`). Used to seed the shared catalog when no
+       * tab agent has synced yet — not a live API client.
+       */
+      getHermanModelsCache: {
+        params: undefined;
+        response: { models: string[] };
+      };
+      getGalleryTemplates: {
+        params: undefined;
+        response: GalleryTemplate[];
+      };
+      /** @deprecated Use getGalleryTemplates */
       getTemplates: {
         params: undefined;
-        response: TemplateManifest[];
+        response: GalleryTemplate[];
       };
-      createProjectFromTemplate: {
-        params: { templateId: string; projectName: string; parentDir?: string };
-        response: { folderPath: string };
+      resolveTemplateManifest: {
+        params: { templateId: string };
+        response: ResolvedManifest;
+      };
+      checkTemplateRequirements: {
+        params: { templateId: string };
+        response: { results: RequirementCheckResult[] };
+      };
+      startWizardSession: {
+        params: { templateId: string; description: string; modelId?: string };
+        response: { wizardSessionId: string };
+      };
+      setWizardModel: {
+        params: { wizardSessionId: string; modelId: string };
+        response: undefined;
+      };
+      respondWizardQuestions: {
+        params: {
+          wizardSessionId: string;
+          requestId: string;
+          answers: { id: string; value: string; values?: string[] }[];
+        };
+        response: undefined;
+      };
+      cancelWizard: {
+        params: { wizardSessionId: string };
+        response: undefined;
+      };
+      adoptWizardSession: {
+        params: { projectPath: string; wizardSessionId: string };
+        response: Tab;
       };
       getSessionChanges: {
         params: { tabId: TabId };
@@ -583,24 +638,43 @@ export type HermanDesktopRPC = {
         response: undefined;
       };
       startPreview: {
-        params: { folderPath: string; devCommand?: string; devPort?: number };
-        response: { url?: string; port: number };
+        params: {
+          folderPath: string;
+          serverId?: string;
+          devCommand?: string;
+          devPort?: number;
+          /** When true (default for HERMAN.md projects), start all configured servers. */
+          all?: boolean;
+        };
+        response: { url?: string; port: number; serverId?: string };
       };
       stopPreview: {
-        params: { folderPath: string };
+        params: { folderPath: string; serverId?: string };
         response: undefined;
       };
       restartPreview: {
-        params: { folderPath: string; devCommand?: string; devPort?: number };
-        response: { url?: string; port: number };
+        params: {
+          folderPath: string;
+          serverId?: string;
+          devCommand?: string;
+          devPort?: number;
+          all?: boolean;
+        };
+        response: { url?: string; port: number; serverId?: string };
       };
       getPreviewStatus: {
-        params: { folderPath: string };
-        response: { running: boolean; url?: string; port?: number };
+        params: { folderPath: string; serverId?: string };
+        response: {
+          running: boolean;
+          url?: string;
+          port?: number;
+          serverId?: string;
+          servers?: { serverId: string; running: boolean; url?: string; port?: number }[];
+        };
       };
       getProjectManifest: {
         params: { folderPath: string };
-        response: { devCommand: string; devPort: number; buildCommand: string; outputDir: string; deployTarget: string } | undefined;
+        response: ProjectManifestView | undefined;
       };
       getSkills: {
         params: { projectDir?: string };

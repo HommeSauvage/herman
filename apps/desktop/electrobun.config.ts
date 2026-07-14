@@ -6,6 +6,7 @@ const copy: Record<string, string> = {
   "../../packages/agent/dist": "packages/agent/dist",
   "../../packages/agent/package.json": "packages/agent/package.json",
   "templates": "templates",
+  "src/bun/wizard-extension": "wizard-extension",
 };
 
 if (!isDev) {

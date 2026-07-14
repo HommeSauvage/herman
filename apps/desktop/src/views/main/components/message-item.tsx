@@ -1,6 +1,6 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/tooltip";
 import { cn } from "@herman/ui/lib/utils";
-import { AlertTriangle, Check, Copy, RotateCcw } from "lucide-react";
+import { Check, Copy, RotateCcw } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 
 import type { Message } from "../../../shared/rpc.js";
@@ -196,28 +196,12 @@ function AssistantMessage({ message }: { message: Extract<Message, { role: "assi
 
   const streamingHtml = isStreaming && content ? parseMarkdownSync(content) : null;
 
-  const hasError =
-    message.stopReason === "error" ||
-    message.stopReason === "aborted" ||
-    !!message.errorMessage;
-  const errorText =
-    message.errorMessage ||
-    (message.stopReason
-      ? `Assistant stopped unexpectedly (${message.stopReason}).`
-      : "The assistant stopped unexpectedly.");
-
   return (
     <div
       data-component="assistant-message"
       data-streaming={isStreaming ? "true" : "false"}
       className="text-body group/assistant min-w-0 text-sm leading-relaxed"
     >
-      {hasError && (
-        <div className="mb-2 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-red-300">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-red-400" />
-          <p className="min-w-0 flex-1 leading-relaxed">{errorText}</p>
-        </div>
-      )}
       {content ? (
         <>
           {streamingHtml ? (
@@ -237,7 +221,11 @@ function AssistantMessage({ message }: { message: Extract<Message, { role: "assi
           )}
         </>
       ) : (
-        !hasError && <span className="text-faint">…</span>
+        !message.errorMessage &&
+        message.stopReason !== "error" &&
+        message.stopReason !== "aborted" && (
+          <span className="text-faint">…</span>
+        )
       )}
     </div>
   );

@@ -14,19 +14,10 @@ export function ModelsTab() {
   const setSettings = useAgentStore((s) => s.setSettings);
   const activeTabId = useAgentStore((s) => s.activeTabId);
 
-  // Subscribe only to availableModels from each tab, not the full tabs record
-  // which changes on every streaming delta and causes unnecessary re-renders.
-  // We build a stable version string from model IDs so useShallow can
-  // detect when the set of models actually changed.
+  // Shared catalog — same source as the ModelSelector (fed by models_sync).
   const allModels = useAgentStore(
-    useShallow((s) => {
-      const seen = new Set<string>();
-      for (const tab of Object.values(s.tabs)) {
-        for (const modelId of tab.availableModels) {
-          seen.add(modelId);
-        }
-      }
-      return Array.from(seen)
+    useShallow((s) =>
+      [...s.modelCatalog.availableModels]
         .sort((a, b) => {
           const [aProvider] = a.split("/");
           const [bProvider] = b.split("/");
@@ -35,8 +26,8 @@ export function ModelsTab() {
           if (aHerman !== bHerman) return aHerman - bHerman;
           return a.localeCompare(b);
         })
-        .join("\x00");
-    }),
+        .join("\x00"),
+    ),
   );
 
   const [defaultModel, setDefaultModel] = useState(settings.models.defaultModel ?? "");

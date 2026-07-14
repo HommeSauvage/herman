@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://herman.build/schema/herman-frontmatter.v1.json",
+  "title": "Herman HERMAN.md frontmatter v1",
+  "description": "YAML frontmatter schema for HERMAN.md template manifests. The Markdown body (## Setup, ## Questions, ## Guidance) is intentionally schema-free.",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Frontmatter schema version."
+    },
+    "extends": {
+      "type": "string",
+      "description": "Id of another curated Herman manifest to inherit from."
+    },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "icon": { "type": "string" },
+    "snapshot": { "type": "string", "format": "uri" },
+    "category": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["repo"],
+      "additionalProperties": false,
+      "properties": {
+        "repo": { "type": "string" },
+        "ref": { "type": "string" }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "check"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "check": { "type": "string" },
+          "install": { "type": "string" },
+          "optional": { "type": "boolean" }
+        }
+      }
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "vars": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key"],
+            "additionalProperties": false,
+            "properties": {
+              "key": { "type": "string" },
+              "required": { "type": "boolean" },
+              "file": { "type": "string" },
+              "default": { "type": "string" },
+              "notes": { "type": "string" },
+              "generate": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "dev": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "install": { "type": "string" },
+        "servers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "command"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "command": { "type": "string" },
+              "port": { "type": "integer" },
+              "primary": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

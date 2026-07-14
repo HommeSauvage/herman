@@ -2,6 +2,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/t
 import { AlertTriangle, RefreshCcw, X, ChevronDown, ChevronRight } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
+import { formatErrorMessage } from "../lib/format-error.js";
+
 import type { TabId } from "../../../shared/rpc.js";
 import { retryAgent } from "../lib/agent-actions.js";
 import { useAgentStore } from "../lib/agent-store.js";
@@ -104,9 +106,10 @@ export const ErrorBanner = memo(function ErrorBanner({
   if (!hasError && !isRetrying) return null;
 
   // Build display message.
-  const message = isRetrying
+  const rawMessage = isRetrying
     ? retryState!.message
     : connectionError ?? "Agent process stopped unexpectedly";
+  const message = formatErrorMessage(rawMessage);
 
   const truncated = message.length > MAX_ERROR_LENGTH;
   const displayMessage = truncated ? message.slice(0, MAX_ERROR_LENGTH) + "…" : message;

@@ -1,6 +1,10 @@
 import { isAdPlacement } from "@herman/rpc/ads";
 import type { AdCampaign, AdEvent, AdPlacement } from "@herman/rpc/ads";
 import type { ModelMetadata } from "./rpc.js";
+import {
+  tryParseWizardEnvelope,
+  type WizardAskEnvelope,
+} from "./wizard-protocol.js";
 
 export type AgentCommand =
   | { id?: string; type: "prompt"; message: string; messageId?: string }
@@ -141,6 +145,66 @@ type ContextReportUsageWire = {
 };
 
 export type { AdCampaign, AdEvent, AdPlacement } from "@herman/rpc/ads";
+
+/**
+ * Events emitted by the wizard session orchestrator to the renderer over a
+ * dedicated channel (NOT the tab AgentEvent path, since the wizard runs as a
+ * detached bridge). See `wizard-session.ts`.
+ */
+export type WizardSessionEvent =
+  | {
+      type: "wizard_request";
+      wizardSessionId: string;
+      /** The extension_ui_request id the bridge must respond to. */
+      requestId: string;
+      envelope: WizardAskEnvelope;
+    }
+  | {
+      type: "wizard_progress";
+      wizardSessionId: string;
+      text: string;
+    }
+  | {
+      type: "wizard_models";
+      wizardSessionId: string;
+      models: string[];
+      currentModel?: string;
+    }
+  | {
+      type: "wizard_complete";
+      wizardSessionId: string;
+      projectPath: string;
+      summary?: string;
+    }
+  | {
+      type: "wizard_end";
+      wizardSessionId: string;
+      error?: string;
+    }
+  | {
+      type: "wizard_retrying";
+      wizardSessionId: string;
+      attempt: number;
+      maxRetries: number;
+      error?: string;
+    };
+
+/**
+ * If an `extension_ui_request` is an `editor` dialog carrying a wizard
+ * question envelope (sentinel `__herman_wizard__`), return the parsed
+ * envelope + request id so the bridge can route it to the React wizard
+ * instead of a text editor. Returns undefined for real editor requests.
+ */
+export function tryParseWizardRequest(
+  event: AgentEvent,
+): { requestId: string; envelope: WizardAskEnvelope } | undefined {
+  if (event.type !== "extension_ui_request") return undefined;
+  if (event.method !== "editor") return undefined;
+  const prefill = typeof event.prefill === "string" ? event.prefill : undefined;
+  const envelope = tryParseWizardEnvelope(prefill);
+  if (!envelope) return undefined;
+  return { requestId: event.id, envelope };
+}
 
 export function isAdEvent(event: AgentEvent): event is AdEvent {
   return event.type === "herman/ad_event";

@@ -2,24 +2,45 @@ import { getLogger } from "@logtape/logtape";
 import { spawn, type Subprocess } from "bun";
 import { createServer } from "node:net";
 
+import type { DevServer } from "../shared/herman-manifest.js";
 import { ensureWorktreeDependencies } from "./worktree.js";
 
 const logger = getLogger(["herman-desktop", "preview"]);
 
 type PreviewInstance = {
   folderPath: string;
+  serverId: string;
   process: Subprocess;
   port: number;
   url: string;
+  primary: boolean;
 };
 
+/** Keyed by `${folderPath}::${serverId}` */
 const previews = new Map<string, PreviewInstance>();
+
 let previewStatusHandler:
-  | ((payload: { folderPath: string; url?: string; running: boolean; port?: number }) => void)
+  | ((payload: {
+      folderPath: string;
+      serverId?: string;
+      url?: string;
+      running: boolean;
+      port?: number;
+    }) => void)
   | undefined;
 
+function previewKey(folderPath: string, serverId: string): string {
+  return `${folderPath}::${serverId}`;
+}
+
 export function setPreviewStatusHandler(
-  handler: (payload: { folderPath: string; url?: string; running: boolean; port?: number }) => void,
+  handler: (payload: {
+    folderPath: string;
+    serverId?: string;
+    url?: string;
+    running: boolean;
+    port?: number;
+  }) => void,
 ) {
   previewStatusHandler = handler;
 }
@@ -57,36 +78,45 @@ export async function waitForReady(url: string, timeoutMs = 20_000): Promise<voi
 
 function buildCommand(command: string, port: number): string[] {
   const parts = command.split(" ");
-  if (command.includes(" run dev") || command.endsWith(" dev")) {
+  if (command.includes(" run dev") || command.endsWith(" dev") || command.includes("dev:")) {
     return [...parts, "--", "--port", String(port)];
   }
   return parts;
 }
 
 /**
- * Starts a dev server for the given project folder.
- * Watches stdout for the port/URL and resolves once the server is ready.
+ * Start a single named dev server for a project folder.
  */
 export async function startDevServer(
   folderPath: string,
-  devCommand?: string,
-  devPort?: number,
-): Promise<{ url?: string; port: number }> {
-  // Stop any existing preview for this folder
-  const existing = previews.get(folderPath);
+  opts?: {
+    serverId?: string;
+    label?: string;
+    command?: string;
+    port?: number;
+    primary?: boolean;
+  },
+): Promise<{ url?: string; port: number; serverId: string }> {
+  const serverId = opts?.serverId ?? "web";
+  const key = previewKey(folderPath, serverId);
+  const existing = previews.get(key);
   if (existing) {
-    await stopDevServer(folderPath);
+    await stopDevServer(folderPath, serverId);
   }
 
-  const port = devPort ?? 4321;
-  const resolvedPort = await findFreePort(port);
-  const command = devCommand ?? "npm run dev";
+  const preferredPort = opts?.port ?? 4321;
+  const resolvedPort = await findFreePort(preferredPort);
+  const command = opts?.command ?? "npm run dev";
   await ensureWorktreeDependencies(folderPath);
 
-  // Parse the command into shell-compatible parts
   const [cmd, ...args] = buildCommand(command, resolvedPort);
 
-  logger.info("Starting dev server", { folderPath, command, port: resolvedPort });
+  logger.info("Starting dev server", {
+    folderPath,
+    serverId,
+    command,
+    port: resolvedPort,
+  });
 
   const proc = spawn([cmd, ...args], {
     cwd: folderPath,
@@ -100,20 +130,22 @@ export async function startDevServer(
 
   const instance: PreviewInstance = {
     folderPath,
+    serverId,
     process: proc,
     port: resolvedPort,
     url: `http://localhost:${resolvedPort}`,
+    primary: Boolean(opts?.primary ?? serverId === "web"),
   };
 
-  previews.set(folderPath, instance);
+  previews.set(key, instance);
   previewStatusHandler?.({
     folderPath,
+    serverId,
     running: true,
     url: instance.url,
     port: instance.port,
   });
 
-  // Log stderr for debugging
   const decoder = new TextDecoder();
   const reader = proc.stderr.getReader();
   void (async () => {
@@ -122,7 +154,9 @@ export async function startDevServer(
         const { done, value } = await reader.read();
         if (done) break;
         if (value) {
-          logger.debug(`[preview stderr] ${folderPath}`, { msg: decoder.decode(value) });
+          logger.debug(`[preview stderr] ${folderPath}/${serverId}`, {
+            msg: decoder.decode(value),
+          });
         }
       }
     } catch {
@@ -130,58 +164,123 @@ export async function startDevServer(
     }
   })();
 
-  // Handle process exit
   void proc.exited.then((exitCode) => {
-    logger.info("Dev server exited", { folderPath, exitCode });
-    previews.delete(folderPath);
-    previewStatusHandler?.({ folderPath, running: false });
+    logger.info("Dev server exited", { folderPath, serverId, exitCode });
+    previews.delete(key);
+    previewStatusHandler?.({ folderPath, serverId, running: false });
   });
 
   await waitForReady(instance.url);
-  return { url: instance.url, port };
+  return { url: instance.url, port: resolvedPort, serverId };
 }
 
 /**
- * Stops the dev server for a given project folder.
+ * Start all servers from a HERMAN.md / project manifest.
+ * Returns the primary server's URL/port.
  */
-export async function stopDevServer(folderPath: string): Promise<void> {
-  const instance = previews.get(folderPath);
-  if (!instance) return;
-
-  logger.info("Stopping dev server", { folderPath });
-
-  try {
-    instance.process.kill();
-  } catch {
-    // Process may already be dead
+export async function startAllDevServers(
+  folderPath: string,
+  servers: DevServer[],
+): Promise<{ url?: string; port: number; serverId: string }> {
+  if (servers.length === 0) {
+    return startDevServer(folderPath, { serverId: "web", primary: true });
   }
 
-  previews.delete(folderPath);
-  previewStatusHandler?.({ folderPath, running: false });
-}
+  const primary = servers.find((s) => s.primary) ?? servers[0]!;
+  let primaryResult: { url?: string; port: number; serverId: string } | undefined;
 
-/**
- * Returns the current status of a dev server for a project folder.
- */
-export function getDevServerStatus(
-  folderPath: string,
-): { running: boolean; url?: string; port?: number } {
-  const instance = previews.get(folderPath);
-  if (!instance) return { running: false };
+  for (const server of servers) {
+    const result = await startDevServer(folderPath, {
+      serverId: server.id,
+      label: server.label,
+      command: server.command,
+      port: server.port,
+      primary: server.id === primary.id,
+    });
+    if (server.id === primary.id) {
+      primaryResult = result;
+    }
+  }
 
-  return {
-    running: !instance.process.killed,
-    url: instance.url,
-    port: instance.port,
+  return primaryResult ?? {
+    serverId: primary.id,
+    port: primary.port ?? 3000,
   };
 }
 
 /**
- * Stops all running dev servers.
+ * Stops a specific server, or all servers for the folder when serverId omitted.
  */
+export async function stopDevServer(folderPath: string, serverId?: string): Promise<void> {
+  const keys = [...previews.keys()].filter((key) => {
+    if (!key.startsWith(`${folderPath}::`)) return false;
+    if (!serverId) return true;
+    return key === previewKey(folderPath, serverId);
+  });
+
+  for (const key of keys) {
+    const instance = previews.get(key);
+    if (!instance) continue;
+    logger.info("Stopping dev server", {
+      folderPath,
+      serverId: instance.serverId,
+    });
+    try {
+      instance.process.kill();
+    } catch {
+      // Process may already be dead
+    }
+    previews.delete(key);
+    previewStatusHandler?.({
+      folderPath,
+      serverId: instance.serverId,
+      running: false,
+    });
+  }
+}
+
+export function getDevServerStatus(
+  folderPath: string,
+  serverId?: string,
+): {
+  running: boolean;
+  url?: string;
+  port?: number;
+  serverId?: string;
+  servers?: { serverId: string; running: boolean; url?: string; port?: number }[];
+} {
+  const instances = [...previews.values()].filter((p) => p.folderPath === folderPath);
+  if (serverId) {
+    const instance = instances.find((p) => p.serverId === serverId);
+    if (!instance) return { running: false, serverId };
+    return {
+      running: !instance.process.killed,
+      url: instance.url,
+      port: instance.port,
+      serverId: instance.serverId,
+    };
+  }
+
+  const primary =
+    instances.find((p) => p.primary) ?? (instances.length > 0 ? instances[0] : undefined);
+
+  return {
+    running: Boolean(primary && !primary.process.killed),
+    url: primary?.url,
+    port: primary?.port,
+    serverId: primary?.serverId,
+    servers: instances.map((p) => ({
+      serverId: p.serverId,
+      running: !p.process.killed,
+      url: p.url,
+      port: p.port,
+    })),
+  };
+}
+
 export async function stopAllDevServers(): Promise<void> {
-  const paths = [...previews.keys()];
-  for (const path of paths) {
-    await stopDevServer(path);
+  const folders = new Set([...previews.values()].map((p) => p.folderPath));
+  for (const folder of folders) {
+    await stopDevServer(folder);
   }
 }

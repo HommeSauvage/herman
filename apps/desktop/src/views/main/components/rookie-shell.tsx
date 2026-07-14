@@ -4,7 +4,6 @@ import { cn } from "@herman/ui/lib/utils";
 import { LayoutGrid, Settings, Plus, Sparkles, GripVertical } from "lucide-react";
 
 import { useAgentStore } from "../lib/agent-store.js";
-import { createTab } from "../lib/agent-actions.js";
 import { ChatView } from "./chat-view.js";
 import { Composer } from "./composer.js";
 import { ErrorBoundary } from "./error-boundary.js";
@@ -33,6 +32,15 @@ export function RookieShell() {
   );
   const setOnboardingVisible = useAgentStore((s) => s.setOnboardingVisible);
   const setView = useAgentStore((s) => s.setView);
+
+  // Safety net: if view is "session" but there's no valid active tab with a
+  // project, force-redirect to home.
+  const hasValidTab = activeTabId != null && activeTabFolder;
+  useEffect(() => {
+    if (view === "session" && !hasValidTab) {
+      setView("home");
+    }
+  }, [view, hasValidTab, setView]);
 
   const [publishOpen, setPublishOpen] = useState(false);
   const handleOpenPublish = useCallback(() => setPublishOpen(true), []);
@@ -90,19 +98,19 @@ export function RookieShell() {
     setIsDragging(false);
   }, [activeTabId]);
 
-  const hasActiveTab = activeTabId != null;
+  const hasActiveTab = activeTabId != null && activeTabFolder;
   const isEmptySession = tabMessageCount === 0;
 
   // If onboarding is visible, show wizard instead
   if (onboardingVisible) {
     return (
       <OnboardingWizard
-        onComplete={(folderPath) => {
+        onComplete={() => {
           setOnboardingVisible(false);
-          if (folderPath) {
-            void createTab(folderPath);
-            setView("session");
-          }
+        }}
+        onCancel={() => {
+          setOnboardingVisible(false);
+          setView("home");
         }}
       />
     );
@@ -159,7 +167,7 @@ export function RookieShell() {
             </nav>
 
             {/* Content area */}
-            {view === "home" ? (
+            {view === "home" || !hasActiveTab ? (
               <div className="flex flex-col items-center min-w-0 flex-1 overflow-hidden">
                 <RookieHomeView />
               </div>
@@ -171,7 +179,7 @@ export function RookieShell() {
                   className="flex shrink-0 flex-col border-r border-white/[0.06]"
                   style={{ width: `${chatRatio}%` }}
                 >
-                  {hasActiveTab && isEmptySession ? (
+                  {isEmptySession ? (
                     <div className="flex min-h-0 flex-1 flex-col">
                       <div className="flex-1 overflow-hidden">
                         <NewSessionView />

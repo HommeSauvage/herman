@@ -1,68 +1,49 @@
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowRight, ArrowLeft, Check, Sparkles, Loader2, Store, Rocket, Palette, FileText } from "lucide-react";
+import {
+  ArrowRight,
+  Sparkles,
+  Loader2,
+  Store,
+  Rocket,
+  FileText,
+  Check,
+  AlertCircle,
+  Cpu,
+} from "lucide-react";
 import { getLogger } from "@logtape/logtape";
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { TemplateManifest, Question, StyleOption } from "../../../shared/templates.js";
+import { cn } from "@herman/ui/lib/utils";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@herman/ui/components/accordion";
+
+import type { WizardSessionEvent } from "../../../shared/agent-protocol.js";
+import type { GalleryTemplate } from "../../../shared/herman-manifest.js";
+import type { WizardAskEnvelope } from "../../../shared/wizard-protocol.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
+import { ModelSelector } from "./model-selector.js";
+import { WizardQuestions } from "./wizard-questions.js";
 
 const logger = getLogger(["herman-desktop", "view", "onboarding-wizard"]);
 
-type Step = "templates" | "questions" | "style" | "plan" | "building";
+type Step = "templates" | "describe" | "working" | "questions" | "done" | "error" | "retrying";
 
-type OnboardingAnswers = {
-  templateId: string;
-  answers: Record<string, string>;
-  style: string;
-};
-
-const STEP_TITLES: Record<Step, { title: string; subtitle: string }> = {
-  templates: {
-    title: "What do you want to build?",
-    subtitle: "Pick a starting point and we'll handle the rest.",
-  },
-  questions: {
-    title: "Tell us more",
-    subtitle: "The more you share, the better the result.",
-  },
-  style: {
-    title: "Pick a vibe",
-    subtitle: "What style feels right for your project?",
-  },
-  plan: {
-    title: "Here's the plan",
-    subtitle: "We've put together a blueprint for your project.",
-  },
-  building: {
-    title: "Building your project",
-    subtitle: "This will just take a moment…",
-  },
-};
-
-function StepIndicator({ current, total }: { current: number; total: number }) {
-  return (
-    <div className="flex items-center justify-center gap-1.5">
-      {Array.from({ length: total }, (_, i) => (
-        <div
-          key={i}
-          className={`h-1 rounded-full transition-all duration-500 ${
-            i <= current
-              ? "bg-signal w-6"
-              : "bg-white/[0.08] w-2"
-          }`}
-        />
-      ))}
-    </div>
-  );
+function shortModelLabel(modelId?: string): string {
+  if (!modelId) return "Select model";
+  const slash = modelId.indexOf("/");
+  return slash > 0 ? modelId.slice(slash + 1) : modelId;
 }
 
-function StepHeader({ step, stepIndex, totalSteps }: { step: Step; stepIndex: number; totalSteps: number }) {
-  const { title, subtitle } = STEP_TITLES[step];
+function StepHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="text-center">
       <motion.h1
-        key={`title-${step}`}
+        key={`title-${title}`}
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         className="text-text text-2xl font-semibold tracking-tight"
@@ -70,7 +51,7 @@ function StepHeader({ step, stepIndex, totalSteps }: { step: Step; stepIndex: nu
         {title}
       </motion.h1>
       <motion.p
-        key={`subtitle-${step}`}
+        key={`subtitle-${subtitle}`}
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.05 }}
@@ -78,342 +59,390 @@ function StepHeader({ step, stepIndex, totalSteps }: { step: Step; stepIndex: nu
       >
         {subtitle}
       </motion.p>
-      <div className="mt-4">
-        <StepIndicator current={stepIndex} total={totalSteps} />
-      </div>
     </div>
   );
 }
-
-type TemplateCardProps = {
-  template: TemplateManifest;
-  selected: boolean;
-  onSelect: () => void;
-};
 
 const ICON_MAP: Record<string, React.ElementType> = {
   "🏪": Store,
   "🚀": Rocket,
   "📝": FileText,
-  "🎨": Palette,
 };
 
-function TemplateCard({ template, selected, onSelect }: TemplateCardProps) {
-  const IconComp = ICON_MAP[template.icon] ?? Sparkles;
-
+function TemplateListItem({
+  template,
+  selected,
+}: {
+  template: GalleryTemplate;
+  selected: boolean;
+}) {
+  const IconComp = (template.icon ? ICON_MAP[template.icon] : undefined) ?? Sparkles;
   return (
-    <motion.button
-      whileTap={{ scale: 0.97 }}
-      onClick={onSelect}
-      className={`flex flex-col items-center gap-3 rounded-2xl border p-5 text-center transition-all ${
-        selected
-          ? "border-signal/40 bg-signal/5 ring-1 ring-signal/20 shadow-[0_0_24px_rgba(34,197,94,0.08)]"
-          : "border-white/[0.06] bg-white/[0.02] hover:border-white/[0.14] hover:bg-white/[0.04]"
-      }`}
+    <AccordionItem
+      value={template.id}
+      className="border-white/[0.06] data-open:bg-white/[0.04]"
     >
-      <div
-        className={`flex h-14 w-14 items-center justify-center rounded-xl transition-colors ${
-          selected ? "bg-signal/10 text-signal" : "bg-white/[0.04] text-dim"
-        }`}
-      >
-        <IconComp size={26} strokeWidth={1.5} />
-      </div>
-      <div>
-        <div className={`text-sm font-semibold ${selected ? "text-text" : "text-dim"}`}>
-          {template.title}
-        </div>
-        <div className="text-ghost mt-0.5 text-[11px] leading-snug">
-          {template.description}
-        </div>
-      </div>
-    </motion.button>
-  );
-}
-
-type QuestionCardProps = {
-  question: Question;
-  value: string;
-  onChange: (value: string) => void;
-  onNext: () => void;
-  isLast: boolean;
-};
-
-function QuestionCard({ question, value, onChange, onNext, isLast }: QuestionCardProps) {
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    // Auto-focus the input when the question appears
-    const timer = setTimeout(() => inputRef.current?.focus(), 200);
-    return () => clearTimeout(timer);
-  }, [question.id]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey && value.trim()) {
-      e.preventDefault();
-      onNext();
-    }
-  };
-
-  return (
-    <motion.div
-      key={question.id}
-      initial={{ opacity: 0, x: 24 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -24 }}
-      transition={{ type: "spring", stiffness: 400, damping: 30 }}
-      className="w-full"
-    >
-      <label className="text-text mb-3 block text-sm font-medium">
-        {question.question}
-      </label>
-      <textarea
-        ref={inputRef}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={question.placeholder}
-        rows={3}
-        className="text-text placeholder:text-ghost bg-void w-full resize-none rounded-xl border border-white/[0.08] px-4 py-3 text-sm focus:border-signal/40 focus:outline-none focus:ring-1 focus:ring-signal/20 transition"
-      />
-      {question.hint && (
-        <p className="text-ghost mt-1.5 text-[11px]">{question.hint}</p>
-      )}
-      <button
-        onClick={onNext}
-        disabled={!value.trim()}
-        className="bg-signal hover:bg-signal-dim mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground transition active:scale-[0.97] disabled:opacity-40"
-      >
-        {isLast ? "Continue" : "Next"}
-        <ArrowRight size={14} />
-      </button>
-    </motion.div>
-  );
-}
-
-type StylePickerProps = {
-  options: StyleOption[];
-  selected: string;
-  onSelect: (id: string) => void;
-};
-
-function StylePicker({ options, selected, onSelect }: StylePickerProps) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="grid grid-cols-2 gap-3"
-    >
-      {options.map((opt) => (
-        <motion.button
-          key={opt.id}
-          whileTap={{ scale: 0.97 }}
-          onClick={() => onSelect(opt.id)}
-          className={`flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all ${
-            selected === opt.id
-              ? "border-signal/40 bg-signal/5 ring-1 ring-signal/20"
-              : "border-white/[0.06] bg-white/[0.02] hover:border-white/[0.14] hover:bg-white/[0.04]"
-          }`}
-        >
-          <span className="text-2xl">{opt.icon}</span>
-          <span className={`text-sm font-medium ${selected === opt.id ? "text-text" : "text-dim"}`}>
-            {opt.title}
+      <AccordionTrigger className="px-4 py-3.5 hover:no-underline">
+        <IconComp
+          size={20}
+          strokeWidth={1.5}
+          className={cn(
+            "mt-0.5 shrink-0 transition-colors",
+            selected ? "text-signal" : "text-dim",
+          )}
+        />
+        <div className="flex flex-1 flex-col items-start gap-0.5 text-left">
+          <span className={cn("text-sm font-medium", selected ? "text-text" : "text-dim")}>
+            {template.name}
           </span>
-          <span className="text-ghost text-[10px] leading-snug">{opt.description}</span>
-        </motion.button>
-      ))}
-    </motion.div>
+          <span className="text-dim text-xs leading-relaxed">{template.description}</span>
+        </div>
+      </AccordionTrigger>
+      {template.extendedDescription && (
+        <AccordionContent className="text-ghost pl-8 text-xs leading-relaxed">
+          {template.extendedDescription}
+        </AccordionContent>
+      )}
+    </AccordionItem>
   );
 }
 
-type PlanViewProps = {
-  template: TemplateManifest;
-  answers: OnboardingAnswers;
-  onConfirm: () => void;
-  isBuilding: boolean;
-};
-
-function PlanView({ template, answers, onConfirm, isBuilding }: PlanViewProps) {
-  const styleOpt = template.styleOptions.find((s) => s.id === answers.style);
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="w-full max-w-md"
-    >
-      <div className="bg-void rounded-2xl border border-white/[0.08] p-5">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="bg-signal/10 text-signal flex h-10 w-10 items-center justify-center rounded-xl">
-            <Sparkles size={18} strokeWidth={1.5} />
-          </div>
-          <div>
-            <div className="text-text text-sm font-semibold">{template.title}</div>
-            <div className="text-ghost text-[11px]">
-              {styleOpt?.icon} {styleOpt?.title ?? "Custom"} style
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="text-dim text-xs font-medium tracking-wider uppercase">
-            What we&apos;ll build
-          </div>
-          {template.features.map((feature, i) => (
-            <div key={i} className="flex items-start gap-2.5 text-sm">
-              <Check size={14} className="text-signal mt-0.5 shrink-0" />
-              <span className="text-dim">{feature}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="bg-white/[0.02] mt-4 rounded-xl border border-white/[0.04] p-3">
-          <div className="text-ghost text-[10px] font-medium tracking-wider uppercase mb-1">
-            Tech
-          </div>
-          <div className="text-dim text-xs">
-            Astro + Tailwind CSS · Deployed to Cloudflare Pages
-          </div>
-        </div>
-      </div>
-
-      <button
-        onClick={onConfirm}
-        disabled={isBuilding}
-        className="bg-signal hover:bg-signal-dim mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[0_0_24px_rgba(34,197,94,0.18)] transition hover:shadow-[0_0_32px_rgba(34,197,94,0.28)] active:scale-[0.97] disabled:opacity-60"
-      >
-        {isBuilding ? (
-          <>
-            <Loader2 size={16} className="animate-spin" />
-            Creating project…
-          </>
-        ) : (
-          <>
-            <Sparkles size={16} />
-            Start Building
-          </>
-        )}
-      </button>
-    </motion.div>
-  );
-}
-
-export function OnboardingWizard({ onComplete }: { onComplete: (folderPath: string) => void }) {
+export function OnboardingWizard({
+  onComplete,
+  onCancel,
+}: {
+  onComplete: () => void;
+  onCancel: () => void;
+}) {
   const [step, setStep] = useState<Step>("templates");
-  const [templates, setTemplates] = useState<TemplateManifest[]>([]);
+  const [templates, setTemplates] = useState<GalleryTemplate[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateManifest | null>(null);
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [selectedStyle, setSelectedStyle] = useState<string>("");
-  const [isBuilding, setIsBuilding] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<GalleryTemplate | null>(null);
+  const [description, setDescription] = useState("");
   const [templateError, setTemplateError] = useState<string | null>(null);
-  const setMode = useAgentStore((s) => s.setMode);
+  const [wizardError, setWizardError] = useState<string | null>(null);
 
-  // Load templates on mount
+  // Wizard session state.
+  const [wizardSessionId, setWizardSessionId] = useState<string | null>(null);
+  const [progressLines, setProgressLines] = useState<string[]>([]);
+  const [envelope, setEnvelope] = useState<WizardAskEnvelope | null>(null);
+  const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
+  const [projectPath, setProjectPath] = useState<string | null>(null);
+  // Retry state.
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [retryMax, setRetryMax] = useState(20);
+  const [retryError, setRetryError] = useState<string | undefined>(undefined);
+
+  const currentModel = useAgentStore((s) => s.wizard.currentModel);
+  const setModelSelectorOpen = useAgentStore((s) => s.setModelSelectorOpen);
+  const setWizardActive = useAgentStore((s) => s.setWizardActive);
+  const setWizardCurrentModel = useAgentStore((s) => s.setWizardCurrentModel);
+  const setWizardSessionIdStore = useAgentStore((s) => s.setWizardSessionId);
+  const setModelCatalog = useAgentStore((s) => s.setModelCatalog);
+  const clearWizardState = useAgentStore((s) => s.clearWizardState);
+
+  // Refs so the wizardEvent listener (registered once) can read/act on latest state.
+  const stepRef = useRef<Step>(step);
+  stepRef.current = step;
+  const sessionRef = useRef<string | null>(null);
+  sessionRef.current = wizardSessionId;
+
+  // Activate wizard context and seed the shared model catalog from the same
+  // sources chat uses (tab models_sync → catalog, else Herman cache).
   useEffect(() => {
-    desktopRpc.request.getTemplates().then((t) => {
-      setTemplates(t);
-      setIsLoadingTemplates(false);
-    }).catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error("Failed to load templates", { error: msg });
-      setTemplateError(msg);
-      setIsLoadingTemplates(false);
-    });
-  }, []);
+    setWizardActive(true);
+    const store = useAgentStore.getState();
 
-  const totalSteps = 4;
-
-  const stepOrder: Step[] = ["templates", "questions", "style", "plan"];
-  const stepIndex = stepOrder.indexOf(step);
-
-  const handleTemplateSelect = useCallback((template: TemplateManifest) => {
-    setSelectedTemplate(template);
-    setSelectedStyle(template.styleOptions[0]?.id ?? "");
-    setAnswers({});
-    setQuestionIndex(0);
-  }, []);
-
-  const handleTemplateConfirm = useCallback(() => {
-    if (selectedTemplate) {
-      setStep("questions");
+    const fromTabs = new Set<string>();
+    for (const tab of Object.values(store.tabs)) {
+      for (const modelId of tab.availableModels) fromTabs.add(modelId);
     }
-  }, [selectedTemplate]);
-
-  const handleQuestionAnswer = useCallback((value: string) => {
-    if (!selectedTemplate) return;
-    const q = selectedTemplate.questions[questionIndex];
-    setAnswers((prev) => ({ ...prev, [q.id]: value }));
-
-    if (questionIndex < selectedTemplate.questions.length - 1) {
-      setQuestionIndex((prev) => prev + 1);
-    } else {
-      setStep("style");
+    if (fromTabs.size > 0) {
+      setModelCatalog(Array.from(fromTabs), { merge: true });
     }
-  }, [selectedTemplate, questionIndex]);
 
-  const handleStyleSelect = useCallback((styleId: string) => {
-    setSelectedStyle(styleId);
-  }, []);
+    const catalog = useAgentStore.getState().modelCatalog.availableModels;
+    const preferred =
+      store.settings.models.defaultModel &&
+      catalog.includes(store.settings.models.defaultModel)
+        ? store.settings.models.defaultModel
+        : store.wizard.currentModel && catalog.includes(store.wizard.currentModel)
+          ? store.wizard.currentModel
+          : catalog[0];
+    if (preferred) setWizardCurrentModel(preferred);
 
-  const handleStyleConfirm = useCallback(() => {
-    setStep("plan");
-  }, [selectedStyle]);
+    if (catalog.length === 0) {
+      void desktopRpc.request
+        .getHermanModelsCache()
+        .then((result) => {
+          if (result.models.length === 0) return;
+          setModelCatalog(result.models, { merge: true });
+          const next = useAgentStore.getState();
+          if (!next.wizard.currentModel) {
+            const pick =
+              next.settings.models.defaultModel &&
+              result.models.includes(next.settings.models.defaultModel)
+                ? next.settings.models.defaultModel
+                : result.models[0];
+            if (pick) setWizardCurrentModel(pick);
+          }
+        })
+        .catch((err) => {
+          logger.warning("Failed to seed models from Herman cache", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+    }
 
-  const handleBuild = useCallback(async () => {
-    if (!selectedTemplate) return;
-    setIsBuilding(true);
+    return () => {
+      clearWizardState();
+    };
+  }, [
+    setWizardActive,
+    setWizardCurrentModel,
+    setModelCatalog,
+    clearWizardState,
+  ]);
 
-    try {
-      // Generate a project name from the answers
-      const businessName = answers["name"] ?? answers["business"] ?? answers["product"] ?? answers["topic"] ?? "my-project";
-      const projectName = businessName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
-
-      const { folderPath } = await desktopRpc.request.createProjectFromTemplate({
-        templateId: selectedTemplate.id,
-        projectName,
+  useEffect(() => {
+    desktopRpc.request
+      .getGalleryTemplates()
+      .then((t) => {
+        setTemplates(t);
+        setIsLoadingTemplates(false);
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error("Failed to load templates", { error: msg });
+        setTemplateError(msg);
+        setIsLoadingTemplates(false);
       });
+  }, []);
 
-      setStep("building");
+  // ── Subscribe to wizard events for the active session ──────────────────────
+  const handleWizardEvent = useCallback(
+    (payload: { event: WizardSessionEvent }) => {
+      const event = payload.event;
 
-      // Small delay for the building animation
-      await new Promise((r) => setTimeout(r, 600));
+      // Catalog updates are global — accept even before React has the session id
+      // (models_sync can fire during start before startWizardSession returns).
+      if (event.type === "wizard_models") {
+        useAgentStore.getState().setModelCatalog(event.models);
+        if (event.currentModel && !useAgentStore.getState().wizard.currentModel) {
+          useAgentStore.getState().setWizardCurrentModel(event.currentModel);
+        }
+        return;
+      }
 
-      onComplete(folderPath);
+      // Only handle other events for the active wizard session.
+      if (sessionRef.current && event.wizardSessionId !== sessionRef.current) return;
+
+      switch (event.type) {
+        case "wizard_progress": {
+          setProgressLines((prev) => {
+            const next = [...prev, event.text];
+            return next.slice(-50);
+          });
+          break;
+        }
+        case "wizard_request": {
+          setPendingRequestId(event.requestId);
+          setEnvelope(event.envelope);
+          setStep("questions");
+          break;
+        }
+        case "wizard_complete": {
+          setProjectPath(event.projectPath);
+          setStep("done");
+          break;
+        }
+        case "wizard_retrying": {
+          setRetryAttempt(event.attempt);
+          setRetryMax(event.maxRetries);
+          setRetryError(event.error);
+          setStep("retrying");
+          break;
+        }
+        case "wizard_end": {
+          if (event.error) {
+            setWizardError(event.error);
+            setStep("error");
+          } else if (!projectPathRef.current) {
+            // Agent ended without completing — treat as error.
+            setWizardError("Setup ended before finishing.");
+            setStep("error");
+          }
+          // Reset retry state on terminal event.
+          setRetryAttempt(0);
+          break;
+        }
+      }
+    },
+    [],
+  );
+
+  // projectPath ref for the closure above.
+  const projectPathRef = useRef<string | null>(null);
+  projectPathRef.current = projectPath;
+
+  useEffect(() => {
+    desktopRpc.addMessageListener("wizardEvent", handleWizardEvent);
+    return () => {
+      desktopRpc.removeMessageListener("wizardEvent", handleWizardEvent);
+    };
+  }, [handleWizardEvent]);
+
+  // ── Start the wizard session when the user finishes describing ─────────────
+  const handleDescribeContinue = useCallback(async () => {
+    if (!selectedTemplate || !description.trim()) return;
+    setWizardError(null);
+    setRetryAttempt(0);
+    setRetryError(undefined);
+    setProgressLines([]);
+    setEnvelope(null);
+    setProjectPath(null);
+    setWizardSessionId(null);
+    setWizardSessionIdStore(undefined);
+    setStep("working");
+    const modelId = useAgentStore.getState().wizard.currentModel;
+    try {
+      const { wizardSessionId: id } = await desktopRpc.request.startWizardSession({
+        templateId: selectedTemplate.id,
+        description: description.trim(),
+        ...(modelId ? { modelId } : {}),
+      });
+      setWizardSessionId(id);
+      setWizardSessionIdStore(id);
+      // Re-sync in case the user changed the model while start was in flight.
+      const latestModel = useAgentStore.getState().wizard.currentModel;
+      if (latestModel && latestModel !== modelId) {
+        void desktopRpc.request.setWizardModel({ wizardSessionId: id, modelId: latestModel });
+      }
     } catch (err) {
-      logger.error("Failed to create project from template", {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error("Failed to start wizard session", { error: msg });
+      setWizardError(msg);
+      setStep("error");
+    }
+  }, [selectedTemplate, description, setWizardSessionIdStore]);
+
+  // ── Submit answers to a wizard question batch ──────────────────────────────
+  const handleAnswersSubmit = useCallback(
+    (answers: { id: string; value: string; values?: string[] }[]) => {
+      if (!wizardSessionId || !pendingRequestId) return;
+      setEnvelope(null);
+      setPendingRequestId(null);
+      setStep("working");
+      void desktopRpc.request.respondWizardQuestions({
+        wizardSessionId,
+        requestId: pendingRequestId,
+        answers,
+      });
+    },
+    [wizardSessionId, pendingRequestId],
+  );
+
+  const handleQuestionsCancel = useCallback(() => {
+    if (!wizardSessionId) return;
+    void desktopRpc.request.cancelWizard({ wizardSessionId });
+    setWizardSessionId(null);
+    setWizardSessionIdStore(undefined);
+    setEnvelope(null);
+    setPendingRequestId(null);
+    setStep("describe");
+  }, [wizardSessionId, setWizardSessionIdStore]);
+
+  // ── Adopt the finished session as a project tab ────────────────────────────
+  const handleDone = useCallback(async () => {
+    if (!projectPath || !wizardSessionId) {
+      onComplete();
+      return;
+    }
+    try {
+      await desktopRpc.request.adoptWizardSession({
+        projectPath,
+        wizardSessionId,
+      });
+    } catch (err) {
+      logger.error("Failed to adopt wizard session", {
         error: err instanceof Error ? err.message : String(err),
       });
-      setIsBuilding(false);
+      // Fall back to opening the project folder directly if adoption fails.
     }
-  }, [selectedTemplate, answers, onComplete]);
+    onComplete();
+  }, [projectPath, wizardSessionId, onComplete]);
+
+  const handleRetryFromError = useCallback(() => {
+    setWizardError(null);
+    setRetryAttempt(0);
+    setRetryError(undefined);
+    setWizardSessionId(null);
+    setWizardSessionIdStore(undefined);
+    setEnvelope(null);
+    setPendingRequestId(null);
+    setProjectPath(null);
+    setProgressLines([]);
+    setStep("describe");
+  }, [setWizardSessionIdStore]);
 
   const handleSkipOnboarding = useCallback(() => {
-    // Switch to normal mode and skip onboarding
-    setMode("normal");
-    desktopRpc.request.getSettings().then((settings) => {
-      void desktopRpc.request.saveSettings({ settings: { ...settings, mode: "normal" } });
-    });
-    onComplete("");
-  }, [setMode, onComplete]);
+    if (wizardSessionId) {
+      void desktopRpc.request.cancelWizard({ wizardSessionId });
+    }
+    onCancel();
+  }, [onCancel, wizardSessionId]);
 
   if (isLoadingTemplates) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4">
+      <div className="relative flex h-full flex-col items-center justify-center gap-4">
         <Loader2 size={24} className="text-signal animate-spin" />
         <p className="text-dim text-sm">Loading templates…</p>
+        <ModelSelector />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="shrink-0 px-6 pt-8 pb-4">
-        <StepHeader step={step} stepIndex={stepIndex} totalSteps={totalSteps} />
+    <div className="relative flex h-full flex-col">
+      <div className="absolute top-4 right-4 z-10">
+        <button
+          type="button"
+          aria-label="Change model"
+          onClick={() => setModelSelectorOpen(true)}
+          className="text-ghost hover:text-text flex max-w-[220px] items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition hover:bg-white/[0.04]"
+        >
+          <Cpu size={12} className="shrink-0" />
+          <span className="truncate">{shortModelLabel(currentModel)}</span>
+        </button>
       </div>
 
-      {/* Content */}
+      <div className="shrink-0 px-6 pt-8 pb-4">
+        {step === "templates" && (
+          <StepHeader
+            title="What do you want to build?"
+            subtitle="Pick a starting point and we'll handle the rest."
+          />
+        )}
+        {step === "describe" && (
+          <StepHeader
+            title="Describe what you're building"
+            subtitle="The more detail you share, the better we can set things up."
+          />
+        )}
+        {step === "working" && (
+          <StepHeader title="Setting up your project" subtitle="The agent is on it — this takes a moment." />
+        )}
+        {step === "questions" && <StepHeader title="A few questions" subtitle="Only the bits we still need." />}
+        {step === "done" && <StepHeader title="Your project is ready" subtitle="Let's open it up." />}
+        {step === "error" && <StepHeader title="Something went wrong" subtitle="You can try again." />}
+        {step === "retrying" && (
+          <StepHeader
+            title="Reconnecting…"
+            subtitle={`The connection to the agent was lost. Retrying (${retryAttempt}/${retryMax})…`}
+          />
+        )}
+      </div>
+
       <div className="flex flex-1 flex-col items-center justify-center px-6 pb-8">
         <AnimatePresence mode="wait">
           {step === "templates" && (
@@ -429,18 +458,26 @@ export function OnboardingWizard({ onComplete }: { onComplete: (folderPath: stri
                   Failed to load templates: {templateError}
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-3 mb-6">
+              <Accordion
+                value={selectedTemplate ? [selectedTemplate.id] : []}
+                onValueChange={(values) => {
+                  const nextId = values[0];
+                  setSelectedTemplate(
+                    nextId ? templates.find((t) => t.id === nextId) ?? null : null,
+                  );
+                }}
+                className="border-white/[0.08] bg-white/[0.02] mb-6 max-h-[360px] overflow-y-auto"
+              >
                 {templates.map((t) => (
-                  <TemplateCard
+                  <TemplateListItem
                     key={t.id}
                     template={t}
                     selected={selectedTemplate?.id === t.id}
-                    onSelect={() => handleTemplateSelect(t)}
                   />
                 ))}
-              </div>
+              </Accordion>
               <button
-                onClick={handleTemplateConfirm}
+                onClick={() => selectedTemplate && setStep("describe")}
                 disabled={!selectedTemplate}
                 className="bg-signal hover:bg-signal-dim flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-primary-foreground transition active:scale-[0.97] disabled:opacity-40"
               >
@@ -450,86 +487,170 @@ export function OnboardingWizard({ onComplete }: { onComplete: (folderPath: stri
             </motion.div>
           )}
 
-          {step === "questions" && selectedTemplate && (
-            <div className="w-full max-w-md">
-              <AnimatePresence mode="wait">
-                <QuestionCard
-                  key={selectedTemplate.questions[questionIndex].id}
-                  question={selectedTemplate.questions[questionIndex]}
-                  value={answers[selectedTemplate.questions[questionIndex].id] ?? ""}
-                  onChange={(val) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      [selectedTemplate.questions[questionIndex].id]: val,
-                    }))
-                  }
-                  onNext={() =>
-                    handleQuestionAnswer(
-                      answers[selectedTemplate.questions[questionIndex].id] ?? "",
-                    )
-                  }
-                  isLast={questionIndex === selectedTemplate.questions.length - 1}
-                />
-              </AnimatePresence>
-            </div>
-          )}
-
-          {step === "style" && selectedTemplate && (
-            <div className="w-full max-w-md">
-              <StylePicker
-                options={selectedTemplate.styleOptions}
-                selected={selectedStyle}
-                onSelect={handleStyleSelect}
+          {step === "describe" && (
+            <motion.div
+              key="describe"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              className="w-full max-w-md"
+            >
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="e.g. A blog about home cooking with recipes, photos, and weekly tips for beginners…"
+                rows={5}
+                className="text-text placeholder:text-ghost bg-void w-full resize-none rounded-xl border border-white/[0.08] px-4 py-3 text-sm transition focus:border-signal/40 focus:outline-none focus:ring-1 focus:ring-signal/20"
+                autoFocus
               />
               <button
-                onClick={handleStyleConfirm}
-                className="bg-signal hover:bg-signal-dim mt-6 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground transition active:scale-[0.97]"
+                onClick={handleDescribeContinue}
+                disabled={!description.trim()}
+                className="bg-signal hover:bg-signal-dim mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground transition active:scale-[0.97] disabled:opacity-40"
               >
                 Continue
                 <ArrowRight size={14} />
               </button>
-            </div>
+            </motion.div>
           )}
 
-          {step === "plan" && selectedTemplate && (
-            <PlanView
-              template={selectedTemplate}
-              answers={{
-                templateId: selectedTemplate.id,
-                answers,
-                style: selectedStyle,
-              }}
-              onConfirm={handleBuild}
-              isBuilding={isBuilding}
+          {step === "working" && (
+            <motion.div
+              key="working"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="w-full max-w-md"
+            >
+              <div className="flex flex-col items-center gap-4">
+                <div className="bg-signal/10 text-signal flex h-14 w-14 items-center justify-center rounded-2xl">
+                  <Loader2 size={24} className="animate-spin" />
+                </div>
+                <ProgressLog lines={progressLines} />
+              </div>
+            </motion.div>
+          )}
+
+          {step === "retrying" && (
+            <motion.div
+              key="retrying"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="w-full max-w-md"
+            >
+              <div className="flex flex-col items-center gap-4">
+                {/* Orange / amber warning icon */}
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
+                  <Loader2 size={24} className="animate-spin" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-medium text-amber-300">
+                    Connection lost — retrying
+                  </p>
+                  <p className="text-dim mt-1 text-xs">
+                    Attempt {retryAttempt} of {retryMax}
+                    {retryError && (
+                      <span className="text-ghost mt-0.5 block truncate">
+                        {retryError}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <ProgressLog lines={progressLines} />
+              </div>
+            </motion.div>
+          )}
+
+          {step === "questions" && envelope && (
+            <WizardQuestions
+              envelope={envelope}
+              onSubmit={handleAnswersSubmit}
+              onCancel={handleQuestionsCancel}
             />
           )}
 
-          {step === "building" && (
+          {step === "done" && (
             <motion.div
+              key="done"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="flex flex-col items-center gap-4"
+              className="w-full max-w-md"
             >
-              <div className="bg-signal/10 text-signal flex h-16 w-16 items-center justify-center rounded-2xl">
-                <Loader2 size={28} className="animate-spin" />
+              <div className="bg-void mb-5 rounded-2xl border border-white/[0.08] p-5">
+                <div className="flex items-center gap-3">
+                  <div className="bg-signal/10 text-signal flex h-10 w-10 items-center justify-center rounded-xl">
+                    <Check size={18} strokeWidth={2} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-text text-sm font-semibold">
+                      {selectedTemplate?.name ?? "Project"}
+                    </div>
+                    {projectPath && (
+                      <div className="text-ghost truncate text-[11px]">{projectPath}</div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <p className="text-dim text-sm">Setting up your project…</p>
+              <ProgressLog lines={progressLines} />
+              <button
+                onClick={handleDone}
+                className="bg-signal hover:bg-signal-dim mt-5 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[0_0_24px_rgba(34,197,94,0.18)] transition active:scale-[0.97]"
+              >
+                <Sparkles size={16} />
+                Open Project
+              </button>
+            </motion.div>
+          )}
+
+          {step === "error" && (
+            <motion.div
+              key="error"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="w-full max-w-md"
+            >
+              <div className="mb-4 flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-400">
+                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                <span className="leading-relaxed">{wizardError ?? "Unknown error."}</span>
+              </div>
+              <button
+                onClick={handleRetryFromError}
+                className="bg-signal hover:bg-signal-dim flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground transition active:scale-[0.97]"
+              >
+                Try again
+                <ArrowRight size={14} />
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Bottom skip link */}
       {step === "templates" && (
         <div className="shrink-0 pb-6 text-center">
           <button
             onClick={handleSkipOnboarding}
             className="text-ghost hover:text-dim text-xs transition"
           >
-            I know what I&apos;m doing — take me to Normal Mode
+            Cancel
           </button>
         </div>
       )}
+
+      <ModelSelector />
+    </div>
+  );
+}
+
+function ProgressLog({ lines }: { lines: string[] }) {
+  if (lines.length === 0) return null;
+  return (
+    <div className="bg-void w-full rounded-xl border border-white/[0.06] px-4 py-3">
+      <div className="max-h-32 space-y-1 overflow-y-auto">
+        {lines.map((line, i) => (
+          <div key={i} className="text-ghost text-[11px] leading-relaxed">
+            {line}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

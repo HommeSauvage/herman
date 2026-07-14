@@ -7,8 +7,8 @@ import { useShallow } from "zustand/react/shallow";
 
 import { refreshHermanModels, selectModel } from "../lib/agent-actions.js";
 import { useAgentStore } from "../lib/agent-store.js";
+import { desktopRpc } from "../lib/desktop-rpc.js";
 
-const EMPTY_MODELS: string[] = [];
 const EMPTY_HIDDEN_MODELS: string[] = []; // stable fallback for useShallow selector
 const HERMAN_PROVIDER_ID = 'herman';
 
@@ -69,13 +69,16 @@ function sortModelsHermanFirst(models: string[]): string[] {
 export function ModelSelector() {
   const open = useAgentStore((s) => s.ui.modelSelectorOpen);
   const setModelSelectorOpen = useAgentStore((s) => s.setModelSelectorOpen);
-  const { tabId, models, currentModel, hiddenModels, settings } = useAgentStore(
+  const { tabId, models, currentModel, hiddenModels, settings, wizardActive } = useAgentStore(
     useShallow((s) => {
+      const wizardMode = s.wizard.active || s.onboardingVisible;
       const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
       return {
         tabId: tab?.id,
-        models: tab?.availableModels ?? EMPTY_MODELS,
-        currentModel: tab?.currentModel,
+        wizardActive: wizardMode,
+        // Always the same shared catalog for chat and wizard.
+        models: s.modelCatalog.availableModels,
+        currentModel: wizardMode ? s.wizard.currentModel : tab?.currentModel,
         hiddenModels: s.settings.models.hiddenModels ?? EMPTY_HIDDEN_MODELS,
         settings: s.settings,
       };
@@ -121,14 +124,13 @@ export function ModelSelector() {
       setSearch("");
       setFocusedIndex(-1);
       inputRef.current?.focus();
-      // Refresh Herman models each time the selector opens. The refresh is
-      // silent (no loading UI); the updated herman/models_sync event will
-      // update the list if the server is now reachable.
+      // Same refresh path for chat and wizard: ask a running tab agent to
+      // re-sync models. The catalog updates via models_sync.
       if (tabId && settings.providers.herman.enabled) {
         void refreshHermanModels(tabId);
       }
     }
-  }, [open]);
+  }, [open, tabId, settings.providers.herman.enabled]);
 
   function handleOverlayKeyDown(event: React.KeyboardEvent) {
     if (event.key === "Escape") {
@@ -184,6 +186,31 @@ export function ModelSelector() {
   }, [search]);
 
   async function handleSelect(modelId: string) {
+    if (wizardActive) {
+      const store = useAgentStore.getState();
+      store.setWizardCurrentModel(modelId);
+      setModelSelectorOpen(false);
+
+      // Persist as the user's default model for future sessions/wizards.
+      const next = {
+        ...store.settings,
+        models: { ...store.settings.models, defaultModel: modelId },
+      };
+      store.setSettings(next);
+      void desktopRpc.request.saveSettings({ settings: next }).catch(() => {
+        // Best-effort persistence.
+      });
+
+      // Apply mid-session if the wizard agent is already running.
+      const sessionId = store.wizard.sessionId;
+      if (sessionId) {
+        void desktopRpc.request.setWizardModel({ wizardSessionId: sessionId, modelId }).catch(() => {
+          // Best-effort: selection still sticks in the UI.
+        });
+      }
+      return;
+    }
+
     if (!tabId) return;
     // Optimistically update the UI so the model changes immediately.
     // The async models_sync event will confirm it later.

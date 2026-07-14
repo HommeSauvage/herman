@@ -1,37 +1,40 @@
 {
-  "name": "@herman/agent",
-  "version": "0.0.1",
-  "private": true,
-  "bin": {
-    "herman": "dist/cli.js"
-  },
-  "type": "module",
-  "exports": {
-    "./protected-keys": "./src/protected-keys.ts"
-  },
-  "scripts": {
-    "build": "rm -rf dist && bun build src/cli.ts --outdir dist --target bun --minify && mkdir -p dist/modes/interactive/theme && cp src/modes/interactive/theme/dark.json dist/modes/interactive/theme/dark.json && cp src/modes/interactive/theme/light.json dist/modes/interactive/theme/light.json",
-    "dev": "bun run --watch src/cli.ts",
-    "test": "bun test test",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@bacnh85/pi-fff": "^0.7.0",
-    "@earendil-works/pi-agent-core": "catalog:",
-    "@earendil-works/pi-coding-agent": "catalog:",
-    "@herman/pi-context-reporter": "workspace:*",
-    "@herman/rpc": "workspace:*",
-    "@logtape/logtape": "catalog:",
-    "@logtape/pretty": "catalog:",
-    "@logtape/redaction": "catalog:",
-    "arkenv": "catalog:",
-    "arktype": "catalog:",
-    "pi-rewind": "^0.5.0"
-  },
-  "devDependencies": {
-    "@herman/tsconfig": "workspace:*",
-    "@types/bun": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
-  }
+	"name": "@herman/agent",
+	"version": "0.0.1",
+	"private": true,
+	"bin": {
+		"herman": "dist/cli.js"
+	},
+	"type": "module",
+	"exports": {
+		"./protected-keys": "./src/protected-keys.ts"
+	},
+	"scripts": {
+		"build": "rm -rf dist && bun build src/cli.ts --outdir dist --target bun --minify && mkdir -p dist/modes/interactive/theme && cp src/modes/interactive/theme/dark.json dist/modes/interactive/theme/dark.json && cp src/modes/interactive/theme/light.json dist/modes/interactive/theme/light.json",
+		"dev": "bun run --watch src/cli.ts",
+		"test": "bun test test",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@bacnh85/pi-fff": "^0.7.0",
+		"@earendil-works/pi-agent-core": "catalog:",
+		"@earendil-works/pi-coding-agent": "catalog:",
+		"@herman/pi-context-reporter": "workspace:*",
+		"@herman/rpc": "workspace:*",
+		"@logtape/logtape": "catalog:",
+		"@logtape/pretty": "catalog:",
+		"@logtape/redaction": "catalog:",
+		"arkenv": "catalog:",
+		"arktype": "catalog:",
+		"pi-rewind": "^0.5.0",
+		"typebox": "catalog:",
+		"@earendil-works/pi-ai": "catalog:",
+		"@earendil-works/pi-tui": "catalog:"
+	},
+	"devDependencies": {
+		"@herman/tsconfig": "workspace:*",
+		"@types/bun": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
 }

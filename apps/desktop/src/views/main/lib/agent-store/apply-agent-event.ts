@@ -67,8 +67,12 @@ export function applyAgentEvent(
       }
       // Clear transient connection errors and retry state — the
       // agent has recovered and is starting a new turn.
-      if (next.connectionError || next.retryState) {
-        withPatch({ connectionError: undefined, retryState: undefined });
+      if (next.connectionError || next.retryState || next.connectionErrorDismissed) {
+        withPatch({
+          connectionError: undefined,
+          connectionErrorDismissed: undefined,
+          retryState: undefined,
+        });
       }
       break;
     }

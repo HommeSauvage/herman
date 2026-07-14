@@ -57,6 +57,7 @@ function createBrowserRpc(): DesktopRpc {
     activationComplete: [],
     previewStatusChanged: [],
     updateStatus: [],
+    wizardEvent: [],
   };
 
   ws.addEventListener("open", async () => {
@@ -230,19 +231,28 @@ function createBrowserRpc(): DesktopRpc {
       cancelOAuthLogin: async () => {},
       getAvailableProviders: async () => [] as ProviderMetadata[],
       refreshHermanModels: async () => {},
+      getHermanModelsCache: async () => ({ models: [] }),
       getTemplates: async () => [],
-      createProjectFromTemplate: async ({ templateId, projectName }: { templateId: string; projectName: string }) => ({
-        folderPath: `/tmp/herman/${projectName}`,
-      }),
+      getGalleryTemplates: async () => [],
+      resolveTemplateManifest: async () => {
+        throw new Error("Unavailable in browser mock");
+      },
+      checkTemplateRequirements: async () => ({ results: [] }),
+      startWizardSession: async () => ({ wizardSessionId: "mock-wizard" }),
+      setWizardModel: async () => {},
+      respondWizardQuestions: async () => {},
+      cancelWizard: async () => {},
+      adoptWizardSession: async ({ projectPath }) => createTab(projectPath),
       getSessionChanges: async () => ({ isWorktree: false, changedFiles: 0, canApply: false }),
       applySession: async () => ({ status: "error" as const, error: "Unavailable in browser mock" }),
       discardSession: async () => {},
       startPreview: async ({ folderPath }: { folderPath: string }) => ({
         url: `http://localhost:4321`,
         port: 4321,
+        serverId: "web",
       }),
       stopPreview: async () => {},
-      restartPreview: async () => ({ url: `http://localhost:4321`, port: 4321 }),
+      restartPreview: async () => ({ url: `http://localhost:4321`, port: 4321, serverId: "web" }),
       getPreviewStatus: async () => ({ running: false }),
       getProjectManifest: async () => undefined,
       getSkills: async () => ({ skills: [] }),

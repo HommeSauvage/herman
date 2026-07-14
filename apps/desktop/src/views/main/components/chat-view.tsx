@@ -6,7 +6,6 @@ import type { Message } from "../../../shared/rpc.js";
 import { useAutoScroll } from "../hooks/use-auto-scroll.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { useIsHermanProvider } from "../lib/model-utils.js";
-import { ConnectionErrorBanner } from "./connection-error-banner.js";
 import { EmptyState, HydrationPendingState } from "./empty-state.js";
 import { ErrorBanner } from "./error-banner.js";
 import { MessageList } from "./message-list.js";
@@ -32,6 +31,7 @@ export function ChatView() {
     isThinking,
     connectionState,
     connectionError,
+    connectionErrorDismissed,
     retryState,
     messagesHydrationStatus,
     revertEnabled,
@@ -47,6 +47,7 @@ export function ChatView() {
         isThinking: tab?.isThinking ?? false,
         connectionState: tab?.connectionState ?? "idle",
         connectionError: tab?.connectionError,
+        connectionErrorDismissed: tab?.connectionErrorDismissed,
         retryState: tab?.retryState,
         revertEnabled: s.settings.mode === "rookie",
       };
@@ -62,27 +63,19 @@ export function ChatView() {
   const handleDismissError = useCallback(() => {
     if (!activeTabId) return;
     updateTab(activeTabId, {
-      connectionError: undefined,
+      // Mark the current error as dismissed instead of clearing it. This
+      // prevents the polling fallback from immediately restoring it.
+      connectionErrorDismissed: connectionError,
       retryState: undefined,
     });
-  }, [activeTabId, updateTab]);
+  }, [activeTabId, connectionError, updateTab]);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isThinking, scrollToBottom]);
+  }, [messages, isThinking, connectionError, retryState, scrollToBottom]);
 
   return (
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
-      {/* Connection error banner — always visible above the scroll area */}
-      {activeTabId && (
-        <ConnectionErrorBanner
-          tabId={activeTabId}
-          connectionState={connectionState}
-          connectionError={connectionError}
-          retryState={retryState}
-          onDismiss={handleDismissError}
-        />
-      )}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <ProgressBar />
         {isHermanProvider && (
@@ -90,21 +83,6 @@ export function ChatView() {
             <ThinkingBanner />
           </div>
         )}
-        {/* Inline error banner — visible inside the message flow */}
-        {activeTabId &&
-          (connectionError ||
-            retryState ||
-            connectionState === "crashed") && (
-            <div className="pt-5">
-              <ErrorBanner
-                tabId={activeTabId}
-                connectionState={connectionState}
-                connectionError={connectionError}
-                retryState={retryState}
-                onDismiss={handleDismissError}
-              />
-            </div>
-          )}
         <div className="mx-auto w-full max-w-3xl px-5 pt-6 pb-8 md:px-6">
           <AnimatePresence initial={false} mode="wait">
             <motion.div
@@ -131,6 +109,20 @@ export function ChatView() {
             </motion.div>
           </AnimatePresence>
         </div>
+        {/* Error banner — shown once, below the message flow */}
+        {activeTabId &&
+          ((connectionError && connectionError !== connectionErrorDismissed) ||
+            retryState) && (
+            <div className="pb-6">
+              <ErrorBanner
+                tabId={activeTabId}
+                connectionState={connectionState}
+                connectionError={connectionError}
+                retryState={retryState}
+                onDismiss={handleDismissError}
+              />
+            </div>
+          )}
       </div>
       {/* Revert dock pinned to the bottom of the scroll area */}
       {revertEnabled && activeTabId && revertMessageId && (

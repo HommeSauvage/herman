@@ -13,7 +13,6 @@ import { UpdateBanner } from "./components/update-banner.js";
 import { useAgentFinishedNotifications } from "./hooks/use-agent-finished-notifications.js";
 import { useAgentStream } from "./hooks/use-agent-stream.js";
 import { useAppStore, useAgentStore } from "./lib/agent-store.js";
-import { createTab } from "./lib/agent-actions.js";
 import { useCommandShortcuts } from "./lib/command-dispatch.js";
 import { desktopRpc } from "./lib/desktop-rpc.js";
 
@@ -195,13 +194,12 @@ function AppContent() {
   if (showOnboarding) {
     return (
       <OnboardingWizard
-        onComplete={(folderPath) => {
+        onComplete={() => {
           setShowOnboarding(false);
-          if (folderPath) {
-            // Create a tab for the new project
-            void createTab(folderPath);
-            setView("session");
-          }
+        }}
+        onCancel={() => {
+          setShowOnboarding(false);
+          setView("home");
         }}
       />
     );

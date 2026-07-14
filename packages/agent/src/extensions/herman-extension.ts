@@ -323,6 +323,27 @@ function shouldRefreshModels(status: number | null): boolean {
   return status === 403 || status === 503;
 }
 
+/** Extract the ## Guidance section from a HERMAN.md body (lightweight, no YAML dep). */
+function extractGuidanceSection(raw: string): string | undefined {
+  const bodyMatch = raw.match(/^---[\s\S]*?---\r?\n?([\s\S]*)$/);
+  const body = bodyMatch?.[1] ?? raw;
+  const lines = body.split(/\r?\n/);
+  let capturing = false;
+  const collected: string[] = [];
+  for (const line of lines) {
+    if (/^##\s+/i.test(line)) {
+      if (/^##\s+Guidance\s*$/i.test(line)) {
+        capturing = true;
+        continue;
+      }
+      if (capturing) break;
+    }
+    if (capturing) collected.push(line);
+  }
+  const content = collected.join("\n").trim();
+  return content || undefined;
+}
+
 export default async function hermanExtension(pi: ExtensionAPI) {
   let hermanModels: HermanModel[] = [];
   let fetchError: string | undefined;
@@ -440,8 +461,8 @@ export default async function hermanExtension(pi: ExtensionAPI) {
 
   // ── Rookie mode system prompt injection ──────────────────────────
   // In rookie mode, the user is non-technical. We prepend behavioral
-  // instructions and append any template-specific systemPromptHint
-  // from the project's herman.json.
+  // instructions and append any template-specific guidance from the
+  // project's HERMAN.md (## Guidance) or legacy herman.json.
 
   const ROOKIE_INSTRUCTIONS = `
 <rookie_mode>
@@ -480,18 +501,27 @@ CRITICAL RULES:
 
     let systemPrompt = ROOKIE_INSTRUCTIONS + event.systemPrompt;
 
-    // Load template-specific hint from herman.json, if present
+    // Prefer HERMAN.md ## Guidance; fall back to legacy herman.json systemPromptHint.
     try {
-      const hermanJsonPath = join(ctx.cwd, "herman.json");
-      if (existsSync(hermanJsonPath)) {
-        const raw = readFileSync(hermanJsonPath, "utf-8");
-        const herman = JSON.parse(raw) as { systemPromptHint?: string };
-        if (herman.systemPromptHint) {
-          systemPrompt += `\n\n<template_instructions>\n${herman.systemPromptHint}\n</template_instructions>`;
+      const hermanMdPath = join(ctx.cwd, "HERMAN.md");
+      if (existsSync(hermanMdPath)) {
+        const raw = readFileSync(hermanMdPath, "utf-8");
+        const guidance = extractGuidanceSection(raw);
+        if (guidance) {
+          systemPrompt += `\n\n<template_instructions>\n${guidance}\n</template_instructions>`;
+        }
+      } else {
+        const hermanJsonPath = join(ctx.cwd, "herman.json");
+        if (existsSync(hermanJsonPath)) {
+          const raw = readFileSync(hermanJsonPath, "utf-8");
+          const herman = JSON.parse(raw) as { systemPromptHint?: string };
+          if (herman.systemPromptHint) {
+            systemPrompt += `\n\n<template_instructions>\n${herman.systemPromptHint}\n</template_instructions>`;
+          }
         }
       }
     } catch {
-      // herman.json may not exist or be invalid — skip template hint
+      // Manifest may not exist or be invalid — skip template hint
     }
 
     return { systemPrompt };

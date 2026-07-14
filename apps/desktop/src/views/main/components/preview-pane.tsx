@@ -2,6 +2,7 @@ import { cn } from "@herman/ui/lib/utils";
 import { Monitor, Smartphone, Tablet, RefreshCw, Loader2, Rocket, ExternalLink, Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { DevServer, ProjectManifestView } from "../../../shared/herman-manifest.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 
 type DeviceMode = "desktop" | "tablet" | "mobile";
@@ -18,14 +19,6 @@ const DEVICE_ICONS: Record<DeviceMode, React.ElementType> = {
   mobile: Smartphone,
 };
 
-type ProjectManifest = {
-  devCommand: string;
-  devPort: number;
-  buildCommand: string;
-  outputDir: string;
-  deployTarget: string;
-};
-
 type PreviewPaneProps = {
   folderPath: string;
   tabId?: string;
@@ -34,9 +27,10 @@ type PreviewPaneProps = {
 };
 
 export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: PreviewPaneProps) {
-  const [manifest, setManifest] = useState<ProjectManifest | null>(null);
+  const [manifest, setManifest] = useState<ProjectManifestView | null>(null);
   const [manifestLoading, setManifestLoading] = useState(true);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -46,7 +40,6 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
   const [deviceMode, setDeviceMode] = useState<DeviceMode>("desktop");
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Load herman.json when folderPath changes
   useEffect(() => {
     if (!folderPath || folderPath.length < 3) {
       setManifest(null);
@@ -60,12 +53,14 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
     setPreviewUrl(null);
     setIsRunning(false);
     setStartError(null);
+    setActiveServerId(null);
 
     desktopRpc.request
       .getProjectManifest({ folderPath })
       .then((m) => {
         if (!cancelled) {
           setManifest(m ?? null);
+          setActiveServerId(m?.primary?.id ?? m?.servers?.[0]?.id ?? null);
           setManifestLoading(false);
         }
       })
@@ -98,19 +93,27 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
       if (status.running && status.url) {
         setPreviewUrl(status.url);
         setIsRunning(true);
+        setActiveServerId(status.serverId ?? activeServerId);
         setIsStarting(false);
         return;
       }
 
       const result = await desktopRpc.request.startPreview({
         folderPath,
-        devCommand: manifest.devCommand,
-        devPort: manifest.devPort,
+        all: true,
+        ...(manifest.primary
+          ? {
+              serverId: manifest.primary.id,
+              devCommand: manifest.primary.command,
+              devPort: manifest.primary.port,
+            }
+          : {}),
       });
 
       if (result.url) {
         setPreviewUrl(result.url);
         setIsRunning(true);
+        setActiveServerId(result.serverId ?? manifest.primary?.id ?? null);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start preview server";
@@ -118,7 +121,7 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
     } finally {
       setIsStarting(false);
     }
-  }, [manifest, folderPath]);
+  }, [manifest, folderPath, activeServerId]);
 
   useEffect(() => {
     if (!manifest || !folderPath) return;
@@ -132,13 +135,20 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
     void desktopRpc.request
       .restartPreview({
         folderPath,
-        devCommand: manifest.devCommand,
-        devPort: manifest.devPort,
+        all: true,
+        ...(manifest.primary
+          ? {
+              serverId: manifest.primary.id,
+              devCommand: manifest.primary.command,
+              devPort: manifest.primary.port,
+            }
+          : {}),
       })
       .then((result) => {
         if (result.url) {
           setPreviewUrl(result.url);
           setIsRunning(true);
+          setActiveServerId(result.serverId ?? manifest.primary?.id ?? null);
         }
       })
       .catch((err) => {
@@ -146,6 +156,32 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
       })
       .finally(() => setIsRestarting(false));
   }, [manifest, folderPath]);
+
+  const handleSwitchServer = useCallback(
+    async (server: DevServer) => {
+      setActiveServerId(server.id);
+      const status = await desktopRpc.request.getPreviewStatus({
+        folderPath,
+        serverId: server.id,
+      });
+      if (status.running && status.url) {
+        setPreviewUrl(status.url);
+        setIsRunning(true);
+        return;
+      }
+      const result = await desktopRpc.request.startPreview({
+        folderPath,
+        serverId: server.id,
+        devCommand: server.command,
+        devPort: server.port,
+      });
+      if (result.url) {
+        setPreviewUrl(result.url);
+        setIsRunning(true);
+      }
+    },
+    [folderPath],
+  );
 
   const handleApplySession = useCallback(() => {
     if (!tabId) return;
@@ -170,15 +206,14 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
   }, [previewUrl]);
 
   const deviceWidth = DEVICE_WIDTHS[deviceMode];
+  const servers = manifest?.servers ?? [];
 
   return (
     <div className="flex h-full flex-col bg-[#0a0a0b]">
-      {/* Toolbar */}
       <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-3 py-2">
         <div className="flex items-center gap-1">
           {isRunning && (
             <>
-              {/* Device mode toggle */}
               <div className="flex items-center rounded-lg border border-white/[0.06] bg-white/[0.02] p-0.5">
                 {(["desktop", "tablet", "mobile"] as DeviceMode[]).map((mode) => {
                   const Icon = DEVICE_ICONS[mode];
@@ -200,7 +235,6 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
                 })}
               </div>
 
-              {/* Refresh */}
               <button
                 onClick={handleRefresh}
                 aria-label="Restart server"
@@ -209,12 +243,30 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
               >
                 {isRestarting ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
               </button>
+
+              {servers.length > 1 && (
+                <div className="ml-1 flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.02] p-0.5">
+                  {servers.map((server) => (
+                    <button
+                      key={server.id}
+                      onClick={() => void handleSwitchServer(server)}
+                      className={cn(
+                        "rounded-md px-2 py-1 text-[10px] font-medium transition",
+                        activeServerId === server.id
+                          ? "bg-white/[0.08] text-text"
+                          : "text-ghost hover:text-dim",
+                      )}
+                    >
+                      {server.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>
 
         <div className="flex items-center gap-2">
-          {/* URL display */}
           {previewUrl && (
             <button
               onClick={handleOpenExternal}
@@ -227,7 +279,6 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
             </button>
           )}
 
-          {/* Publish button */}
           {onPublish && manifest && (
             <button
               onClick={onPublish}
@@ -264,7 +315,6 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
         </div>
       )}
 
-      {/* Preview area */}
       <div className="flex flex-1 items-start justify-center overflow-auto p-4">
         {manifestLoading ? (
           <div className="flex flex-col items-center gap-3 pt-20">
@@ -316,7 +366,6 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
             </div>
           </div>
         ) : (
-          /* No manifest — project not created from a template */
           <div className="flex flex-col items-center gap-3 pt-20">
             <div className="text-ghost flex h-16 w-16 items-center justify-center rounded-2xl bg-white/[0.02]">
               <Monitor size={24} strokeWidth={1} />

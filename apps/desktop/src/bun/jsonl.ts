@@ -1,4 +1,12 @@
 /**
+ * Strip ANSI escape codes so terminal color sequences don't leak into JSON.
+ */
+function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+}
+
+/**
  * Strict LF-delimited JSONL parser.
  *
  * MUST split on \n (U+000A) only — NEVER use readline.
@@ -10,7 +18,7 @@ export class JsonlParser {
   constructor(private readonly onLine: (line: string) => void) {}
 
   feed(chunk: string): void {
-    this.buffer += chunk;
+    this.buffer += stripAnsi(chunk);
 
     let newlineIndex = this.buffer.indexOf("\n");
     while (newlineIndex !== -1) {

@@ -26,6 +26,7 @@ const logger = getLogger(["herman-agent", "cli"]);
  */
 const BUNDLED_EXTENSIONS = [
   "@bacnh85/pi-fff",
+  "@narumitw/pi-goal"
 ];
 
 /**

@@ -1,5 +1,5 @@
 import { cn } from "@herman/ui/lib/utils";
-import { Cpu, Layers, Puzzle, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Cpu, Layers, Puzzle, SlidersHorizontal, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAgentStore } from "../lib/agent-store.js";
@@ -21,6 +21,7 @@ const TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
 export function SettingsView() {
   const settings = useAgentStore((s) => s.settings);
   const setSettings = useAgentStore((s) => s.setSettings);
+  const setView = useAgentStore((s) => s.setView);
   const [activeTab, setActiveTabState] = useState<SettingsTab>(
     settings.settingsActiveTab ?? "providers",
   );
@@ -78,6 +79,16 @@ export function SettingsView() {
             </button>
           );
         })}
+
+        <div className="mt-auto" />
+        <button
+          onClick={() => setView("home")}
+          aria-label="Back to home"
+          className="text-dim hover:text-text flex w-full items-center justify-center rounded-lg px-0 py-2 text-sm transition hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-white/20 focus-visible:outline-none min-[501px]:justify-start min-[501px]:gap-2 min-[501px]:px-2 min-[501px]:text-left"
+        >
+          <ArrowLeft size={14} className="text-faint shrink-0" />
+          <span className="hidden min-[501px]:inline">Back</span>
+        </button>
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-auto p-6">
