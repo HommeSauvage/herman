@@ -573,11 +573,11 @@ export type HermanDesktopRPC = {
         response: ProviderCredential | undefined;
       };
       saveProviderCredentials: {
-        params: { providerId: string; credential: ProviderCredential };
+        params: { providerId: string; credential: ProviderCredential; skipRefresh?: boolean };
         response: undefined;
       };
       removeProviderCredentials: {
-        params: { providerId: string };
+        params: { providerId: string; skipRefresh?: boolean };
         response: undefined;
       };
       startOAuthLogin: {

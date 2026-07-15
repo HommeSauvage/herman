@@ -593,13 +593,17 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       getProviderCredentials: async ({ providerId }) => {
         return getCredential(providerId);
       },
-      saveProviderCredentials: async ({ providerId, credential }) => {
+      saveProviderCredentials: async ({ providerId, credential, skipRefresh }) => {
         await setCredential(providerId, credential);
-        await syncAgentConfigAndRefreshAgents();
+        if (!skipRefresh) {
+          await syncAgentConfigAndRefreshAgents();
+        }
       },
-      removeProviderCredentials: async ({ providerId }) => {
+      removeProviderCredentials: async ({ providerId, skipRefresh }) => {
         await removeCredential(providerId);
-        await syncAgentConfigAndRefreshAgents();
+        if (!skipRefresh) {
+          await syncAgentConfigAndRefreshAgents();
+        }
       },
       startOAuthLogin: async ({ providerId }) => {
         logger.info("Starting OAuth login", { providerId });

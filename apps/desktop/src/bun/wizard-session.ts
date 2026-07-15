@@ -96,6 +96,8 @@ export class WizardSession {
   // ── Retry state ──────────────────────────────────────────────────────────
   private retryCount = 0;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Pi session id captured from the first bridge start, passed to retries for context preservation. */
+  private capturedPiSessionId: string | undefined;
   private templateId: string | undefined;
   private description: string | undefined;
 
@@ -207,9 +209,37 @@ export class WizardSession {
 
     const cwd = this.phase === "planning" ? projectsDir() : (this.projectPath as string);
     const wizardExtensions = resolveWizardExtensionPath();
-    await bridge.start(cwd, { mode: "rookie", extensions: wizardExtensions });
+    await bridge.start(cwd, {
+      mode: "rookie",
+      extensions: wizardExtensions,
+      // Resume the same pi session across retries so context (plan progress,
+      // tool calls, user answers) is preserved.
+      piSessionId: this.capturedPiSessionId,
+    });
 
     if (this.cancelled || this.finished || generation !== this.bridgeGeneration) return;
+
+    // Capture the pi session id on the first attempt so retries resume the
+    // same conversation instead of starting fresh.
+    if (!this.capturedPiSessionId) {
+      try {
+        const state = await bridge.sendCommand({ type: "get_state" });
+        if (state.success) {
+          const data = state.data as Record<string, unknown> | undefined;
+          if (data && typeof data.sessionId === "string" && data.sessionId) {
+            this.capturedPiSessionId = data.sessionId;
+          }
+        }
+      } catch {
+        // Non-fatal; retries will just start fresh.
+      }
+    }
+
+    // Enable pi's built-in auto-retry so transient API errors (proxied
+    // through the Herman server) are handled inside the agent without a
+    // process restart. The agent removes the error message, waits with
+    // exponential backoff, and re-continues.
+    await bridge.sendCommand({ type: "set_auto_retry", enabled: true }).catch(() => undefined);
 
     // Wait briefly for models_sync so we can override the auto-selected default
     // before sending the prompt. Fall through on timeout so we don't hang.
@@ -285,6 +315,11 @@ export class WizardSession {
   private scheduleRetry(reason: string): void {
     if (this.cancelled || this.finished || this.phaseSignaledComplete) return;
 
+    // A retry is already pending — don't double-count or reset the timer.
+    // Multiple error paths (crash callback + sendPhasePrompts failure) can
+    // fire for the same underlying failure.
+    if (this.retryTimer) return;
+
     if (this.retryCount >= MAX_RETRIES) {
       this.end(`Setup failed after ${MAX_RETRIES} attempts: ${reason}`);
       return;
@@ -321,10 +356,11 @@ export class WizardSession {
     }, delayMs);
   }
 
-  /** Advance to the next phase with a fresh retry budget. */
+  /** Advance to the next phase with a fresh retry budget and pi session. */
   private advanceToPhase(next: WizardPhase): void {
     this.phase = next;
     this.retryCount = 0;
+    this.capturedPiSessionId = undefined;
     this.clearRetryTimer();
     // Keep phaseSignaledComplete true until the new bridge is live so dying
     // events from the previous bridge cannot schedule a retry on the new phase.
@@ -546,7 +582,17 @@ export class WizardSession {
       return;
     }
 
-    // 5. Terminal / error events — schedule retry instead of immediately ending.
+    // 5. Proxy / API errors — surfaced early by the herman extension so the
+    //    UI can show progress. Pi's auto-retry handles recovery internally.
+    if (event.type === "herman/agent_proxy_error") {
+      logger.warning("Wizard proxy error", { id: this.id, code: event.code, error: event.error });
+      this.emit({ type: "wizard_progress", wizardSessionId: this.id, text: event.error });
+      return;
+    }
+
+    // 6. Terminal / error events — schedule retry instead of immediately ending.
+    //    API-level errors (stopReason: "error") are handled by pi's auto-retry;
+    //    only schedule a retry for process-level failures.
     if (event.type === "agent_error") {
       this.scheduleRetry(event.error);
       return;

@@ -132,7 +132,7 @@ function SessionList({
           </div>
           <button
             onClick={() => void createTab(projectRoot)}
-            className="text-ghost hover:text-text flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition hover:bg-fog"
+            className="bg-peak text-text flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition hover:bg-white/[0.08] active:scale-[0.96]"
           >
             <SquarePen size={13} />
             New session

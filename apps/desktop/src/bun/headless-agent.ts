@@ -105,6 +105,8 @@ export async function runHeadlessAgentPrompt(opts: {
   let headlessPiSessionId: string | undefined;
   try {
     await bridge.start(cwd, { mode: "rookie" });
+    // Enable pi's built-in auto-retry for transient API errors.
+    await bridge.sendCommand({ type: "set_auto_retry", enabled: true }).catch(() => undefined);
     // Capture the new session's id so we can delete its JSONL on cleanup (the
     // shared sessions dir is not per-tab, so we must not leave orphan files).
     try {

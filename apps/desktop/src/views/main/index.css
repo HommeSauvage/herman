@@ -24,7 +24,7 @@
   --color-body: #e5e5e5;
   --color-dim: #a0a0a0;
   --color-faint: #737373;
-  --color-ghost: #525252;
+  --color-ghost: #6b6b6b;
 
   /* shadcn-compatible aliases */
   --color-background: var(--color-void);

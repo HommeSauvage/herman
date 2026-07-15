@@ -26,14 +26,9 @@ function resolvePiSessionFileById(sessionsDir: string, piSessionId: string): str
   return match ? join(sessionsDir, match) : undefined;
 }
 
-function newestSessionFile(sessionsDir: string): string | undefined {
-  const files = listSessionJsonlFiles(sessionsDir);
-  return files[0] ? join(sessionsDir, files[0]) : undefined;
-}
-
 /**
  * Resolve the pi session JSONL file for a tab.
- * Prefers a persisted session id, then falls back to the newest JSONL on disk.
+ * Only returns a file when the exact piSessionId matches one on disk.
  */
 export function resolvePiSessionFile(piSessionId?: string): string | undefined {
   const sessionsDir = piSessionDir();
@@ -41,7 +36,7 @@ export function resolvePiSessionFile(piSessionId?: string): string | undefined {
     const byId = resolvePiSessionFileById(sessionsDir, piSessionId);
     if (byId) return byId;
   }
-  return newestSessionFile(sessionsDir);
+  return undefined;
 }
 
 /**
@@ -93,18 +88,13 @@ export function readPiSessionId(piSessionId?: string): string | undefined {
 
 /**
  * Resolve the `--session` CLI argument for pi.
- * Prefers a persisted session id, then falls back to the newest JSONL on disk.
+ * Returns the session file path when an explicit piSessionId matches
+ * a file on disk. Returns undefined otherwise (fresh session).
  */
 export function resolvePiSessionResumeArg(agentDir: string, piSessionId?: string): string | undefined {
+  if (!piSessionId) return undefined;
+
   const sessionsDir = join(agentDir, "sessions");
-
-  if (piSessionId) {
-    const byId = resolvePiSessionFileById(sessionsDir, piSessionId);
-    if (byId) return byId;
-  }
-
-  const newest = newestSessionFile(sessionsDir);
-  if (newest) return newest;
-
-  return piSessionId;
+  const byId = resolvePiSessionFileById(sessionsDir, piSessionId);
+  return byId;
 }

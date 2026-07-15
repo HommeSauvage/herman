@@ -56,7 +56,7 @@ Avoid copy-pasting `border-white/[0.06]` or `rgba(34,197,94,…)` in new code.
 - **Body** — readable copy (descriptions, help, expanded accordion content): minimum `text-sm` + `text-dim` or `text-body`
 - **Meta** — `text-ghost text-[11px]` (labels, timestamps, footnotes only)
 
-Never use `text-ghost` for multi-line primary copy — ghost is meta-only (`#525252` fails contrast as body text).
+Never use `text-ghost` for multi-line primary copy — ghost is meta-only.
 
 ## Shared primitives
 

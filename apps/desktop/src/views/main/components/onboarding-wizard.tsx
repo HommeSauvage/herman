@@ -31,6 +31,7 @@ import { useConfetti } from "../hooks/use-confetti.js";
 import { ContentWidth, SignalButton } from "./ui/index.js";
 import { ModelSelector } from "./model-selector.js";
 import { WizardQuestions } from "./wizard-questions.js";
+import { WizardLoading } from "./wizard-loading.js";
 
 const logger = getLogger(["herman-desktop", "view", "onboarding-wizard"]);
 
@@ -138,7 +139,6 @@ export function OnboardingWizard({
   // Retry state.
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [retryMax, setRetryMax] = useState(20);
-  const [retryError, setRetryError] = useState<string | undefined>(undefined);
 
   const currentModel = useAgentStore((s) => s.wizard.currentModel);
   const setModelSelectorOpen = useAgentStore((s) => s.setModelSelectorOpen);
@@ -275,7 +275,6 @@ export function OnboardingWizard({
         case "wizard_retrying": {
           setRetryAttempt(event.attempt);
           setRetryMax(event.maxRetries);
-          setRetryError(event.error);
           setStep("retrying");
           break;
         }
@@ -313,7 +312,6 @@ export function OnboardingWizard({
     if (!selectedTemplate || !description.trim()) return;
     setWizardError(null);
     setRetryAttempt(0);
-    setRetryError(undefined);
     setProgressLines([]);
     setEnvelope(null);
     setProjectPath(null);
@@ -391,7 +389,6 @@ export function OnboardingWizard({
   const handleRetryFromError = useCallback(() => {
     setWizardError(null);
     setRetryAttempt(0);
-    setRetryError(undefined);
     setWizardSessionId(null);
     setWizardSessionIdStore(undefined);
     setEnvelope(null);
@@ -544,13 +541,8 @@ export function OnboardingWizard({
               animate={{ opacity: 1 }}
               className="w-full"
             >
-              <ContentWidth size="form">
-                <div className="flex flex-col items-center gap-4">
-                  <div className="bg-signal/10 text-signal flex h-14 w-14 items-center justify-center rounded-2xl">
-                    <Loader2 size={24} className="animate-spin" />
-                  </div>
-                  <ProgressLog lines={progressLines} />
-                </div>
+              <ContentWidth size="formWide">
+                <WizardLoading progressLines={progressLines} />
               </ContentWidth>
             </motion.div>
           )}
@@ -562,27 +554,12 @@ export function OnboardingWizard({
               animate={{ opacity: 1 }}
               className="w-full"
             >
-              <ContentWidth size="form">
-              <div className="flex flex-col items-center gap-4">
-                {/* Orange / amber warning icon */}
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
-                  <Loader2 size={24} className="animate-spin" />
-                </div>
-                <div className="text-center">
-                  <p className="text-sm font-medium text-amber-300">
-                    Connection lost — retrying
-                  </p>
-                  <p className="text-dim mt-1 text-xs">
-                    Attempt {retryAttempt} of {retryMax}
-                    {retryError && (
-                      <span className="text-ghost mt-0.5 block truncate">
-                        {retryError}
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <ProgressLog lines={progressLines} />
-              </div>
+              <ContentWidth size="formWide">
+                <WizardLoading
+                  progressLines={progressLines}
+                  headerText={`Connection lost — retrying (attempt ${retryAttempt} of ${retryMax})`}
+                  variant="retrying"
+                />
               </ContentWidth>
             </motion.div>
           )}

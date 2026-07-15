@@ -74,6 +74,7 @@ export function ProviderAuthDialog({ provider, open, onOpenChange }: ProviderAut
       await desktopRpc.request.saveProviderCredentials({
         providerId: provider.id,
         credential: { type: "apiKey", key: apiKey, metadata: promptInputs },
+        skipRefresh: true,
       });
       credentialSaved = true;
 
@@ -136,7 +137,7 @@ export function ProviderAuthDialog({ provider, open, onOpenChange }: ProviderAut
     setSettings(next);
     try {
       await desktopRpc.request.saveSettings({ settings: next });
-      await desktopRpc.request.removeProviderCredentials({ providerId: provider.id });
+      await desktopRpc.request.removeProviderCredentials({ providerId: provider.id, skipRefresh: true });
       handleClose(false);
     } catch {
       setSettings(prevSettings);
@@ -181,6 +182,7 @@ export function ProviderAuthDialog({ provider, open, onOpenChange }: ProviderAut
         await desktopRpc.request.saveProviderCredentials({
           providerId: provider.id,
           credential: result.credential,
+          skipRefresh: true,
         });
         const next = buildConnectedSettings();
         setSettings(next);

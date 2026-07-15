@@ -960,6 +960,10 @@ export class AgentProcessManager {
     try {
       await bridge.start(folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
       await this.capturePiSessionId(tabId);
+      // Enable pi's built-in auto-retry. Transient API errors (proxied
+      // through the Herman server) are handled inside the agent with
+      // exponential backoff, without a process restart.
+      await bridge.sendCommand({ type: "set_auto_retry", enabled: true }).catch(() => undefined);
     } catch (error) {
       const stderr = error instanceof Error ? error.message : String(error);
       this.webviewRpc.send.agentStatusChanged({ tabId, state: "crashed", stderr });

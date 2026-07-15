@@ -13,7 +13,9 @@ export type AgentCommand =
   | { id?: string; type: "get_available_models" }
   | { id?: string; type: "set_model"; provider: string; modelId: string }
   | { id?: string; type: "get_messages" }
-  | { id?: string; type: "bash"; command: string };
+  | { id?: string; type: "bash"; command: string }
+  | { id?: string; type: "set_auto_retry"; enabled: boolean }
+  | { id?: string; type: "abort_retry" };
 
 export type AgentResponse =
   | {
