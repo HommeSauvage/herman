@@ -17,6 +17,11 @@ export type WaitForReadyOpts = {
   now?: () => number;
 };
 
+/** Any HTTP status (2xx–5xx) means the server accepted a connection and responded. */
+export function isHttpReachable(result: PreviewProbeResult): boolean {
+  return result.status != null;
+}
+
 function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal?.aborted) {
@@ -70,7 +75,7 @@ export async function waitForReady(opts: WaitForReadyOpts): Promise<void> {
       const probeSignal =
         opts.signal ?? AbortSignal.timeout(Math.min(pollMs * 5, 2_000));
       const result = await opts.probe(opts.url, probeSignal);
-      if (result.ok || (result.status != null && result.status < 500)) return;
+      if (isHttpReachable(result)) return;
     } catch {
       // keep polling (includes AbortError from per-probe timeout)
       if (opts.signal?.aborted) {

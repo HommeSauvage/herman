@@ -13,6 +13,7 @@ import type { AdCampaign, AdPlacement } from "@herman/rpc/ads";
 import { getLogger } from "@logtape/logtape";
 
 import { config } from "../env.js";
+import { buildPrompt } from "../prompts/index.js";
 
 const logger = getLogger(["herman-agent", "extension"]);
 
@@ -323,39 +324,7 @@ function shouldRefreshModels(status: number | null): boolean {
   return status === 403 || status === 503;
 }
 
-/** Extract the guidance key from a herman.yaml file. */
-function extractYamlGuidance(raw: string): string | undefined {
-  try {
-    const parsed = Bun.YAML.parse(raw) as Record<string, unknown> | undefined;
-    if (parsed && typeof parsed.guidance === "string" && parsed.guidance.trim()) {
-      return parsed.guidance.trim();
-    }
-  } catch {
-    // Invalid YAML — skip
-  }
-  return undefined;
-}
 
-/** Extract the ## Guidance section from a HERMAN.md body (lightweight, no YAML dep). */
-function extractGuidanceSection(raw: string): string | undefined {
-  const bodyMatch = raw.match(/^---[\s\S]*?---\r?\n?([\s\S]*)$/);
-  const body = bodyMatch?.[1] ?? raw;
-  const lines = body.split(/\r?\n/);
-  let capturing = false;
-  const collected: string[] = [];
-  for (const line of lines) {
-    if (/^##\s+/i.test(line)) {
-      if (/^##\s+Guidance\s*$/i.test(line)) {
-        capturing = true;
-        continue;
-      }
-      if (capturing) break;
-    }
-    if (capturing) collected.push(line);
-  }
-  const content = collected.join("\n").trim();
-  return content || undefined;
-}
 
 export default async function hermanExtension(pi: ExtensionAPI) {
   let hermanModels: HermanModel[] = [];
@@ -472,71 +441,15 @@ export default async function hermanExtension(pi: ExtensionAPI) {
     await sendAdEvent(ctx.ui, "native");
   });
 
-  // ── Rookie mode system prompt injection ──────────────────────────
-  // In rookie mode, the user is non-technical. We prepend behavioral
-  // instructions and append any template-specific guidance from the
-  // project's herman.yaml or HERMAN.md (## Guidance section).
-
-  const ROOKIE_INSTRUCTIONS = `
-<rookie_mode>
-You are speaking to a non-technical user who may not understand code,
-programming concepts, frameworks, or development terminology (unless they state otherwise).
-
-CRITICAL RULES:
-- NEVER ask the user to choose between technical implementation
-  alternatives (e.g. "should I refactor X or rewrite Y?", "do you
-  prefer CSS modules or styled-components?"). You MUST make ALL
-  technical decisions yourself and pick the best approach.
-- NEVER ask "what do you prefer?" or "which approach?" about
-  implementation details. Just pick the simplest, most reliable
-  solution and do it.
-- When you need to clarify requirements, ask plain, non-technical
-  questions about WHAT they want the site to do or look like, not
-  HOW to build it. Use everyday language.
-- Explain what you're doing in simple terms. Avoid jargon like
-  "component", "refactor", "state management", "bundler", etc.
-  Say "I'll add a section for customer reviews" instead of
-  "I'll create a Testimonials component with a data fetch hook."
-- If something goes wrong, fix it without burdening the user with
-  debugging details or error messages.
-- When multiple valid approaches exist, pick the SIMPLEST and most
-  maintainable one. Optimize for the user's experience, not for
-  technical elegance.
-- The user's time and confidence are more important than technical
-  perfection. Ship something good and iterate.
-- If a db migration is needed, you can run it, to undo, just change 
-  the files needed to migrate and run the migration again.
-</rookie_mode>
-`;
+  // ── System prompt injection (replaces pi default for both modes) ──
+  // In rookie mode, the user is non-technical — we use a simplified prompt.
+  // In normal mode, we use an OpenCode-inspired developer prompt.
+  // Template-specific guidance from herman.yaml or HERMAN.md is appended
+  // in both modes.
 
   pi.on("before_agent_start", async (event, ctx) => {
-    if (config.mode !== "rookie") return;
-
-    let systemPrompt = ROOKIE_INSTRUCTIONS + event.systemPrompt;
-
-    // Prefer herman.yaml (new format), then HERMAN.md (legacy).
-    try {
-      const yamlPath = join(ctx.cwd, "herman.yaml");
-      if (existsSync(yamlPath)) {
-        const raw = readFileSync(yamlPath, "utf-8");
-        const guidance = extractYamlGuidance(raw);
-        if (guidance) {
-          systemPrompt += `\n\n<template_instructions>\n${guidance}\n</template_instructions>`;
-        }
-      } else {
-        const hermanMdPath = join(ctx.cwd, "HERMAN.md");
-        if (existsSync(hermanMdPath)) {
-          const raw = readFileSync(hermanMdPath, "utf-8");
-          const guidance = extractGuidanceSection(raw);
-          if (guidance) {
-            systemPrompt += `\n\n<template_instructions>\n${guidance}\n</template_instructions>`;
-          }
-        }
-      }
-    } catch {
-      // Manifest may not exist or be invalid — skip template hint
-    }
-
+    const mode = config.mode === "rookie" ? "rookie" : "normal";
+    const systemPrompt = buildPrompt({ mode, cwd: ctx.cwd, originalPrompt: event.systemPrompt });
     return { systemPrompt };
   });
 

@@ -165,7 +165,7 @@ function useAgentEventPolling() {
         const { tabs: freshTabs } = await desktopRpc.request.getTabs();
         const freshTab = freshTabs.find((t) => t.id === activeTabId);
         if (freshTab) {
-          useAgentStore.getState().updateTab(activeTabId, {
+          const changed = useAgentStore.getState().updateTab(activeTabId, {
             ...(streaming ? {} : { messages: freshTab.messages, contextStats: freshTab.contextStats }),
             isThinking: freshTab.isThinking,
             availableModels: freshTab.availableModels,
@@ -183,6 +183,13 @@ function useAgentEventPolling() {
                 }
               : {}),
           });
+
+          if (changed) {
+            logger.debug("Tab state updated from poll", {
+              tabId: activeTabId,
+              streaming,
+            });
+          }
         }
       } catch (error) {
         logger.debug("Tab state poll failed", {

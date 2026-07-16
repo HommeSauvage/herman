@@ -6,8 +6,9 @@ import { displayUrlForPort, probeUrlForPort } from "./preview-ports.js";
 import {
   attachLineReaders,
   createInstanceLineHandler,
+  killPreviewTree,
 } from "./preview-process.js";
-import { waitForReady } from "./preview-readiness.js";
+import { isHttpReachable, waitForReady } from "./preview-readiness.js";
 import {
   fleetScopeKey,
   MAX_ERROR_MESSAGE_CHARS,
@@ -93,7 +94,7 @@ export class PreviewManager {
         if (req.readyTimeoutMs != null) instance.readyTimeoutMs = req.readyTimeoutMs;
         // Check HTTP ready without waiting.
         const probe = await this.deps.probe(probeUrlForPort(instance.port));
-        if (probe.ok || (probe.status != null && probe.status < 500)) {
+        if (isHttpReachable(probe)) {
           instance.phase = "ready";
           this.emitSnapshot(instance);
           return toStartResponse(toServerSnapshot(instance), false);
@@ -236,11 +237,7 @@ export class PreviewManager {
       instance.stoppedIntentionally = true;
       instance.abort.abort();
       this.settleFlights.delete(key);
-      try {
-        instance.process.kill("SIGTERM");
-      } catch {
-        // already dead
-      }
+      await killPreviewTree(instance.process);
       if (this.previews.get(key) === instance) {
         this.previews.delete(key);
       }
@@ -523,6 +520,12 @@ export class PreviewManager {
       },
       onErrorLine: (source, line) => {
         if (this.previews.get(key) !== instance) return;
+        logger.info("Preview error line detected", {
+          folderPath,
+          serverId,
+          source,
+          line,
+        });
         this.deps.emitLog({
           folderPath,
           serverId,

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 
 import type { PreviewServerSnapshot } from "../../src/shared/preview.js";
+import { useAgentStore } from "../../src/views/main/lib/agent-store.js";
 import {
   createPreviewStore,
   selectPreviewStage,
@@ -30,7 +31,6 @@ const getSessionChanges = mock(() =>
 );
 const applySession = mock(() => Promise.resolve({ status: "applied" as const }));
 const discardSession = mock(() => Promise.resolve(undefined));
-const sendPrompt = mock(() => Promise.resolve(undefined));
 
 function makeFakeDeps(): PreviewRpcDeps {
   return {
@@ -44,7 +44,6 @@ function makeFakeDeps(): PreviewRpcDeps {
         discardSession,
       },
     },
-    sendPrompt,
   } as unknown as PreviewRpcDeps;
 }
 
@@ -63,7 +62,6 @@ describe("preview-store", () => {
     getSessionChanges.mockClear();
     applySession.mockClear();
     discardSession.mockClear();
-    sendPrompt.mockClear();
   });
 
   it("ignores stale folder-A manifest responses after switching to folder B", async () => {
@@ -304,18 +302,35 @@ describe("preview-store", () => {
     expect(selectPreviewStage(store.getState())).toBe("manifest_failed");
   });
 
-  it("uses the injected sendPrompt dependency for askHermanToFix", async () => {
-    store.getState().__resetForTests({
-      folderPath: "/a",
-      generation: 1,
-      tabId: "t1",
-    });
+  it("populates composer and switches to session view", () => {
+    // Spy on the agent-store singleton methods so we can assert
+    // askHermanToFix calls them correctly.
+    const state = useAgentStore.getState();
+    const origSetComposerValue = state.setComposerValue;
+    const origSetView = state.setView;
+    const mockSetComposerValue = mock(() => {});
+    const mockSetView = mock(() => {});
+    try {
+      (state as any).setComposerValue = mockSetComposerValue;
+      (state as any).setView = mockSetView;
 
-    await store.getState().askHermanToFix("boom", "runtime");
+      store.getState().__resetForTests({
+        folderPath: "/a",
+        generation: 1,
+        tabId: "t1",
+      });
 
-    expect(sendPrompt).toHaveBeenCalledTimes(1);
-    expect(sendPrompt.mock.calls[0]?.[0]).toBe("t1");
-    expect(store.getState().askInFlight).toBe(false);
+      store.getState().askHermanToFix("boom", "runtime");
+
+      expect(mockSetComposerValue).toHaveBeenCalledTimes(1);
+      expect(mockSetComposerValue.mock.calls[0]?.[0]).toBe("t1");
+      expect(mockSetComposerValue.mock.calls[0]?.[1]).toContain("boom");
+      expect(mockSetView).toHaveBeenCalledTimes(1);
+      expect(mockSetView.mock.calls[0]?.[0]).toBe("session");
+    } finally {
+      (state as any).setComposerValue = origSetComposerValue;
+      (state as any).setView = origSetView;
+    }
   });
 
   it("refreshDraft uses the injected getSessionChanges dependency", async () => {

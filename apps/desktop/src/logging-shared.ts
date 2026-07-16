@@ -19,10 +19,19 @@ const REDACT_FIELD_PATTERNS = [
   /email/i,
 ];
 
-export function createRedactedConsoleSink() {
+export interface ConsoleSinkOptions {
+  /** Whether to use ANSI colors. Disable for browser/SPA environments. */
+  readonly colors?: boolean;
+}
+
+export function createRedactedConsoleSink(options: ConsoleSinkOptions = {}) {
   return redactByField(
     getConsoleSink({
-      formatter: getPrettyFormatter({ properties: true, timestamp: "time" }),
+      formatter: getPrettyFormatter({
+        properties: true,
+        timestamp: "time",
+        colors: options.colors ?? true,
+      }),
       nonBlocking: true,
     }),
     { fieldPatterns: REDACT_FIELD_PATTERNS },
@@ -32,9 +41,10 @@ export function createRedactedConsoleSink() {
 export async function configureBaseLogging(
   logLevel: LogLevel,
   extraSinks: Record<string, Sink | (Sink & Disposable) | (Sink & AsyncDisposable)> = {},
+  consoleOptions: ConsoleSinkOptions = {},
 ): Promise<void> {
   const sinks: Record<string, Sink | (Sink & Disposable) | (Sink & AsyncDisposable)> = {
-    console: createRedactedConsoleSink(),
+    console: createRedactedConsoleSink(consoleOptions),
     ...extraSinks,
   };
 

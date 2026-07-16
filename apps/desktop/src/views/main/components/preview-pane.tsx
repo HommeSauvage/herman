@@ -53,8 +53,6 @@ export function PreviewPane({
   const isSynced = usePreviewStore(selectIsSynced);
   const statusCopy = usePreviewStore(selectStatusCopy);
   const discardDialogOpen = usePreviewStore((s) => s.discardDialogOpen);
-  const askInFlight = usePreviewStore((s) => s.askInFlight);
-
   const setDeviceMode = usePreviewStore((s) => s.setDeviceMode);
   const setDiscardDialogOpen = usePreviewStore((s) => s.setDiscardDialogOpen);
   const restart = usePreviewStore((s) => s.restart);
@@ -69,7 +67,7 @@ export function PreviewPane({
   const modelSelectorOpen = useAgentStore((s) => s.ui.modelSelectorOpen);
 
   const overlayOpen = discardDialogOpen || Boolean(publishOpen) || modelSelectorOpen;
-  const askDisabled = askInFlight || isTabWorking || !tabId;
+  const askDisabled = isTabWorking || !tabId;
 
   const handleOpenExternal = useCallback(() => {
     if (server?.url) {

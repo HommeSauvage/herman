@@ -2,6 +2,7 @@ import { spawn } from "bun";
 
 import { getLogger } from "@logtape/logtape";
 
+import { waitForSubprocessExit } from "../subprocess-exit.js";
 import { appendStderrTail, looksLikeServerError, truncateErrorMessage } from "./preview-log-filter.js";
 import {
   MAX_ERROR_MESSAGE_CHARS,
@@ -13,9 +14,14 @@ import {
 
 const logger = getLogger(["herman-desktop", "preview", "process"]);
 
+const SIGTERM_TIMEOUT_MS = 3_000;
+const SIGKILL_TIMEOUT_MS = 2_000;
+
 /**
  * Spawn a preview command via `sh -c` so quoted args / chains work
  * (matches worktree.ts install pattern).
+ *
+ * Uses a new process group so grandchildren (npm → vite/next) die with the shell.
  */
 export function spawnPreviewChild(opts: SpawnChildOpts): PreviewChildProcess {
   logger.info("Spawning preview child", {
@@ -28,14 +34,55 @@ export function spawnPreviewChild(opts: SpawnChildOpts): PreviewChildProcess {
     cwd: opts.folderPath,
     stdout: "pipe",
     stderr: "pipe",
+    // Bun: setpgid(0, 0) so kill(-pid) reaches the whole tree while keeping pipes.
+    new_process_group: true,
     env: {
       ...process.env,
       ...opts.env,
       PORT: String(opts.port),
     },
-  });
+  } as Parameters<typeof spawn>[1]);
 
   return wrapBunSubprocess(proc);
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    // ESRCH / EPERM — group may already be gone
+  }
+}
+
+/**
+ * SIGTERM the process group (and the direct child), wait, then SIGKILL if needed.
+ * Awaits exit so ports are free before the next findFreePort / restart.
+ */
+export async function killPreviewTree(child: PreviewChildProcess): Promise<void> {
+  const pid = child.pid;
+
+  if (pid != null && pid > 0) {
+    signalProcessGroup(pid, "SIGTERM");
+  }
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // already dead
+  }
+
+  const exitedAfterSigterm = await waitForSubprocessExit(child.exited, SIGTERM_TIMEOUT_MS);
+  if (exitedAfterSigterm) return;
+
+  logger.warning("Preview process did not exit after SIGTERM; sending SIGKILL", { pid });
+  if (pid != null && pid > 0) {
+    signalProcessGroup(pid, "SIGKILL");
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // already dead
+  }
+  await waitForSubprocessExit(child.exited, SIGKILL_TIMEOUT_MS);
 }
 
 export type LineHandler = (source: "stdout" | "stderr", line: string) => void;
@@ -97,8 +144,13 @@ export function createInstanceLineHandler(sink: InstanceLogSink): LineHandler {
   return (source, line) => {
     if (source === "stderr") {
       sink.onStderrChunk(line + "\n");
+      // Always log stderr at info level — most build tools route errors here.
+      logger.info(`[preview stderr]`, { msg: line });
+    } else {
+      // stdout is logged at debug level to keep terminal noise manageable;
+      // errors on stdout are still detected and forwarded.
+      logger.debug(`[preview stdout]`, { msg: line });
     }
-    logger.debug(`[preview ${source}]`, { msg: line });
     if (looksLikeServerError(line)) {
       sink.onErrorLine(source, truncateErrorMessage(line, MAX_ERROR_MESSAGE_CHARS));
     }

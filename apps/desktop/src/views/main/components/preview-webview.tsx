@@ -178,7 +178,7 @@ export function PreviewWebview({
     <electrobun-webview
       ref={webviewRefCallback}
       src={url}
-      sandbox
+      // sandbox
       partition="preview"
       masks={PREVIEW_MASKS}
       preload={PREVIEW_CONSOLE_PRELOAD}

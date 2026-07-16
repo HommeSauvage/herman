@@ -2,9 +2,9 @@ import { createServer } from "node:net";
 
 import { normalizeExportUrlAs, type DevServer } from "../../shared/herman-manifest.js";
 
-/** Probe URL — prefer 127.0.0.1 (matches port binding). */
+/** Probe URL — same host as the webview display URL. */
 export function probeUrlForPort(port: number): string {
-  return `http://127.0.0.1:${port}`;
+  return `http://localhost:${port}`;
 }
 
 export function displayUrlForPort(port: number): string {

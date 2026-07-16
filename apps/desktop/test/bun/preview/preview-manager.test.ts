@@ -285,6 +285,85 @@ describe("PreviewManager", () => {
     expect(statuses.some((s) => s.phase === "failed" && s.error?.includes("boom"))).toBe(true);
     await manager.stopAll();
   });
+
+  it("awaits process exit before findFreePort on restart", async () => {
+    const events: string[] = [];
+    let resolveExit!: (code: number) => void;
+    const exited = new Promise<number>((resolve) => {
+      resolveExit = resolve;
+    });
+    let killed = false;
+
+    const slowChild: PreviewChildProcess = {
+      get killed() {
+        return killed;
+      },
+      exited,
+      stdout: new ReadableStream({
+        start(c) {
+          c.close();
+        },
+      }),
+      stderr: new ReadableStream({
+        start(c) {
+          c.close();
+        },
+      }),
+      kill: () => {
+        events.push("kill");
+        setTimeout(() => {
+          killed = true;
+          events.push("exited");
+          resolveExit(0);
+        }, 30);
+      },
+    };
+
+    let spawnCount = 0;
+    const { deps } = createDeps({
+      spawnChild: (opts) => {
+        spawnCount += 1;
+        events.push(`spawn:${opts.port}`);
+        // First instance exits slowly on kill; later spawns exit immediately.
+        if (spawnCount === 1) return slowChild;
+        return createFakeChild();
+      },
+      probe: async () => ({ ok: true, status: 200 }),
+      shouldInstall: () => false,
+      findFreePort: async (start) => {
+        events.push(`findFreePort:${start}`);
+        return start;
+      },
+    });
+    const manager = new PreviewManager(deps);
+
+    await manager.ensureStarted({
+      folderPath: "/proj",
+      serverId: "web",
+      command: "echo",
+      port: 3000,
+    });
+    await manager.awaitStartFlight("/proj", "web", false);
+
+    await manager.restart({
+      folderPath: "/proj",
+      serverId: "web",
+      command: "echo",
+      port: 3000,
+    });
+    await manager.awaitStartFlight("/proj", "web", false);
+
+    const killIdx = events.indexOf("kill");
+    const exitedIdx = events.indexOf("exited");
+    const findIndices = events
+      .map((e, i) => (e === "findFreePort:3000" ? i : -1))
+      .filter((i) => i >= 0);
+    expect(killIdx).toBeGreaterThanOrEqual(0);
+    expect(exitedIdx).toBeGreaterThan(killIdx);
+    expect(findIndices.length).toBeGreaterThanOrEqual(2);
+    expect(findIndices[1]!).toBeGreaterThan(exitedIdx);
+    await manager.stopAll();
+  });
 });
 
 describe("waitForReady", () => {
@@ -293,7 +372,7 @@ describe("waitForReady", () => {
     const started = Date.now();
     await expect(
       waitForReady({
-        url: "http://127.0.0.1:1",
+        url: "http://localhost:1",
         timeoutMs: 40,
         pollMs: 10,
         probe: async () => ({ ok: false }),
@@ -310,21 +389,31 @@ describe("waitForReady", () => {
     expect(elapsed).toBeGreaterThanOrEqual(30);
   });
 
-  it("treats HTTP 4xx as ready and 5xx as not ready", async () => {
+  it("treats HTTP 4xx and 5xx as ready", async () => {
     await waitForReady({
-      url: "http://127.0.0.1:1",
+      url: "http://localhost:1",
       timeoutMs: 100,
       pollMs: 5,
       probe: async () => ({ ok: false, status: 404 }),
       sleep: async () => undefined,
     });
 
+    await waitForReady({
+      url: "http://localhost:1",
+      timeoutMs: 100,
+      pollMs: 5,
+      probe: async () => ({ ok: false, status: 500 }),
+      sleep: async () => undefined,
+    });
+  });
+
+  it("keeps polling when probe has no HTTP status", async () => {
     await expect(
       waitForReady({
-        url: "http://127.0.0.1:1",
+        url: "http://localhost:1",
         timeoutMs: 30,
         pollMs: 5,
-        probe: async () => ({ ok: false, status: 500 }),
+        probe: async () => ({ ok: false }),
         sleep: async () => new Promise((r) => setTimeout(r, 5)),
       }),
     ).rejects.toThrow(/did not become ready/);
@@ -333,7 +422,7 @@ describe("waitForReady", () => {
   it("aborts when signal is aborted", async () => {
     const abort = new AbortController();
     const promise = waitForReady({
-      url: "http://127.0.0.1:1",
+      url: "http://localhost:1",
       timeoutMs: 5_000,
       pollMs: 50,
       signal: abort.signal,

@@ -25,6 +25,8 @@ export const MAX_STDERR_CHARS = 8_192;
 /** Abstract child process used by PreviewManager (real Bun subprocess or fake). */
 export type PreviewChildProcess = {
   killed: boolean;
+  /** OS pid when available; used for process-group teardown. */
+  pid?: number;
   exited: Promise<number>;
   stdout: ReadableStream<Uint8Array> | null;
   stderr: ReadableStream<Uint8Array> | null;
@@ -100,6 +102,7 @@ export function wrapBunSubprocess(proc: Subprocess): PreviewChildProcess {
     get killed() {
       return proc.killed;
     },
+    pid: proc.pid,
     exited: proc.exited,
     stdout: proc.stdout as ReadableStream<Uint8Array> | null,
     stderr: proc.stderr as ReadableStream<Uint8Array> | null,

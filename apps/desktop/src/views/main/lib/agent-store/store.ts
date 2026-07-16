@@ -233,7 +233,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
   updateTab: (id, partial) => {
     const state = get();
     const tab = state.tabs[id];
-    if (!tab) return;
+    if (!tab) return false;
 
     if (partial.messages) {
       syncMessageCounter([partial.messages]);
@@ -258,7 +258,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       }
       return a !== b;
     });
-    if (!changed) return;
+    if (!changed) return false;
 
     set((state) => {
       const tab = state.tabs[id];
@@ -280,6 +280,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         ...rebuildDerived({ ...state, tabs }, tabs),
       };
     });
+    return true;
   },
 
   renameTab: (id, title) => {

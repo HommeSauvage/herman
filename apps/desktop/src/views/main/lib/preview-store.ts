@@ -2,9 +2,9 @@ import { create } from "zustand";
 
 import type { DevServer, ProjectManifestView } from "../../../shared/herman-manifest.js";
 import type { PreviewLogEvent, PreviewServerSnapshot } from "../../../shared/preview.js";
-import type { DesktopRpc, TabId } from "../../../shared/rpc.js";
+import type { DesktopRpc } from "../../../shared/rpc.js";
 import type { PreviewRuntimeError } from "../components/preview-error-banner.js";
-import { sendPrompt as realSendPrompt } from "./agent-actions.js";
+import { useAgentStore } from "./agent-store.js";
 import { desktopRpc as realDesktopRpc } from "./desktop-rpc.js";
 import {
   appendRuntimeError,
@@ -29,16 +29,10 @@ export type PreviewRpcDeps = {
       | "discardSession"
     >;
   };
-  sendPrompt: (
-    tabId: TabId,
-    text: string,
-    options?: { keepComposer?: boolean; skipAttachments?: boolean },
-  ) => Promise<void>;
 };
 
 const defaultRpcDeps: PreviewRpcDeps = {
   desktopRpc: realDesktopRpc,
-  sendPrompt: realSendPrompt,
 };
 
 export type DeviceMode = "desktop" | "tablet" | "mobile";
@@ -78,7 +72,6 @@ type PreviewStoreState = {
   errorIdCounter: number;
   deviceMode: DeviceMode;
   discardDialogOpen: boolean;
-  askInFlight: boolean;
 };
 
 type PreviewActivateContext = {
@@ -98,7 +91,7 @@ type PreviewStoreActions = {
   refreshDraft: () => Promise<void>;
   applyDraft: () => Promise<void>;
   discardDraft: () => Promise<void>;
-  askHermanToFix: (error: string, context: "preview" | "save" | "runtime") => Promise<void>;
+  askHermanToFix: (error: string, context: "preview" | "save" | "runtime") => void;
   dismissRuntimeErrors: () => void;
   setDeviceMode: (mode: DeviceMode) => void;
   setDiscardDialogOpen: (open: boolean) => void;
@@ -129,7 +122,6 @@ const initialState = (): PreviewStoreState => ({
   errorIdCounter: 0,
   deviceMode: "desktop",
   discardDialogOpen: false,
-  askInFlight: false,
 });
 
 function isCurrent(
@@ -147,7 +139,7 @@ function isCurrent(
 export type PreviewStore = PreviewStoreState & PreviewStoreActions;
 
 export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
-  const { desktopRpc, sendPrompt } = rpcDeps;
+  const { desktopRpc } = rpcDeps;
   return create<PreviewStore>((set, get) => ({
     ...initialState(),
 
@@ -302,6 +294,11 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         // Clear runtime errors when URL changes (server switch).
         if (prevUrl !== null && snapshot.url && prevUrl !== snapshot.url) {
           next.runtimeErrors = [];
+          next.bannerDismissed = false;
+        }
+        // When server becomes ready and we have accumulated runtime errors,
+        // ensure the banner is explicitly undismissed so it shows immediately.
+        if (state.runtimeErrors.length > 0 && state.bannerDismissed) {
           next.bannerDismissed = false;
         }
       }
@@ -529,19 +526,12 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
       }
     },
 
-    askHermanToFix: async (error, context) => {
-      const { tabId, generation, folderPath } = get();
+    askHermanToFix: (error, context) => {
+      const { tabId } = get();
       if (!tabId || !error) return;
-      set({ askInFlight: true });
-      try {
-        await sendPrompt(tabId, buildAskHermanPrompt(error, context), {
-          keepComposer: true,
-          skipAttachments: true,
-        });
-      } finally {
-        if (!isCurrent(get(), generation, folderPath, tabId)) return;
-        set({ askInFlight: false });
-      }
+      const promptText = buildAskHermanPrompt(error, context);
+      useAgentStore.getState().setComposerValue(tabId, promptText);
+      useAgentStore.getState().setView("session");
     },
 
     dismissRuntimeErrors: () => set({ bannerDismissed: true }),

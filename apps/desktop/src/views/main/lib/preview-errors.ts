@@ -53,7 +53,7 @@ ${error}
 Please investigate and fix it so the preview can run again. Check the project configuration, dependencies, install command, and dev server setup.`;
   }
   if (context === "runtime") {
-    return `The live preview is showing errors. Please investigate and fix them so the preview works correctly.
+    return `The server is showing errors. Please investigate and fix them.
 
 Errors:
 ${error}
