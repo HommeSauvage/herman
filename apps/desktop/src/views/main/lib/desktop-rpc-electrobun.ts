@@ -40,6 +40,7 @@ const rpc = Electroview.defineRPC<HermanDesktopRPC>({
       adEvent: messageHandler("adEvent"),
       adVisibilityChanged: messageHandler("adVisibilityChanged"),
       previewStatusChanged: messageHandler("previewStatusChanged"),
+      previewLog: messageHandler("previewLog"),
       wizardEvent: messageHandler("wizardEvent"),
     },
   },

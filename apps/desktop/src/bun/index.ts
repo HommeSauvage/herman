@@ -36,12 +36,13 @@ import { rewindManager, getUserMessageIds } from "./rewind-manager.js";
 import { resolveShellEnv } from "./shell-env.js";
 import { clearAllTabHistory } from "./tab-history.js";
 import {
-  startDevServer,
-  startAllDevServers,
+  ensurePreviewStarted,
+  restartPreview as restartPreviewServers,
   stopDevServer,
   getDevServerStatus,
   stopAllDevServers,
   setPreviewStatusHandler,
+  setPreviewLogHandler,
 } from "./preview-server.js";
 import { readProjectManifest, setupProjectRepo } from "./project-manifest.js";
 import { checkRequirements } from "./requirements.js";
@@ -727,21 +728,27 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       startPreview: async ({ folderPath, serverId, devCommand, devPort, all }) => {
         const manifest = await readProjectManifest(folderPath);
-        const installCommand = all ? (manifest?.install ?? detectInstallCommand(folderPath)) : undefined;
+        const installCommand =
+          all || (!devCommand && !serverId)
+            ? (manifest?.install ?? detectInstallCommand(folderPath))
+            : undefined;
         if (all || (!devCommand && !serverId)) {
           if (manifest?.servers?.length) {
-            return startAllDevServers(folderPath, manifest.servers, installCommand);
+            return ensurePreviewStarted(folderPath, {
+              servers: manifest.servers,
+              installCommand,
+              all: true,
+            });
           }
         }
         const server = serverId
           ? manifest?.servers?.find((s) => s.id === serverId)
-          : manifest?.primary ?? manifest?.servers?.[0];
-        return startDevServer(folderPath, {
+          : (manifest?.primary ?? manifest?.servers?.[0]);
+        return ensurePreviewStarted(folderPath, {
           serverId: server?.id ?? serverId ?? "web",
           command: devCommand ?? server?.command,
           port: devPort ?? server?.port,
           exportUrlAs: server?.exportUrlAs,
-          primary: true,
           installCommand,
         });
       },
@@ -749,22 +756,30 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         await stopDevServer(folderPath, serverId);
       },
       restartPreview: async ({ folderPath, serverId, devCommand, devPort, all }) => {
-        await stopDevServer(folderPath, serverId);
         const manifest = await readProjectManifest(folderPath);
+        const installCommand =
+          all || (!devCommand && !serverId)
+            ? (manifest?.install ?? detectInstallCommand(folderPath))
+            : undefined;
         if (all || (!devCommand && !serverId)) {
           if (manifest?.servers?.length) {
-            return startAllDevServers(folderPath, manifest.servers);
+            return restartPreviewServers(folderPath, {
+              servers: manifest.servers,
+              installCommand,
+              all: true,
+            });
           }
         }
         const server = serverId
           ? manifest?.servers?.find((s) => s.id === serverId)
-          : manifest?.primary ?? manifest?.servers?.[0];
-        return startDevServer(folderPath, {
+          : (manifest?.primary ?? manifest?.servers?.[0]);
+        return restartPreviewServers(folderPath, {
           serverId: server?.id ?? serverId ?? "web",
           command: devCommand ?? server?.command,
           port: devPort ?? server?.port,
           exportUrlAs: server?.exportUrlAs,
-          primary: true,
+          installCommand,
+          all: false,
         });
       },
       getPreviewStatus: async ({ folderPath, serverId }) => {
@@ -917,6 +932,10 @@ const agentProcessManager = new AgentProcessManager({
 
 setPreviewStatusHandler((payload) => {
   webviewRpc.send.previewStatusChanged(payload);
+});
+
+setPreviewLogHandler((payload) => {
+  webviewRpc.send.previewLog(payload);
 });
 
 const wizardSessionManager = new WizardSessionManager((event) => {

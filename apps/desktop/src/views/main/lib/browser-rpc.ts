@@ -56,6 +56,7 @@ function createBrowserRpc(): DesktopRpc {
     adVisibilityChanged: [],
     activationComplete: [],
     previewStatusChanged: [],
+    previewLog: [],
     updateStatus: [],
     wizardEvent: [],
   };
@@ -253,13 +254,27 @@ function createBrowserRpc(): DesktopRpc {
       applySession: async () => ({ status: "error" as const, error: "Unavailable in browser mock" }),
       discardSession: async () => {},
       startPreview: async ({ folderPath }: { folderPath: string }) => ({
+        folderPath,
+        serverId: "web",
+        phase: "ready" as const,
         url: `http://localhost:4321`,
         port: 4321,
-        serverId: "web",
+        starting: false,
       }),
       stopPreview: async () => {},
-      restartPreview: async () => ({ url: `http://localhost:4321`, port: 4321, serverId: "web" }),
-      getPreviewStatus: async () => ({ running: false }),
+      restartPreview: async ({ folderPath }: { folderPath: string }) => ({
+        folderPath,
+        serverId: "web",
+        phase: "ready" as const,
+        url: `http://localhost:4321`,
+        port: 4321,
+        starting: false,
+      }),
+      getPreviewStatus: async ({ folderPath }: { folderPath: string }) => ({
+        folderPath,
+        phase: "stopped" as const,
+        servers: [],
+      }),
       getProjectManifest: async () => undefined,
       getSkills: async () => ({ skills: [] }),
       installSkill: async ({ name }: { name: string; content: string }) => ({

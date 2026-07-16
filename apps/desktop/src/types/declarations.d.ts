@@ -42,6 +42,7 @@ declare namespace React {
           partition?: string;
           sandbox?: boolean | string;
           masks?: string;
+          preload?: string;
           hidden?: boolean;
           transparent?: boolean;
           renderer?: "native" | "cef";

@@ -3,17 +3,24 @@ import { createServer as createHttpServer } from "node:http";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createTestTempDir } from "../helpers/temp-dir.js";
 import {
   allocatePorts,
   buildExportEnv,
+  ensurePreviewStarted,
   findFreePort,
+  getDevServerStatus,
+  probeUrlForPort,
+  setPreviewStatusHandler,
   startAllDevServers,
+  startDevServer,
+  stopAllDevServers,
   stopDevServer,
   waitForReady,
 } from "../../src/bun/preview-server.js";
+import type { PreviewServerSnapshot } from "../../src/shared/preview.js";
 import type { DevServer } from "../../src/shared/herman-manifest.js";
 
 let server: ReturnType<typeof createServer> | undefined;
@@ -31,6 +38,27 @@ afterAll(async () => {
     await new Promise<void>((resolve) => server!.close(() => resolve()));
   }
 });
+
+function waitForStatus(
+  folderPath: string,
+  predicate: (payload: PreviewServerSnapshot) => boolean,
+  timeoutMs = 10_000,
+): Promise<PreviewServerSnapshot> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      setPreviewStatusHandler(() => undefined);
+      reject(new Error(`Timed out waiting for preview status (${timeoutMs}ms)`));
+    }, timeoutMs);
+
+    setPreviewStatusHandler((payload) => {
+      if (payload.folderPath !== folderPath) return;
+      if (!predicate(payload)) return;
+      clearTimeout(timer);
+      setPreviewStatusHandler(() => undefined);
+      resolve(payload);
+    });
+  });
+}
 
 describe("preview server helpers", () => {
   it("finds a free port when preferred is taken", async () => {
@@ -117,9 +145,13 @@ describe("buildExportEnv", () => {
 });
 
 describe("startAllDevServers export injection", () => {
+  afterEach(async () => {
+    setPreviewStatusHandler(() => undefined);
+    await stopAllDevServers();
+  });
+
   it("injects sibling exportUrlAs env into spawned children", async () => {
     const dir = createTestTempDir("herman-preview-export-");
-    // Skip bun/npm install inside startDevServer.
     mkdirSync(join(dir, "node_modules"), { recursive: true });
 
     const writeScript = (path: string, role: string) => {
@@ -144,6 +176,8 @@ createServer((_req, res) => { res.writeHead(200); res.end("ok"); }).listen(port,
     writeScript(apiScript, "api");
     writeScript(webScript, "web");
 
+    const ready = waitForStatus(dir, (p) => p.phase === "ready" && Boolean(p.url));
+
     const result = await startAllDevServers(dir, [
       {
         id: "api",
@@ -163,6 +197,10 @@ createServer((_req, res) => { res.writeHead(200); res.end("ok"); }).listen(port,
 
     try {
       expect(result.serverId).toBe("web");
+      expect(result.starting).toBe(true);
+      await ready;
+
+      await waitForReady(probeUrlForPort(result.port!), 5_000);
       const apiEnv = JSON.parse(
         await Bun.file(join(dir, "api-env.json")).text(),
       ) as Record<string, string>;
@@ -176,6 +214,262 @@ createServer((_req, res) => { res.writeHead(200); res.end("ok"); }).listen(port,
       expect(webEnv.API_URL).toBe(apiEnv.API_SERVER);
       expect(apiEnv.PORT).not.toBe(webEnv.PORT);
       expect(webEnv.API_SERVER).toContain(`:${apiEnv.PORT}`);
+    } finally {
+      await stopDevServer(dir);
+    }
+  });
+
+  it("passes quoted command arguments intact via sh -c", async () => {
+    const dir = createTestTempDir("herman-preview-quoted-");
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+    const scriptPath = join(dir, "ready.ts");
+    writeFileSync(
+      scriptPath,
+      `
+import { createServer } from "node:http";
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(join(dir, "args.json"))}, JSON.stringify(process.argv.slice(2)));
+const port = Number(process.env.PORT);
+createServer((_req, res) => { res.writeHead(200); res.end("ok"); }).listen(port, "127.0.0.1");
+`,
+    );
+
+    const port = await findFreePort(46600);
+    const ready = waitForStatus(dir, (p) => p.phase === "ready");
+    try {
+      await startDevServer(dir, {
+        serverId: "web",
+        command: `bun ${scriptPath} --label "hello world"`,
+        resolvedPort: port,
+        primary: true,
+        readyTimeoutMs: 10_000,
+      });
+      await ready;
+      const args = JSON.parse(await Bun.file(join(dir, "args.json")).text()) as string[];
+      expect(args).toContain("--label");
+      expect(args).toContain("hello world");
+    } finally {
+      await stopDevServer(dir);
+    }
+  });
+});
+
+describe("async preview start", () => {
+  afterEach(async () => {
+    setPreviewStatusHandler(() => undefined);
+    await stopAllDevServers();
+  });
+
+  it("returns before HTTP ready and emits ready only after probe succeeds", async () => {
+    const dir = createTestTempDir("herman-preview-async-");
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+    const scriptPath = join(dir, "delay-ready.ts");
+    writeFileSync(
+      scriptPath,
+      `
+import { createServer } from "node:http";
+const port = Number(process.env.PORT);
+setTimeout(() => {
+  createServer((_req, res) => { res.writeHead(200); res.end("ok"); })
+    .listen(port, "127.0.0.1");
+}, 500);
+`,
+    );
+
+    const port = await findFreePort(46200);
+    const readyPromise = waitForStatus(dir, (p) => p.phase === "ready" && Boolean(p.url), 10_000);
+
+    const result = await startDevServer(dir, {
+      serverId: "web",
+      command: `bun ${scriptPath}`,
+      resolvedPort: port,
+      primary: true,
+      readyTimeoutMs: 10_000,
+    });
+
+    expect(result.phase === "starting" || result.starting).toBe(true);
+    expect(result.starting).toBe(true);
+    expect(getDevServerStatus(dir, "web").servers[0]?.phase).not.toBe("ready");
+
+    try {
+      const ready = await readyPromise;
+      expect(ready.phase).toBe("ready");
+      expect(ready.url).toBe(`http://localhost:${port}`);
+      expect(getDevServerStatus(dir, "web").servers[0]?.phase).toBe("ready");
+    } finally {
+      await stopDevServer(dir);
+    }
+  });
+
+  it("resumes an existing server after readiness timeout without spawning twice", async () => {
+    const dir = createTestTempDir("herman-preview-resume-");
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+    const scriptPath = join(dir, "delay-ready.ts");
+    writeFileSync(
+      scriptPath,
+      `
+import { createServer } from "node:http";
+const port = Number(process.env.PORT);
+setTimeout(() => {
+  createServer((_req, res) => { res.writeHead(200); res.end("ok"); })
+    .listen(port, "127.0.0.1");
+}, 2500);
+`,
+    );
+
+    const command = `bun ${scriptPath}`;
+    const port = await findFreePort(46100);
+
+    const first = await startDevServer(dir, {
+      serverId: "web",
+      command,
+      resolvedPort: port,
+      primary: true,
+      readyTimeoutMs: 800,
+    });
+    expect(first.starting).toBe(true);
+
+    const timeoutStatus = await waitForStatus(
+      dir,
+      (p) => p.phase === "failed" && Boolean(p.error && /did not become ready/.test(p.error)),
+      5_000,
+    );
+    expect(timeoutStatus.error).toMatch(/did not become ready/);
+
+    const status = getDevServerStatus(dir, "web");
+    expect(status.servers.length).toBe(1);
+    expect(status.servers[0]?.url).toBe(`http://localhost:${port}`);
+
+    try {
+      const second = await startDevServer(dir, {
+        serverId: "web",
+        command,
+        resolvedPort: port,
+        primary: true,
+        readyTimeoutMs: 10_000,
+      });
+      expect(second.port).toBe(port);
+      expect(second.starting || second.phase === "ready").toBe(true);
+
+      const ready = await waitForStatus(dir, (p) => p.phase === "ready" && Boolean(p.url), 10_000);
+      expect(ready.url).toBe(`http://localhost:${port}`);
+    } finally {
+      await stopDevServer(dir);
+    }
+  });
+
+  it("single-flights ensurePreviewStarted so concurrent kicks do not double-spawn", async () => {
+    const dir = createTestTempDir("herman-preview-flight-");
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+    const scriptPath = join(dir, "delay-ready.ts");
+    writeFileSync(
+      scriptPath,
+      `
+import { createServer } from "node:http";
+const port = Number(process.env.PORT);
+setTimeout(() => {
+  createServer((_req, res) => { res.writeHead(200); res.end("ok"); })
+    .listen(port, "127.0.0.1");
+}, 800);
+`,
+    );
+
+    const port = await findFreePort(46400);
+    const ready = waitForStatus(dir, (p) => p.phase === "ready" && Boolean(p.url));
+
+    const [a, b] = await Promise.all([
+      ensurePreviewStarted(dir, {
+        serverId: "web",
+        command: `bun ${scriptPath}`,
+        port,
+        readyTimeoutMs: 10_000,
+      }),
+      ensurePreviewStarted(dir, {
+        serverId: "web",
+        command: `bun ${scriptPath}`,
+        port,
+        readyTimeoutMs: 10_000,
+      }),
+    ]);
+
+    expect(a.starting || a.phase === "ready").toBe(true);
+    expect(b.starting || b.phase === "ready").toBe(true);
+
+    try {
+      await ready;
+      const status = getDevServerStatus(dir, "web");
+      expect(status.servers.length).toBe(1);
+    } finally {
+      await stopDevServer(dir);
+    }
+  });
+
+  it("does not surface SIGTERM as an error when stopDevServer kills the process", async () => {
+    const dir = createTestTempDir("herman-preview-sigterm-");
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+    const scriptPath = join(dir, "ready.ts");
+    writeFileSync(
+      scriptPath,
+      `
+import { createServer } from "node:http";
+const port = Number(process.env.PORT);
+createServer((_req, res) => { res.writeHead(200); res.end("ok"); }).listen(port, "127.0.0.1");
+`,
+    );
+
+    const port = await findFreePort(46500);
+    const errors: string[] = [];
+    setPreviewStatusHandler((p) => {
+      if (p.folderPath === dir && p.phase === "failed" && p.error) errors.push(p.error);
+    });
+
+    await startDevServer(dir, {
+      serverId: "web",
+      command: `bun ${scriptPath}`,
+      resolvedPort: port,
+      primary: true,
+      readyTimeoutMs: 10_000,
+    });
+    await waitForStatus(dir, (p) => p.phase === "ready" && Boolean(p.url), 10_000);
+
+    await stopDevServer(dir);
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(errors).toEqual([]);
+  });
+
+  it("skips installCommand when node_modules exists", async () => {
+    const dir = createTestTempDir("herman-preview-skip-install-");
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+
+    const scriptPath = join(dir, "ready.ts");
+    writeFileSync(
+      scriptPath,
+      `
+import { createServer } from "node:http";
+const port = Number(process.env.PORT);
+createServer((_req, res) => { res.writeHead(200); res.end("ok"); }).listen(port, "127.0.0.1");
+`,
+    );
+
+    const port = await findFreePort(46300);
+    const ready = waitForStatus(dir, (p) => p.phase === "ready" && Boolean(p.url));
+    try {
+      const result = await startDevServer(dir, {
+        serverId: "web",
+        command: `bun ${scriptPath}`,
+        resolvedPort: port,
+        primary: true,
+        installCommand: "exit 1",
+        readyTimeoutMs: 10_000,
+      });
+      expect(result.url).toBe(`http://localhost:${port}`);
+      await ready;
     } finally {
       await stopDevServer(dir);
     }

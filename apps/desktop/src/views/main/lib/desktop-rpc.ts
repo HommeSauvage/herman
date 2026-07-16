@@ -1,6 +1,10 @@
 import type { AdPlacement, AgentCommand, AgentEvent } from "../../../shared/agent-protocol.js";
 import type { AgentStatus, DesktopRpc, OutgoingMessages } from "../../../shared/rpc.js";
 import { getLogger } from "@logtape/logtape";
+import {
+  PendingMessageListenerRegistry,
+  type MessageListenerFacade,
+} from "./pending-message-listeners.js";
 
 const logger = getLogger(["herman-desktop", "view", "desktop-rpc"]);
 
@@ -19,6 +23,11 @@ async function loadImpl(): Promise<DesktopRpc> {
   }
   return impl!;
 }
+
+const listenerRegistry = new PendingMessageListenerRegistry(async () => {
+  const rpc = await loadImpl();
+  return rpc as MessageListenerFacade;
+});
 
 export const desktopRpc = new Proxy({} as DesktopRpc, {
   get(_target, prop) {
@@ -61,25 +70,21 @@ export const desktopRpc = new Proxy({} as DesktopRpc, {
       );
     }
 
-    if (prop === "addMessageListener" || prop === "removeMessageListener") {
-      return (...args: unknown[]) => {
-        if (impl) {
-          return (impl as unknown as Record<string, (...args: unknown[]) => void>)[prop as string](
-            ...args,
-          );
-        }
-        loadImpl()
-          .then((rpc) =>
-            (rpc as unknown as Record<string, (...args: unknown[]) => void>)[prop as string](
-              ...args,
-            ),
-          )
-          .catch((err: unknown) => {
-            logger.error("Failed to register message listener", {
-              prop: String(prop),
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
+    if (prop === "addMessageListener") {
+      return <N extends keyof OutgoingMessages>(
+        name: N,
+        handler: (payload: OutgoingMessages[N]) => void,
+      ) => {
+        listenerRegistry.addMessageListener(name, handler);
+      };
+    }
+
+    if (prop === "removeMessageListener") {
+      return <N extends keyof OutgoingMessages>(
+        name: N,
+        handler: (payload: OutgoingMessages[N]) => void,
+      ) => {
+        listenerRegistry.removeMessageListener(name, handler);
       };
     }
 
@@ -93,3 +98,8 @@ export const desktopRpc = new Proxy({} as DesktopRpc, {
     };
   },
 });
+
+/** Test-only access to the pending-listener registry. */
+export function __getPendingListenerRegistryForTests(): PendingMessageListenerRegistry {
+  return listenerRegistry;
+}

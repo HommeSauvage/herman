@@ -14,7 +14,21 @@ import type {
   RequirementCheckResult,
   ResolvedManifest,
 } from "./herman-manifest.js";
+import type {
+  PreviewFleetSnapshot,
+  PreviewLogEvent,
+  PreviewServerSnapshot,
+  PreviewStartResponse,
+} from "./preview.js";
 import type { WizardAskEnvelope } from "./wizard-protocol.js";
+
+export type {
+  PreviewFleetSnapshot,
+  PreviewLogEvent,
+  PreviewPhase,
+  PreviewServerSnapshot,
+  PreviewStartResponse,
+} from "./preview.js";
 
 /** Recovery payload for an interrupted Rookie wizard (cold start or HMR). */
 export type WizardRecoveryPayload = {
@@ -398,15 +412,9 @@ export type OutgoingMessages = {
   adEvent: { tabId: TabId; placement: AdPlacement; campaign: AdCampaign };
   adVisibilityChanged: { focused: boolean; visible: boolean };
   activationComplete: Session;
-  previewStatusChanged: {
-    folderPath: string;
-    serverId?: string;
-    url?: string;
-    running: boolean;
-    port?: number;
-    /** Server stderr / install error when the preview server exits or fails. */
-    error?: string;
-  };
+  /** Complete snapshot — renderer reduces one event atomically. */
+  previewStatusChanged: PreviewServerSnapshot;
+  previewLog: PreviewLogEvent;
 };
 
 export type HermanDesktopRPC = {
@@ -717,7 +725,7 @@ export type HermanDesktopRPC = {
           /** When true (default for HERMAN.md projects), start all configured servers. */
           all?: boolean;
         };
-        response: { url?: string; port: number; serverId?: string };
+        response: PreviewStartResponse;
       };
       stopPreview: {
         params: { folderPath: string; serverId?: string };
@@ -731,17 +739,11 @@ export type HermanDesktopRPC = {
           devPort?: number;
           all?: boolean;
         };
-        response: { url?: string; port: number; serverId?: string };
+        response: PreviewStartResponse;
       };
       getPreviewStatus: {
         params: { folderPath: string; serverId?: string };
-        response: {
-          running: boolean;
-          url?: string;
-          port?: number;
-          serverId?: string;
-          servers?: { serverId: string; running: boolean; url?: string; port?: number }[];
-        };
+        response: PreviewFleetSnapshot;
       };
       getProjectManifest: {
         params: { folderPath: string };
