@@ -6,7 +6,7 @@ import {
   normalizeExportUrlAs,
   type DevServer,
 } from "../shared/herman-manifest.js";
-import { ensureWorktreeDependencies } from "./worktree.js";
+import { runInstallCommand } from "./worktree.js";
 
 const logger = getLogger(["herman-desktop", "preview"]);
 
@@ -29,6 +29,7 @@ let previewStatusHandler:
       url?: string;
       running: boolean;
       port?: number;
+      error?: string;
     }) => void)
   | undefined;
 
@@ -43,6 +44,7 @@ export function setPreviewStatusHandler(
     url?: string;
     running: boolean;
     port?: number;
+    error?: string;
   }) => void,
 ) {
   previewStatusHandler = handler;
@@ -120,14 +122,6 @@ export async function waitForReady(url: string, timeoutMs = 20_000): Promise<voi
   throw new Error(`Preview server did not become ready at ${url}`);
 }
 
-function buildCommand(command: string, port: number): string[] {
-  const parts = command.split(" ");
-  if (command.includes(" run dev") || command.endsWith(" dev") || command.includes("dev:")) {
-    return [...parts, "--", "--port", String(port)];
-  }
-  return parts;
-}
-
 type StartDevServerOpts = {
   serverId?: string;
   label?: string;
@@ -141,6 +135,8 @@ type StartDevServerOpts = {
   /** Own exportUrlAs aliases when starting a single server. */
   exportUrlAs?: string | string[];
   primary?: boolean;
+  /** Shell command to install dependencies (e.g. from herman.yaml dev.install). Run before dev server. */
+  installCommand?: string;
 };
 
 /**
@@ -157,10 +153,13 @@ export async function startDevServer(
     await stopDevServer(folderPath, serverId);
   }
 
+  if (opts?.installCommand) {
+    await runInstallCommand(folderPath, opts.installCommand);
+  }
+
   const resolvedPort =
     opts?.resolvedPort ?? (await findFreePort(opts?.port ?? 4321));
   const command = opts?.command ?? "npm run dev";
-  await ensureWorktreeDependencies(folderPath);
 
   const ownExportEnv: Record<string, string> = {};
   const ownUrl = `http://localhost:${resolvedPort}`;
@@ -168,7 +167,7 @@ export async function startDevServer(
     ownExportEnv[keyName] = ownUrl;
   }
 
-  const [cmd, ...args] = buildCommand(command, resolvedPort);
+  const [cmd, ...args] = command.split(" ");
 
   logger.info("Starting dev server", {
     folderPath,
@@ -208,6 +207,7 @@ export async function startDevServer(
   });
 
   const decoder = new TextDecoder();
+  const stderrChunks: string[] = [];
   const reader = proc.stderr.getReader();
   void (async () => {
     try {
@@ -215,9 +215,9 @@ export async function startDevServer(
         const { done, value } = await reader.read();
         if (done) break;
         if (value) {
-          logger.debug(`[preview stderr] ${folderPath}/${serverId}`, {
-            msg: decoder.decode(value),
-          });
+          const text = decoder.decode(value);
+          stderrChunks.push(text);
+          logger.debug(`[preview stderr] ${folderPath}/${serverId}`, { msg: text });
         }
       }
     } catch {
@@ -226,9 +226,21 @@ export async function startDevServer(
   })();
 
   void proc.exited.then((exitCode) => {
-    logger.info("Dev server exited", { folderPath, serverId, exitCode });
+    const error = exitCode !== 0
+      ? stderrChunks.join("").slice(0, 800)
+      : undefined;
+    if (error) {
+      logger.warning("Dev server exited with error", {
+        folderPath,
+        serverId,
+        exitCode,
+        stderr: error,
+      });
+    } else {
+      logger.info("Dev server exited", { folderPath, serverId, exitCode });
+    }
     previews.delete(key);
-    previewStatusHandler?.({ folderPath, serverId, running: false });
+    previewStatusHandler?.({ folderPath, serverId, running: false, error });
   });
 
   await waitForReady(instance.url);
@@ -238,14 +250,20 @@ export async function startDevServer(
 /**
  * Start all servers from a project manifest (herman.yaml / HERMAN.md).
  * Pre-allocates ports and injects exportUrlAs sibling URL env aliases.
+ * Runs installCommand once before starting any servers.
  * Returns the primary server's URL/port.
  */
 export async function startAllDevServers(
   folderPath: string,
   servers: DevServer[],
+  installCommand?: string,
 ): Promise<{ url?: string; port: number; serverId: string }> {
   if (servers.length === 0) {
-    return startDevServer(folderPath, { serverId: "web", primary: true });
+    return startDevServer(folderPath, { serverId: "web", primary: true, installCommand });
+  }
+
+  if (installCommand) {
+    await runInstallCommand(folderPath, installCommand);
   }
 
   const primary = servers.find((s) => s.primary) ?? servers[0]!;

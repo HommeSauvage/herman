@@ -404,6 +404,8 @@ export type OutgoingMessages = {
     url?: string;
     running: boolean;
     port?: number;
+    /** Server stderr / install error when the preview server exits or fails. */
+    error?: string;
   };
 };
 

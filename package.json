@@ -1,5 +1,5 @@
 {
-	"name": "clique-herman",
+	"name": "herman",
 	"private": true,
 	"workspaces": [
 		"apps/*",

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, stat, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -62,25 +62,72 @@ export async function initProjectRepo(projectPath: string): Promise<void> {
   );
 }
 
-export async function ensureNodeModulesInstalled(folderPath: string): Promise<void> {
-  if (existsSync(join(folderPath, "node_modules"))) {
-    return;
-  }
+/** Detect the default install command for a project based on lockfiles. */
+export function detectInstallCommand(folderPath: string): string {
+  const hasBunLock =
+    existsSync(join(folderPath, "bun.lock")) || existsSync(join(folderPath, "bun.lockb"));
+  return hasBunLock ? "bun install" : "npm install";
+}
 
-  const hasBunLock = existsSync(join(folderPath, "bun.lock")) || existsSync(join(folderPath, "bun.lockb"));
-  const command = hasBunLock ? "bun install" : "npm install";
-  await git(`rev-parse --show-toplevel`, folderPath).catch(() => undefined);
-  const [cmd, ...args] = command.split(" ");
-  const proc = Bun.spawn([cmd, ...args], {
+/**
+ * Run an install command in folderPath with a timeout, draining stdout.
+ * Throws on non-zero exit.
+ */
+export async function runInstallCommand(folderPath: string, installCommand: string, timeoutMs = 300_000): Promise<void> {
+  logger.info("Running install command", { folderPath, installCommand });
+  const proc = Bun.spawn(["sh", "-c", installCommand], {
     cwd: folderPath,
     stdout: "pipe",
     stderr: "pipe",
     env: process.env,
   });
-  const code = await proc.exited;
-  if (code !== 0) {
-    throw new Error(`Failed to install dependencies in ${folderPath} (exit ${code})`);
+
+  // Drain stdout asynchronously so the child never blocks on a full pipe.
+  void (async () => {
+    const reader = proc.stdout.getReader();
+    try {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch {
+      // Ignore read errors.
+    }
+  })();
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let exitCode: number;
+  try {
+    exitCode = await Promise.race([
+      proc.exited,
+      new Promise<number>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`Install timed out after ${timeoutMs / 1000}s: ${installCommand}`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } catch (err) {
+    proc.kill();
+    throw err;
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId);
   }
+
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    throw new Error(`Install command failed (exit ${exitCode}): ${installCommand}\n${stderr.slice(0, 500)}`);
+  }
+
+  logger.info("Install command completed", { folderPath });
+}
+
+export async function ensureNodeModulesInstalled(folderPath: string): Promise<void> {
+  if (existsSync(join(folderPath, "node_modules"))) {
+    return;
+  }
+  const command = detectInstallCommand(folderPath);
+  await runInstallCommand(folderPath, command);
 }
 
 async function copyEnvFiles(sourceDir: string, targetDir: string): Promise<void> {
@@ -89,15 +136,6 @@ async function copyEnvFiles(sourceDir: string, targetDir: string): Promise<void>
     if (!entry.isFile() || !entry.name.startsWith(".env")) continue;
     await copyFile(join(sourceDir, entry.name), join(targetDir, entry.name));
   }
-}
-
-async function linkNodeModules(sourceDir: string, targetDir: string): Promise<void> {
-  const src = join(sourceDir, "node_modules");
-  const dest = join(targetDir, "node_modules");
-  if (!existsSync(src) || existsSync(dest)) {
-    return;
-  }
-  await symlink(src, dest, "dir");
 }
 
 /**
@@ -135,11 +173,7 @@ export async function createSessionWorktree(mainFolderPath: string, tabId: TabId
   await mkdir(join(homedir(), "Herman", ".worktrees"), { recursive: true });
   await git(`worktree add "${folderPath}" -b "${branch}" "${baseBranch}"`, repoRoot);
   await copyEnvFiles(repoRoot, folderPath);
-  try {
-    await linkNodeModules(repoRoot, folderPath);
-  } catch {
-    await ensureNodeModulesInstalled(folderPath);
-  }
+  await ensureNodeModulesInstalled(folderPath);
   return {
     folderPath,
     worktree: {

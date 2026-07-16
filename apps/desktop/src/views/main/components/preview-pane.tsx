@@ -18,15 +18,61 @@ import {
   RefreshCw,
   Rocket,
   Smartphone,
+  Sparkles,
   Tablet,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DevServer, ProjectManifestView } from "../../../shared/herman-manifest.js";
+import type { OutgoingMessages } from "../../../shared/rpc.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
+import { sendPrompt } from "../lib/agent-actions.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { useIsActiveTabWorking } from "../lib/agent-store/hooks.js";
 import { PreviewWebview, type PreviewWebviewHandle } from "./preview-webview.js";
+import { SignalButton } from "./ui/signal-button.js";
+
+type PreviewErrorBoxProps = {
+  title: string;
+  subtitle?: string;
+  error: string;
+  onAsk: () => void;
+  onRetry?: () => void;
+  disabled?: boolean;
+};
+
+function PreviewErrorBox({ title, subtitle, error, onAsk, onRetry, disabled }: PreviewErrorBoxProps) {
+  return (
+    <div className="w-full max-w-xl rounded-2xl border border-mist bg-surface/50 p-5 shadow-2xl">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/10">
+          <AlertCircle className="text-red-400" size={20} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-text text-sm font-semibold">{title}</h3>
+          {subtitle && <p className="text-ghost mt-0.5 text-xs">{subtitle}</p>}
+          <div className="text-dim mt-2 max-h-[180px] overflow-y-auto rounded-lg border border-white/[0.06] bg-black/20 p-3 font-mono text-xs whitespace-pre-wrap">
+            {error}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <SignalButton size="sm" onClick={onAsk} disabled={disabled}>
+              <Sparkles size={13} />
+              Ask Herman to fix
+            </SignalButton>
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="text-ghost hover:text-dim rounded-lg border border-white/[0.08] px-3 py-2 text-xs transition hover:bg-white/[0.04]"
+              >
+                Try again
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 type DeviceMode = "desktop" | "tablet" | "mobile";
 
@@ -73,6 +119,7 @@ export function PreviewPane({
   const [sessionChanges, setSessionChanges] = useState(0);
   const [canApply, setCanApply] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [isAsking, setIsAsking] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [deviceMode, setDeviceMode] = useState<DeviceMode>("desktop");
   const webviewRef = useRef<PreviewWebviewHandle>(null);
@@ -130,6 +177,31 @@ export function PreviewPane({
       cancelled = true;
     };
   }, [folderPath]);
+
+  // Listen for runtime preview-server crashes so we can surface them in the UI.
+  useEffect(() => {
+    if (!folderPath) return;
+
+    const handler = (payload: OutgoingMessages["previewStatusChanged"]) => {
+      if (payload.folderPath !== folderPath) return;
+      if (payload.serverId && activeServerId && payload.serverId !== activeServerId) return;
+      if (payload.error) {
+        setStartError(payload.error);
+        setIsRunning(false);
+        return;
+      }
+      if (payload.running && payload.url) {
+        setPreviewUrl(payload.url);
+        setIsRunning(true);
+        setStartError(null);
+      }
+    };
+
+    desktopRpc.addMessageListener("previewStatusChanged", handler);
+    return () => {
+      desktopRpc.removeMessageListener("previewStatusChanged", handler);
+    };
+  }, [folderPath, activeServerId]);
 
   useEffect(() => {
     refreshSessionChanges();
@@ -272,6 +344,29 @@ export function PreviewPane({
       }
     },
     [folderPath],
+  );
+
+  const handleAskHermanToFix = useCallback(
+    (error: string, context: "preview" | "save") => {
+      if (!tabId || !error) return;
+      setIsAsking(true);
+      const prompt =
+        context === "preview"
+          ? `The preview server for this project failed to start or crashed with this error:
+
+${error}
+
+Please investigate and fix it so the preview can run again. Check the project configuration, dependencies, install command, and dev server setup.`
+          : `Saving the draft changes to the main project failed with this error:
+
+${error}
+
+Please fix the issue so the changes can be applied safely.`;
+      void sendPrompt(tabId, prompt, { keepComposer: true, skipAttachments: true }).finally(() =>
+        setIsAsking(false),
+      );
+    },
+    [tabId],
   );
 
   const handleApplySession = useCallback(() => {
@@ -435,7 +530,15 @@ export function PreviewPane({
             </div>
           </div>
           {saveError && (
-            <p className="mt-1.5 text-xs text-red-400">{saveError}</p>
+            <div className="mt-3">
+              <PreviewErrorBox
+                title="Could not save changes"
+                subtitle="Your draft could not be applied to the project."
+                error={saveError}
+                onAsk={() => handleAskHermanToFix(saveError, "save")}
+                disabled={isAsking || isTabWorking || !tabId}
+              />
+            </div>
           )}
         </div>
       )}
@@ -452,14 +555,15 @@ export function PreviewPane({
             <p className="text-dim text-sm">Starting preview server…</p>
           </div>
         ) : startError ? (
-          <div className="flex flex-col items-center gap-3 pt-20">
-            <p className="text-dim text-sm">{startError}</p>
-            <button
-              onClick={handleStartPreview}
-              className="bg-signal hover:bg-signal-dim rounded-lg px-3 py-1.5 text-xs font-semibold text-primary-foreground"
-            >
-              Try again
-            </button>
+          <div className="flex flex-col items-center gap-4 px-4 pt-20">
+            <PreviewErrorBox
+              title="Preview server problem"
+              subtitle="Something went wrong while starting or running the preview."
+              error={startError}
+              onAsk={() => handleAskHermanToFix(startError, "preview")}
+              onRetry={handleStartPreview}
+              disabled={isAsking || isTabWorking || !tabId}
+            />
           </div>
         ) : previewUrl ? (
           <div

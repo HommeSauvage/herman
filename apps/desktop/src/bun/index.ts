@@ -48,7 +48,7 @@ import { checkRequirements } from "./requirements.js";
 import { getGalleryTemplates as loadGalleryTemplates, resolveTemplateManifest } from "./template-registry.js";
 import { WizardSessionManager } from "./wizard-session.js";
 import { listAllSkills, installSkill, removeSkill, searchSkills, installSkillFromCommand, setSkillEnabled as toggleSkill } from "./skills.js";
-import { getSessionChanges, removeSessionWorktree } from "./worktree.js";
+import { detectInstallCommand, getSessionChanges, removeSessionWorktree } from "./worktree.js";
 import {
   loadWindowState,
   saveWindowState,
@@ -727,9 +727,10 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       startPreview: async ({ folderPath, serverId, devCommand, devPort, all }) => {
         const manifest = await readProjectManifest(folderPath);
+        const installCommand = all ? (manifest?.install ?? detectInstallCommand(folderPath)) : undefined;
         if (all || (!devCommand && !serverId)) {
           if (manifest?.servers?.length) {
-            return startAllDevServers(folderPath, manifest.servers);
+            return startAllDevServers(folderPath, manifest.servers, installCommand);
           }
         }
         const server = serverId
@@ -741,6 +742,7 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
           port: devPort ?? server?.port,
           exportUrlAs: server?.exportUrlAs,
           primary: true,
+          installCommand,
         });
       },
       stopPreview: async ({ folderPath, serverId }) => {

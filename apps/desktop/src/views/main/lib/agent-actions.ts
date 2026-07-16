@@ -7,20 +7,22 @@ import { formatAttachmentsForPrompt } from "./attachment-format.js";
 
 const logger = getLogger(["herman-desktop", "view", "agent-actions"]);
 
-export async function sendPrompt(tabId: TabId, text: string) {
+export async function sendPrompt(tabId: TabId, text: string, options?: { keepComposer?: boolean; skipAttachments?: boolean }) {
   const store = useAgentStore.getState();
   const tab = store.tabs[tabId];
   // Serialize pending attachments into the prompt text before the
   // user message is stored / sent.  The agent only ever sees the
   // final string, so the on-screen chips can stay a UI-only concept.
-  const pendingAttachments = tab?.pendingAttachments ?? [];
+  const pendingAttachments = options?.skipAttachments ? [] : (tab?.pendingAttachments ?? []);
   const message = formatAttachmentsForPrompt(text, pendingAttachments);
 
   const messageId = store.appendUserMessage(tabId, message);
-  store.setComposerValue(tabId, "");
+  if (!options?.keepComposer) {
+    store.setComposerValue(tabId, "");
+  }
   // Clear attachments once the prompt is sent — they belong to a
   // single turn and shouldn't be re-sent on the next one.
-  if (pendingAttachments.length > 0) {
+  if (!options?.skipAttachments && pendingAttachments.length > 0) {
     store.clearAttachments(tabId);
   }
   store.setThinking(tabId, true);
