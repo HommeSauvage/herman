@@ -57,18 +57,51 @@ function AppContent() {
         const { projects, sessions } = await desktopRpc.request.getProjectsAndSessions();
         restoreTabs(tabs, activeTabId, projects, sessions);
 
-        // Determine what to show after loading
-        if (currentSession && settings.mode === undefined) {
+        // Interrupted wizard takes priority over empty-projects onboarding.
+        const recovery = await desktopRpc.request.getWizardRecovery().catch(() => null);
+        if (recovery && currentSession && settings.mode === "rookie") {
+          if (recovery.live) {
+            useAgentStore.getState().patchWizard({
+              sessionId: recovery.sessionId,
+              selectedTemplateId: recovery.templateId,
+              description: recovery.description ?? "",
+              progressLines: recovery.progressLines,
+              projectPath: recovery.projectPath ?? null,
+              wizardError: recovery.uiStep === "error" ? recovery.lastError ?? null : null,
+              recoveryMode: false,
+              recoveryBlocked: false,
+              step: recovery.uiStep ?? "working",
+              pendingRequestId: recovery.pendingRequestId ?? null,
+              envelope: recovery.envelope ?? null,
+              retryAttempt: recovery.retryAttempt ?? 0,
+            });
+          } else {
+            useAgentStore.getState().hydrateWizardFromRecovery({
+              sessionId: recovery.sessionId,
+              templateId: recovery.templateId,
+              description: recovery.description,
+              progressLines: recovery.progressLines,
+              projectPath: recovery.projectPath ?? null,
+              wizardError: recovery.lastError ?? recovery.blockedReason ?? null,
+              recoveryBlocked: !recovery.resumable,
+              preferredModel: recovery.preferredModel,
+            });
+          }
+          useAgentStore.getState().setOnboardingVisible(true);
+          setShowOnboarding(true);
+        } else if (currentSession && settings.mode === undefined) {
           // First launch — show mode choice
           setShowModeChoice(true);
         } else if (currentSession && settings.mode === "rookie" && tabs.length === 0 && projects.length === 0) {
           // Rookie mode with no existing projects — show onboarding
+          useAgentStore.getState().setOnboardingVisible(true);
           setShowOnboarding(true);
         }
         logger.info("Renderer init complete", {
           hasSession: Boolean(currentSession),
           tabCount: tabs.length,
           mode: settings.mode,
+          wizardRecovery: Boolean(recovery),
         });
       } catch (error) {
         logger.error("Renderer init failed", {
@@ -185,6 +218,7 @@ function AppContent() {
         onChoose={(mode) => {
           setShowModeChoice(false);
           if (mode === "rookie") {
+            useAgentStore.getState().setOnboardingVisible(true);
             setShowOnboarding(true);
           }
         }}
@@ -198,9 +232,11 @@ function AppContent() {
       <OnboardingWizard
         onComplete={() => {
           setShowOnboarding(false);
+          useAgentStore.getState().setOnboardingVisible(false);
         }}
         onCancel={() => {
           setShowOnboarding(false);
+          useAgentStore.getState().setOnboardingVisible(false);
           setView("home");
         }}
       />

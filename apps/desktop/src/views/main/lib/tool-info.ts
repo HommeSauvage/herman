@@ -48,9 +48,9 @@ export function getToolInfo(toolName: string, args: unknown): ToolInfo {
     case "read": {
       const offset = argNumber(args, "offset");
       const limit = argNumber(args, "limit");
-      const filePath = argString(args, "filePath");
+      const readPath = argString(args, "path");
       const subtitleParts: string[] = [];
-      if (filePath) subtitleParts.push(basename(filePath));
+      if (readPath) subtitleParts.push(basename(readPath));
       if (offset !== undefined) subtitleParts.push(`offset=${offset}`);
       if (limit !== undefined) subtitleParts.push(`limit=${limit}`);
       return {
@@ -64,14 +64,14 @@ export function getToolInfo(toolName: string, args: unknown): ToolInfo {
       return {
         icon: FilePen,
         title: "Write",
-        subtitle: argString(args, "filePath") ? basename(argString(args, "filePath")!) : undefined,
+        subtitle: argString(args, "path") ? basename(argString(args, "path")!) : undefined,
         gerund: "Writing",
       };
     case "edit":
       return {
         icon: Pencil,
         title: "Edit",
-        subtitle: argString(args, "filePath") ? basename(argString(args, "filePath")!) : undefined,
+        subtitle: argString(args, "path") ? basename(argString(args, "path")!) : undefined,
         gerund: "Editing",
       };
     case "apply_patch": {

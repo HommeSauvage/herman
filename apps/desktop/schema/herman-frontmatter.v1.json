@@ -84,7 +84,18 @@
               "label": { "type": "string" },
               "command": { "type": "string" },
               "port": { "type": "integer" },
-              "primary": { "type": "boolean" }
+              "primary": { "type": "boolean" },
+              "exportUrlAs": {
+                "description": "Env var name(s) set on every Herman-spawned server to this server's resolved http://localhost:{port} URL.",
+                "oneOf": [
+                  { "type": "string", "minLength": 1 },
+                  {
+                    "type": "array",
+                    "items": { "type": "string", "minLength": 1 },
+                    "minItems": 1
+                  }
+                ]
+              }
             }
           }
         }

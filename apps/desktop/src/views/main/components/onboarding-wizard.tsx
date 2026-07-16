@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { getLogger } from "@logtape/logtape";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { cn } from "@herman/ui/lib/utils";
 import {
@@ -24,18 +25,17 @@ import {
 
 import type { WizardSessionEvent } from "../../../shared/agent-protocol.js";
 import type { GalleryTemplate } from "../../../shared/herman-manifest.js";
-import type { WizardAskEnvelope } from "../../../shared/wizard-protocol.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
+import type { WizardStep } from "../lib/agent-store/types.js";
 import { useConfetti } from "../hooks/use-confetti.js";
 import { ContentWidth, SignalButton } from "./ui/index.js";
 import { ModelSelector } from "./model-selector.js";
 import { WizardQuestions } from "./wizard-questions.js";
 import { WizardLoading } from "./wizard-loading.js";
+import { ProgressLog } from "./progress-log.js";
 
 const logger = getLogger(["herman-desktop", "view", "onboarding-wizard"]);
-
-type Step = "templates" | "describe" | "working" | "questions" | "done" | "error" | "retrying";
 
 function shortModelLabel(modelId?: string): string {
   if (!modelId) return "Select model";
@@ -104,7 +104,6 @@ function TemplateListItem({
       </AccordionTrigger>
       {template.suitableFor && (
         <AccordionContent className="text-dim text-sm leading-relaxed">
-          {/* Match trigger: icon (20px) + gap-6 so copy lines up with title/description */}
           <div className="flex gap-6">
             <span className="w-5 shrink-0" aria-hidden />
             <p>{template.suitableFor}</p>
@@ -122,44 +121,67 @@ export function OnboardingWizard({
   onComplete: () => void;
   onCancel: () => void;
 }) {
-  const [step, setStep] = useState<Step>("templates");
   const [templates, setTemplates] = useState<GalleryTemplate[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
-  const [selectedTemplate, setSelectedTemplate] = useState<GalleryTemplate | null>(null);
-  const [description, setDescription] = useState("");
   const [templateError, setTemplateError] = useState<string | null>(null);
-  const [wizardError, setWizardError] = useState<string | null>(null);
 
-  // Wizard session state.
-  const [wizardSessionId, setWizardSessionId] = useState<string | null>(null);
-  const [progressLines, setProgressLines] = useState<string[]>([]);
-  const [envelope, setEnvelope] = useState<WizardAskEnvelope | null>(null);
-  const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
-  const [projectPath, setProjectPath] = useState<string | null>(null);
-  // Retry state.
-  const [retryAttempt, setRetryAttempt] = useState(0);
-  const [retryMax, setRetryMax] = useState(20);
+  const {
+    step,
+    description,
+    selectedTemplateId,
+    wizardSessionId,
+    progressLines,
+    envelope,
+    pendingRequestId,
+    projectPath,
+    wizardError,
+    retryAttempt,
+    retryMax,
+    recoveryBlocked,
+    currentModel,
+  } = useAgentStore(
+    useShallow((s) => ({
+      step: s.wizard.step,
+      description: s.wizard.description,
+      selectedTemplateId: s.wizard.selectedTemplateId,
+      wizardSessionId: s.wizard.sessionId,
+      progressLines: s.wizard.progressLines,
+      envelope: s.wizard.envelope,
+      pendingRequestId: s.wizard.pendingRequestId,
+      projectPath: s.wizard.projectPath,
+      wizardError: s.wizard.wizardError,
+      retryAttempt: s.wizard.retryAttempt,
+      retryMax: s.wizard.retryMax,
+      recoveryBlocked: s.wizard.recoveryBlocked,
+      currentModel: s.wizard.currentModel,
+    })),
+  );
 
-  const currentModel = useAgentStore((s) => s.wizard.currentModel);
   const setModelSelectorOpen = useAgentStore((s) => s.setModelSelectorOpen);
   const setWizardActive = useAgentStore((s) => s.setWizardActive);
   const setWizardCurrentModel = useAgentStore((s) => s.setWizardCurrentModel);
-  const setWizardSessionIdStore = useAgentStore((s) => s.setWizardSessionId);
-  const setModelCatalog = useAgentStore((s) => s.setModelCatalog);
+  const setWizardSessionId = useAgentStore((s) => s.setWizardSessionId);
+  const setWizardStep = useAgentStore((s) => s.setWizardStep);
+  const setWizardDescription = useAgentStore((s) => s.setWizardDescription);
+  const setWizardSelectedTemplateId = useAgentStore((s) => s.setWizardSelectedTemplateId);
+  const patchWizard = useAgentStore((s) => s.patchWizard);
+  const hydrateWizardFromRecovery = useAgentStore((s) => s.hydrateWizardFromRecovery);
   const clearWizardState = useAgentStore((s) => s.clearWizardState);
+  const deactivateWizard = useAgentStore((s) => s.deactivateWizard);
+  const setModelCatalog = useAgentStore((s) => s.setModelCatalog);
 
-  // Confetti: fires when the wizard completes.
+  const selectedTemplate =
+    selectedTemplateId ? templates.find((t) => t.id === selectedTemplateId) ?? null : null;
+
   const { start: fireConfetti } = useConfetti();
   const confettiFiredRef = useRef(false);
 
-  // Refs so the wizardEvent listener (registered once) can read/act on latest state.
-  const stepRef = useRef<Step>(step);
-  stepRef.current = step;
-  const sessionRef = useRef<string | null>(null);
+  const sessionRef = useRef<string | undefined>(undefined);
   sessionRef.current = wizardSessionId;
+  const projectPathRef = useRef<string | null | undefined>(null);
+  projectPathRef.current = projectPath;
 
-  // Activate wizard context and seed the shared model catalog from the same
-  // sources chat uses (tab models_sync → catalog, else Herman cache).
+  // Activate wizard context and seed the shared model catalog.
   useEffect(() => {
     setWizardActive(true);
     const store = useAgentStore.getState();
@@ -206,14 +228,56 @@ export function OnboardingWizard({
     }
 
     return () => {
-      clearWizardState();
+      // Soft deactivate so HMR remount can rehydrate from Bun / Zustand.
+      deactivateWizard();
     };
   }, [
     setWizardActive,
     setWizardCurrentModel,
     setModelCatalog,
-    clearWizardState,
+    deactivateWizard,
   ]);
+
+  // Reattach to a live Bun session or already-hydrated recovery (HMR).
+  useEffect(() => {
+    const existing = useAgentStore.getState().wizard;
+    if (existing.recoveryMode === "continue" || existing.sessionId) return;
+
+    void desktopRpc.request.getWizardRecovery().then((recovery) => {
+      if (!recovery) return;
+      if (recovery.live) {
+        patchWizard({
+          sessionId: recovery.sessionId,
+          selectedTemplateId: recovery.templateId,
+          description: recovery.description ?? "",
+          progressLines: recovery.progressLines,
+          projectPath: recovery.projectPath ?? null,
+          wizardError: recovery.uiStep === "error" ? recovery.lastError ?? null : null,
+          recoveryMode: false,
+          recoveryBlocked: false,
+          step: (recovery.uiStep ?? "working") as WizardStep,
+          pendingRequestId: recovery.pendingRequestId ?? null,
+          envelope: recovery.envelope ?? null,
+          retryAttempt: recovery.retryAttempt ?? 0,
+        });
+        return;
+      }
+      hydrateWizardFromRecovery({
+        sessionId: recovery.sessionId,
+        templateId: recovery.templateId,
+        description: recovery.description,
+        progressLines: recovery.progressLines,
+        projectPath: recovery.projectPath ?? null,
+        wizardError: recovery.lastError ?? recovery.blockedReason ?? null,
+        recoveryBlocked: !recovery.resumable,
+        preferredModel: recovery.preferredModel,
+      });
+    }).catch((err) => {
+      logger.warning("Failed to query wizard recovery", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }, [hydrateWizardFromRecovery, patchWizard]);
 
   useEffect(() => {
     desktopRpc.request
@@ -230,13 +294,10 @@ export function OnboardingWizard({
       });
   }, []);
 
-  // ── Subscribe to wizard events for the active session ──────────────────────
   const handleWizardEvent = useCallback(
     (payload: { event: WizardSessionEvent }) => {
       const event = payload.event;
 
-      // Catalog updates are global — accept even before React has the session id
-      // (models_sync can fire during start before startWizardSession returns).
       if (event.type === "wizard_models") {
         useAgentStore.getState().setModelCatalog(event.models);
         if (event.currentModel && !useAgentStore.getState().wizard.currentModel) {
@@ -245,60 +306,67 @@ export function OnboardingWizard({
         return;
       }
 
-      // Only handle other events for the active wizard session.
       if (sessionRef.current && event.wizardSessionId !== sessionRef.current) return;
 
       switch (event.type) {
         case "wizard_progress": {
-          setProgressLines((prev) => {
-            const next = [...prev, event.text];
-            return next.slice(-50);
-          });
+          useAgentStore.getState().setWizardProgressLines((prev) => [...prev, event.text].slice(-50));
           break;
         }
         case "wizard_request": {
-          setPendingRequestId(event.requestId);
-          setEnvelope(event.envelope);
-          setStep("questions");
+          useAgentStore.getState().patchWizard({
+            pendingRequestId: event.requestId,
+            envelope: event.envelope,
+            step: "questions",
+            recoveryMode: false,
+          });
           break;
         }
         case "wizard_complete": {
-          setProjectPath(event.projectPath);
-          setStep("done");
+          useAgentStore.getState().patchWizard({
+            projectPath: event.projectPath,
+            step: "done",
+            recoveryMode: false,
+          });
           if (!confettiFiredRef.current) {
             confettiFiredRef.current = true;
-            // Defer so the "done" step renders first, then fire.
             requestAnimationFrame(() => fireConfetti());
           }
           break;
         }
         case "wizard_retrying": {
-          setRetryAttempt(event.attempt);
-          setRetryMax(event.maxRetries);
-          setStep("retrying");
+          useAgentStore.getState().patchWizard({
+            retryAttempt: event.attempt,
+            retryMax: event.maxRetries,
+            step: "retrying",
+            recoveryMode: false,
+          });
           break;
         }
         case "wizard_end": {
           if (event.error) {
-            setWizardError(event.error);
-            setStep("error");
+            useAgentStore.getState().patchWizard({
+              wizardError: event.error,
+              step: "error",
+              retryAttempt: 0,
+              recoveryMode: false,
+            });
           } else if (!projectPathRef.current) {
-            // Agent ended without completing — treat as error.
-            setWizardError("Setup ended before finishing.");
-            setStep("error");
+            useAgentStore.getState().patchWizard({
+              wizardError: "Setup ended before finishing.",
+              step: "error",
+              retryAttempt: 0,
+              recoveryMode: false,
+            });
+          } else {
+            useAgentStore.getState().setWizardRetry(0);
           }
-          // Reset retry state on terminal event.
-          setRetryAttempt(0);
           break;
         }
       }
     },
-    [],
+    [fireConfetti],
   );
-
-  // projectPath ref for the closure above.
-  const projectPathRef = useRef<string | null>(null);
-  projectPathRef.current = projectPath;
 
   useEffect(() => {
     desktopRpc.addMessageListener("wizardEvent", handleWizardEvent);
@@ -307,17 +375,18 @@ export function OnboardingWizard({
     };
   }, [handleWizardEvent]);
 
-  // ── Start the wizard session when the user finishes describing ─────────────
   const handleDescribeContinue = useCallback(async () => {
     if (!selectedTemplate || !description.trim()) return;
-    setWizardError(null);
-    setRetryAttempt(0);
-    setProgressLines([]);
-    setEnvelope(null);
-    setProjectPath(null);
-    setWizardSessionId(null);
-    setWizardSessionIdStore(undefined);
-    setStep("working");
+    patchWizard({
+      wizardError: null,
+      retryAttempt: 0,
+      progressLines: [],
+      envelope: null,
+      projectPath: null,
+      sessionId: undefined,
+      step: "working",
+      recoveryMode: false,
+    });
     const modelId = useAgentStore.getState().wizard.currentModel;
     try {
       const { wizardSessionId: id } = await desktopRpc.request.startWizardSession({
@@ -326,8 +395,6 @@ export function OnboardingWizard({
         ...(modelId ? { modelId } : {}),
       });
       setWizardSessionId(id);
-      setWizardSessionIdStore(id);
-      // Re-sync in case the user changed the model while start was in flight.
       const latestModel = useAgentStore.getState().wizard.currentModel;
       if (latestModel && latestModel !== modelId) {
         void desktopRpc.request.setWizardModel({ wizardSessionId: id, modelId: latestModel });
@@ -335,41 +402,42 @@ export function OnboardingWizard({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error("Failed to start wizard session", { error: msg });
-      setWizardError(msg);
-      setStep("error");
+      patchWizard({ wizardError: msg, step: "error" });
     }
-  }, [selectedTemplate, description, setWizardSessionIdStore]);
+  }, [selectedTemplate, description, patchWizard, setWizardSessionId]);
 
-  // ── Submit answers to a wizard question batch ──────────────────────────────
   const handleAnswersSubmit = useCallback(
     (answers: { id: string; value: string; values?: string[] }[]) => {
       if (!wizardSessionId || !pendingRequestId) return;
-      setEnvelope(null);
-      setPendingRequestId(null);
-      setStep("working");
+      patchWizard({
+        envelope: null,
+        pendingRequestId: null,
+        step: "working",
+      });
       void desktopRpc.request.respondWizardQuestions({
         wizardSessionId,
         requestId: pendingRequestId,
         answers,
       });
     },
-    [wizardSessionId, pendingRequestId],
+    [wizardSessionId, pendingRequestId, patchWizard],
   );
 
   const handleQuestionsCancel = useCallback(() => {
     if (!wizardSessionId) return;
     void desktopRpc.request.cancelWizard({ wizardSessionId });
-    setWizardSessionId(null);
-    setWizardSessionIdStore(undefined);
-    setEnvelope(null);
-    setPendingRequestId(null);
-    setStep("describe");
-  }, [wizardSessionId, setWizardSessionIdStore]);
+    patchWizard({
+      sessionId: undefined,
+      envelope: null,
+      pendingRequestId: null,
+      step: "describe",
+    });
+  }, [wizardSessionId, patchWizard]);
 
-  // ── Open the finished project as a fresh tab ───────────────────────────────
   const handleDone = useCallback(async () => {
     if (!projectPath || !wizardSessionId) {
       onComplete();
+      clearWizardState();
       return;
     }
     try {
@@ -378,32 +446,63 @@ export function OnboardingWizard({
         wizardSessionId,
       });
     } catch (err) {
-      logger.error("Failed to adopt wizard session", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      // Fall back to opening the project folder directly if adoption fails.
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error("Failed to adopt wizard session", { error: msg });
+      patchWizard({ wizardError: msg, step: "error" });
+      return;
     }
     onComplete();
-  }, [projectPath, wizardSessionId, onComplete]);
+    clearWizardState();
+  }, [projectPath, wizardSessionId, onComplete, clearWizardState, patchWizard]);
 
-  const handleRetryFromError = useCallback(() => {
-    setWizardError(null);
-    setRetryAttempt(0);
-    setWizardSessionId(null);
-    setWizardSessionIdStore(undefined);
-    setEnvelope(null);
-    setPendingRequestId(null);
-    setProjectPath(null);
-    setProgressLines([]);
-    setStep("describe");
-  }, [setWizardSessionIdStore]);
+  const handleRetryOrContinue = useCallback(() => {
+    if (wizardSessionId && !recoveryBlocked) {
+      patchWizard({
+        wizardError: null,
+        retryAttempt: 0,
+        step: "working",
+        recoveryMode: false,
+      });
+      void desktopRpc.request.resumeWizardSession({ wizardSessionId }).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error("Failed to resume wizard session", { error: msg });
+        patchWizard({ wizardError: msg, step: "error", recoveryMode: false });
+      });
+      return;
+    }
+
+    // Blocked recovery or no session — clear checkpoint and return to describe.
+    void (async () => {
+      if (wizardSessionId) {
+        await desktopRpc.request.cancelWizard({ wizardSessionId }).catch(() => undefined);
+      } else {
+        await desktopRpc.request.discardWizardRecovery().catch(() => undefined);
+      }
+      clearWizardState();
+      setWizardStep("describe");
+    })();
+  }, [wizardSessionId, recoveryBlocked, patchWizard, clearWizardState, setWizardStep]);
+
+  const handleStartOver = useCallback(() => {
+    const id = wizardSessionId;
+    void (async () => {
+      if (id) {
+        await desktopRpc.request.cancelWizard({ wizardSessionId: id }).catch(() => undefined);
+      } else {
+        await desktopRpc.request.discardWizardRecovery().catch(() => undefined);
+      }
+      clearWizardState();
+      setWizardStep("templates");
+    })();
+  }, [wizardSessionId, clearWizardState, setWizardStep]);
 
   const handleSkipOnboarding = useCallback(() => {
     if (wizardSessionId) {
       void desktopRpc.request.cancelWizard({ wizardSessionId });
     }
+    clearWizardState();
     onCancel();
-  }, [onCancel, wizardSessionId]);
+  }, [onCancel, wizardSessionId, clearWizardState]);
 
   if (isLoadingTemplates) {
     return (
@@ -448,6 +547,16 @@ export function OnboardingWizard({
         {step === "questions" && <StepHeader title="A few questions" subtitle="Only the bits we still need." />}
         {step === "done" && <StepHeader title="Your project is ready" subtitle="Let's open it up." />}
         {step === "error" && <StepHeader title="Something went wrong" subtitle="You can try again." />}
+        {step === "recovery" && (
+          <StepHeader
+            title="Setup was interrupted"
+            subtitle={
+              recoveryBlocked
+                ? "We couldn't resume where you left off."
+                : "Pick up where the agent left off."
+            }
+          />
+        )}
         {step === "retrying" && (
           <StepHeader
             title="Reconnecting…"
@@ -472,13 +581,14 @@ export function OnboardingWizard({
                     Failed to load templates: {templateError}
                   </div>
                 )}
+                <div className="mb-4 text-dim text-sm">
+                  This is just the initial setup, you will be able to continue building on top of it. Choose the template that can be the best starting point for you.
+                </div>
                 <Accordion
                   value={selectedTemplate ? [selectedTemplate.id] : []}
                   onValueChange={(values) => {
                     const nextId = values[0];
-                    setSelectedTemplate(
-                      nextId ? templates.find((t) => t.id === nextId) ?? null : null,
-                    );
+                    setWizardSelectedTemplateId(nextId);
                   }}
                   className="border-white/[0.08] bg-white/[0.02] mb-6 max-h-[360px] overflow-y-auto"
                 >
@@ -494,7 +604,7 @@ export function OnboardingWizard({
                   size="lg"
                   fullWidth
                   disabled={!selectedTemplate}
-                  onClick={() => selectedTemplate && setStep("describe")}
+                  onClick={() => selectedTemplate && setWizardStep("describe")}
                 >
                   Continue
                   <ArrowRight size={14} />
@@ -514,7 +624,7 @@ export function OnboardingWizard({
               <ContentWidth size="form">
                 <textarea
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  onChange={(e) => setWizardDescription(e.target.value)}
                   placeholder="e.g. A blog about home cooking with recipes, photos, and weekly tips for beginners…"
                   rows={5}
                   className="text-text placeholder:text-ghost bg-void w-full resize-none rounded-xl border border-white/[0.08] px-4 py-3 text-sm transition focus:border-signal/40 focus:outline-none focus:ring-1 focus:ring-signal/20"
@@ -580,68 +690,61 @@ export function OnboardingWizard({
               className="w-full"
             >
               <ContentWidth size="form">
-              {/* Celebration header */}
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="mb-6 flex flex-col items-center gap-3 text-center"
-              >
                 <motion.div
-                  animate={{ scale: [1, 1.15, 1] }}
-                  transition={{ duration: 0.6, delay: 0.3, ease: "easeOut" }}
-                  className="bg-signal/10 text-signal flex h-16 w-16 items-center justify-center rounded-2xl ring-1 ring-signal/20"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="mb-6 flex flex-col items-center gap-3 text-center"
                 >
-                  <PartyPopper size={28} strokeWidth={1.5} />
+                  <motion.div
+                    animate={{ scale: [1, 1.15, 1] }}
+                    transition={{ duration: 0.6, delay: 0.3, ease: "easeOut" }}
+                    className="bg-signal/10 text-signal flex h-16 w-16 items-center justify-center rounded-2xl ring-1 ring-signal/20"
+                  >
+                    <PartyPopper size={28} strokeWidth={1.5} />
+                  </motion.div>
+                  <div>
+                    <h2 className="text-text text-lg font-semibold">Congratulations!</h2>
+                    <p className="text-dim mt-1 text-sm">Your project is ready to go.</p>
+                  </div>
                 </motion.div>
-                <div>
-                  <h2 className="text-text text-lg font-semibold">
-                    Congratulations!
-                  </h2>
-                  <p className="text-dim mt-1 text-sm">
-                    Your project is ready to go.
-                  </p>
-                </div>
-              </motion.div>
 
-              {/* Project card */}
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className="bg-void mb-4 rounded-2xl border border-white/[0.08] p-4"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="bg-signal/10 text-signal flex h-10 w-10 items-center justify-center rounded-xl">
-                    <Check size={18} strokeWidth={2} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-text text-sm font-semibold">
-                      {selectedTemplate?.name ?? "Project"}
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="bg-void mb-4 rounded-2xl border border-white/[0.08] p-4"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="bg-signal/10 text-signal flex h-10 w-10 items-center justify-center rounded-xl">
+                      <Check size={18} strokeWidth={2} />
                     </div>
-                    {projectPath && (
-                      <div className="text-ghost truncate text-[11px]">{projectPath}</div>
-                    )}
+                    <div className="min-w-0">
+                      <div className="text-text text-sm font-semibold">
+                        {selectedTemplate?.name ?? "Project"}
+                      </div>
+                      {projectPath && (
+                        <div className="text-ghost truncate text-[11px]">{projectPath}</div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </motion.div>
+                </motion.div>
 
-              <ProgressLog lines={progressLines} />
+                <ProgressLog lines={progressLines} />
 
-              {/* CTA */}
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.35 }}
-              >
-                <SignalButton size="lg" fullWidth glow className="mt-5" onClick={handleDone}>
-                  <Sparkles size={16} />
-                  Open Project
-                </SignalButton>
-                <p className="text-ghost mt-2 text-center text-[11px]">
-                  Opens your project in a new tab.
-                </p>
-              </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.35 }}
+                >
+                  <SignalButton size="lg" fullWidth glow className="mt-5" onClick={handleDone}>
+                    <Sparkles size={16} />
+                    Open Project
+                  </SignalButton>
+                  <p className="text-ghost mt-2 text-center text-[11px]">
+                    Opens your project in a new tab.
+                  </p>
+                </motion.div>
               </ContentWidth>
             </motion.div>
           )}
@@ -658,10 +761,42 @@ export function OnboardingWizard({
                   <AlertCircle size={14} className="mt-0.5 shrink-0" />
                   <span className="leading-relaxed">{wizardError ?? "Unknown error."}</span>
                 </div>
-                <SignalButton size="md" fullWidth onClick={handleRetryFromError}>
+                <SignalButton size="md" fullWidth onClick={handleRetryOrContinue}>
                   Try again
                   <ArrowRight size={14} />
                 </SignalButton>
+              </ContentWidth>
+            </motion.div>
+          )}
+
+          {step === "recovery" && (
+            <motion.div
+              key="recovery"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="w-full"
+            >
+              <ContentWidth size="form">
+                {wizardError && (
+                  <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+                    <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                    <span className="leading-relaxed">{wizardError}</span>
+                  </div>
+                )}
+                <ProgressLog lines={progressLines} />
+                {!recoveryBlocked && (
+                  <SignalButton size="lg" fullWidth glow className="mt-4" onClick={handleRetryOrContinue}>
+                    Continue
+                    <ArrowRight size={14} />
+                  </SignalButton>
+                )}
+                <button
+                  type="button"
+                  onClick={handleStartOver}
+                  className="text-ghost hover:text-dim mt-3 w-full text-center text-xs transition"
+                >
+                  Start over
+                </button>
               </ContentWidth>
             </motion.div>
           )}
@@ -684,17 +819,4 @@ export function OnboardingWizard({
   );
 }
 
-function ProgressLog({ lines }: { lines: string[] }) {
-  if (lines.length === 0) return null;
-  return (
-    <div className="bg-void w-full rounded-xl border border-white/[0.06] px-4 py-3">
-      <div className="max-h-32 space-y-1 overflow-y-auto">
-        {lines.map((line, i) => (
-          <div key={i} className="text-ghost text-[11px] leading-relaxed">
-            {line}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+

@@ -26,6 +26,7 @@ import type { DevServer, ProjectManifestView } from "../../../shared/herman-mani
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { useIsActiveTabWorking } from "../lib/agent-store/hooks.js";
+import { PreviewWebview, type PreviewWebviewHandle } from "./preview-webview.js";
 
 type DeviceMode = "desktop" | "tablet" | "mobile";
 
@@ -46,9 +47,20 @@ type PreviewPaneProps = {
   tabId?: string;
   isWorktree?: boolean;
   onPublish?: () => void;
+  /** True while RookieShell split divider is being dragged. */
+  splitDragging?: boolean;
+  /** True while PublishDialog is open (parent owns this state). */
+  publishOpen?: boolean;
 };
 
-export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: PreviewPaneProps) {
+export function PreviewPane({
+  folderPath,
+  tabId,
+  isWorktree,
+  onPublish,
+  splitDragging,
+  publishOpen,
+}: PreviewPaneProps) {
   const [manifest, setManifest] = useState<ProjectManifestView | null>(null);
   const [manifestLoading, setManifestLoading] = useState(true);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -63,13 +75,16 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
   const [saveError, setSaveError] = useState<string | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [deviceMode, setDeviceMode] = useState<DeviceMode>("desktop");
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const webviewRef = useRef<PreviewWebviewHandle>(null);
   const prevThinkingRef = useRef(false);
 
   const isThinking = useAgentStore((state) =>
     tabId ? (state.tabs[tabId]?.isThinking ?? false) : false,
   );
   const isTabWorking = useIsActiveTabWorking();
+  const modelSelectorOpen = useAgentStore((s) => s.ui.modelSelectorOpen);
+
+  const overlayOpen = discardOpen || Boolean(publishOpen) || modelSelectorOpen;
 
   const refreshSessionChanges = useCallback(() => {
     if (!tabId || !isWorktree) {
@@ -126,6 +141,36 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
     }
     prevThinkingRef.current = isThinking;
   }, [isThinking, refreshSessionChanges]);
+
+  useEffect(() => {
+    webviewRef.current?.setHidden(overlayOpen);
+  }, [overlayOpen, previewUrl]);
+
+  useEffect(() => {
+    const wv = webviewRef.current;
+    if (!wv) return;
+    wv.setPassthrough(Boolean(splitDragging));
+    wv.syncNow();
+    return () => {
+      wv.setPassthrough(false);
+      wv.syncNow();
+    };
+  }, [splitDragging]);
+
+  useEffect(() => {
+    if (!splitDragging) return;
+    let raf = 0;
+    const tick = () => {
+      webviewRef.current?.syncNow();
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [splitDragging]);
+
+  useEffect(() => {
+    webviewRef.current?.syncNow();
+  }, [deviceMode, previewUrl]);
 
   const handleStartPreview = useCallback(async () => {
     if (!manifest) return;
@@ -194,6 +239,8 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
           setIsRunning(true);
           setActiveServerId(result.serverId ?? manifest.primary?.id ?? null);
         }
+        // Force reload even when the URL is unchanged after restart.
+        queueMicrotask(() => webviewRef.current?.reload());
       })
       .catch((err) => {
         setStartError(err instanceof Error ? err.message : "Failed to restart preview");
@@ -393,7 +440,7 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
         </div>
       )}
 
-      <div className="flex flex-1 items-start justify-center overflow-auto p-4">
+      <div className="flex min-h-0 flex-1 items-stretch justify-center overflow-hidden p-4">
         {manifestLoading ? (
           <div className="flex flex-col items-center gap-3 pt-20">
             <Loader2 size={22} className="text-signal animate-spin" />
@@ -416,20 +463,14 @@ export function PreviewPane({ folderPath, tabId, isWorktree, onPublish }: Previe
           </div>
         ) : previewUrl ? (
           <div
-            className="overflow-hidden rounded-lg border border-white/[0.08] shadow-2xl shadow-black/60 transition-all duration-300"
-            style={{ width: deviceWidth }}
+            className="flex h-full min-h-[500px] overflow-hidden rounded-lg border border-white/[0.08] shadow-2xl shadow-black/60"
+            style={{
+              width: deviceWidth,
+              height: deviceMode === "mobile" ? "667px" : "100%",
+              maxHeight: "100%",
+            }}
           >
-            <iframe
-              ref={iframeRef}
-              src={previewUrl}
-              className="block w-full bg-white"
-              style={{
-                height: deviceMode === "mobile" ? "667px" : "100%",
-                minHeight: "500px",
-              }}
-              title="Site preview"
-              sandbox="allow-scripts allow-same-origin allow-forms"
-            />
+            <PreviewWebview ref={webviewRef} url={previewUrl} className="bg-white" />
           </div>
         ) : manifest ? (
           <div className="flex flex-col items-center gap-4 pt-20">

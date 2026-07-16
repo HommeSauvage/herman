@@ -1,77 +1,119 @@
+import { z } from "zod";
+
 /** YAML frontmatter schema version for HERMAN.md. */
 export const HERMAN_MANIFEST_VERSION = 1;
 
-export type HermanSource = {
-  repo: string;
-  ref?: string;
-};
+// ── Zod schemas ────────────────────────────────────────────────────────────
 
-export type Requirement = {
-  id: string;
-  label: string;
+export const HermanSourceSchema = z.object({
+  repo: z.string(),
+  ref: z.string().optional(),
+});
+
+export const RequirementSchema = z.object({
+  id: z.string(),
+  label: z.string(),
   /** Shell command; non-zero exit = missing. */
-  check: string;
+  check: z.string(),
   /** Help URL for installing the requirement. */
-  install?: string;
+  install: z.string().optional(),
   /** When true, missing is a warning instead of a block. */
-  optional?: boolean;
-};
+  optional: z.boolean().optional(),
+});
 
-export type EnvVar = {
-  key: string;
-  required?: boolean;
+export const EnvVarSchema = z.object({
+  key: z.string(),
+  required: z.boolean().optional(),
   /** Override the default env file for this var. */
-  file?: string;
-  default?: string;
+  file: z.string().optional(),
+  default: z.string().optional(),
   /** Rookie-facing notes: why needed / how to get the key. */
-  notes?: string;
+  notes: z.string().optional(),
   /** Shell command whose stdout becomes the value (user never sees it). */
-  generate?: string;
-};
+  generate: z.string().optional(),
+});
 
-export type EnvConfig = {
+export const EnvConfigSchema = z.object({
   /** Default target file, e.g. apps/web/.env.development.local */
-  file?: string;
-  vars?: EnvVar[];
-};
+  file: z.string().optional(),
+  vars: z.array(EnvVarSchema).optional(),
+});
 
-export type DevServer = {
-  id: string;
-  label: string;
-  command: string;
-  port?: number;
+export const DevServerSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  command: z.string(),
+  port: z.number().optional(),
   /** Drives the preview pane when true. Exactly one should be primary. */
-  primary?: boolean;
-};
+  primary: z.boolean().optional(),
+  /**
+   * Env var name(s) set on every Herman-spawned server to this server's
+   * resolved `http://localhost:{port}` URL.
+   */
+  exportUrlAs: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+});
 
-export type DevConfig = {
-  install?: string;
-  servers?: DevServer[];
-};
+/** Normalize `exportUrlAs` to a trimmed non-empty string list. */
+export function normalizeExportUrlAs(value: string | string[] | undefined): string[] {
+  if (value == null) return [];
+  return (typeof value === "string" ? [value] : value).map((s) => s.trim()).filter(Boolean);
+}
+
+export const DevConfigSchema = z.object({
+  install: z.string().optional(),
+  servers: z.array(DevServerSchema).optional(),
+});
 
 /**
- * Machine-consumed YAML frontmatter of a HERMAN.md file.
- * All fields optional except `version`.
+ * Full HERMAN.md frontmatter schema (template files, supports extends).
  */
-export type HermanFrontmatter = {
-  version: number;
-  /** Reference to another curated Herman manifest id (optional inheritance). */
-  extends?: string;
-  name?: string;
-  description?: string;
-  /** What this template is good for, so the user can decide if it fits their project. */
-  suitable_for?: string;
-  icon?: string;
-  snapshot?: string;
-  category?: string;
-  /** Goal that the wizard coding session passes to pi-goal (tick plan boxes).
-   *  Falls back to a sensible default when omitted. */
-  setup_goal?: string;
-  source?: HermanSource;
-  requirements?: Requirement[];
-  env?: EnvConfig;
-  dev?: DevConfig;
-};
+export const HermanFrontmatterSchema = z
+  .object({
+    version: z.number().int(),
+    /** Reference to another curated Herman manifest id (optional inheritance). */
+    extends: z.string().optional(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    /** What this template is good for, so the user can decide if it fits their project. */
+    suitable_for: z.string().optional(),
+    icon: z.string().optional(),
+    snapshot: z.string().optional(),
+    category: z.string().optional(),
+    /** Goal that the wizard coding session passes to pi-goal (tick plan boxes).
+     *  Falls back to a sensible default when omitted. */
+    setup_goal: z.string().optional(),
+    source: HermanSourceSchema.optional(),
+    requirements: z.array(RequirementSchema).optional(),
+    env: EnvConfigSchema.optional(),
+    dev: DevConfigSchema.optional(),
+  })
+  .refine((data) => data.version === HERMAN_MANIFEST_VERSION, {
+    message: `Unsupported manifest version, expected ${HERMAN_MANIFEST_VERSION}`,
+    path: ["version"],
+  });
+
+/** Resolved herman.yaml schema (project-level, no extends, guidance as YAML key). */
+export const HermanYamlSchema = z.object({
+  version: z.number(),
+  name: z.string().optional(),
+  description: z.string().optional(),
+  dev: DevConfigSchema.optional(),
+  env: EnvConfigSchema.optional(),
+  guidance: z.string().optional(),
+  requirements: z.array(RequirementSchema).optional(),
+});
+
+// ── Inferred types ─────────────────────────────────────────────────────────
+
+export type HermanSource = z.infer<typeof HermanSourceSchema>;
+export type Requirement = z.infer<typeof RequirementSchema>;
+export type EnvVar = z.infer<typeof EnvVarSchema>;
+export type EnvConfig = z.infer<typeof EnvConfigSchema>;
+export type DevServer = z.infer<typeof DevServerSchema>;
+export type DevConfig = z.infer<typeof DevConfigSchema>;
+export type HermanFrontmatter = z.infer<typeof HermanFrontmatterSchema>;
+
+// ── Compound / computed types (not directly validated by a single YAML parse) ──
 
 /** Known Markdown body sections (case-insensitive headings). */
 export type HermanSections = {
@@ -126,7 +168,7 @@ export type RequirementCheckResult = {
 
 /**
  * Project-level manifest shape returned to the renderer for preview/dev.
- * Prefer HERMAN.md; falls back to legacy herman.json fields when present.
+ * Reads herman.yaml first, then falls back to HERMAN.md.
  */
 export type ProjectManifestView = {
   servers: DevServer[];

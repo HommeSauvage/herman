@@ -82,7 +82,7 @@ export function PublishDialog({ open, onClose, folderPath, projectName }: Publis
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div data-herman-overlay="" className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <motion.div
         initial={{ opacity: 0 }}

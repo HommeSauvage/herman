@@ -1,12 +1,12 @@
 import type {
-  DevServer,
-  EnvVar,
   HermanFrontmatter,
   HermanSections,
   ParsedHermanManifest,
-  Requirement,
 } from "../shared/herman-manifest.js";
-import { HERMAN_MANIFEST_VERSION } from "../shared/herman-manifest.js";
+import {
+  HERMAN_MANIFEST_VERSION,
+  HermanFrontmatterSchema,
+} from "../shared/herman-manifest.js";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 const SECTION_RE = /^##\s+(.+)\s*$/gm;
@@ -45,132 +45,15 @@ export function parseHermanMd(raw: string, id: string): ParsedHermanManifest {
 }
 
 function validateFrontmatter(raw: unknown, id: string): HermanFrontmatter {
-  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error(`HERMAN.md frontmatter in ${id} must be a YAML object`);
-  }
-  const obj = raw as Record<string, unknown>;
-
-  const version = obj.version;
-  if (typeof version !== "number" || !Number.isInteger(version)) {
-    throw new Error(`HERMAN.md in ${id} requires integer frontmatter.version`);
-  }
-  if (version !== HERMAN_MANIFEST_VERSION) {
+  const result = HermanFrontmatterSchema.safeParse(raw);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const path = first.path.join(".");
     throw new Error(
-      `HERMAN.md in ${id} has unsupported version ${version} (expected ${HERMAN_MANIFEST_VERSION})`,
+      `HERMAN.md in ${id}: ${first.message}${path ? ` (at ${path})` : ""}`,
     );
   }
-
-  const fm: HermanFrontmatter = { version };
-
-  if (typeof obj.extends === "string") fm.extends = obj.extends;
-  if (typeof obj.name === "string") fm.name = obj.name;
-  if (typeof obj.description === "string") fm.description = obj.description;
-  if (typeof obj.suitable_for === "string") fm.suitable_for = obj.suitable_for;
-  if (typeof obj.icon === "string") fm.icon = obj.icon;
-  if (typeof obj.snapshot === "string") fm.snapshot = obj.snapshot;
-  if (typeof obj.category === "string") fm.category = obj.category;
-  if (typeof obj.setup_goal === "string") fm.setup_goal = obj.setup_goal;
-
-  if (obj.source != null) {
-    if (typeof obj.source !== "object" || Array.isArray(obj.source)) {
-      throw new Error(`HERMAN.md source in ${id} must be an object`);
-    }
-    const source = obj.source as Record<string, unknown>;
-    if (typeof source.repo !== "string" || !source.repo.trim()) {
-      throw new Error(`HERMAN.md source.repo in ${id} is required when source is set`);
-    }
-    fm.source = {
-      repo: source.repo.trim(),
-      ...(typeof source.ref === "string" ? { ref: source.ref } : {}),
-    };
-  }
-
-  if (obj.requirements != null) {
-    if (!Array.isArray(obj.requirements)) {
-      throw new Error(`HERMAN.md requirements in ${id} must be an array`);
-    }
-    fm.requirements = obj.requirements.map((item, i) => parseRequirement(item, id, i));
-  }
-
-  if (obj.env != null) {
-    if (typeof obj.env !== "object" || Array.isArray(obj.env)) {
-      throw new Error(`HERMAN.md env in ${id} must be an object`);
-    }
-    const env = obj.env as Record<string, unknown>;
-    fm.env = {
-      ...(typeof env.file === "string" ? { file: env.file } : {}),
-      ...(Array.isArray(env.vars)
-        ? { vars: env.vars.map((item, i) => parseEnvVar(item, id, i)) }
-        : {}),
-    };
-  }
-
-  if (obj.dev != null) {
-    if (typeof obj.dev !== "object" || Array.isArray(obj.dev)) {
-      throw new Error(`HERMAN.md dev in ${id} must be an object`);
-    }
-    const dev = obj.dev as Record<string, unknown>;
-    fm.dev = {
-      ...(typeof dev.install === "string" ? { install: dev.install } : {}),
-      ...(Array.isArray(dev.servers)
-        ? { servers: dev.servers.map((item, i) => parseDevServer(item, id, i)) }
-        : {}),
-    };
-  }
-
-  return fm;
-}
-
-function parseRequirement(item: unknown, id: string, index: number): Requirement {
-  if (typeof item !== "object" || item == null || Array.isArray(item)) {
-    throw new Error(`HERMAN.md requirements[${index}] in ${id} must be an object`);
-  }
-  const r = item as Record<string, unknown>;
-  if (typeof r.id !== "string" || typeof r.label !== "string" || typeof r.check !== "string") {
-    throw new Error(`HERMAN.md requirements[${index}] in ${id} needs id, label, check`);
-  }
-  return {
-    id: r.id,
-    label: r.label,
-    check: r.check,
-    ...(typeof r.install === "string" ? { install: r.install } : {}),
-    ...(typeof r.optional === "boolean" ? { optional: r.optional } : {}),
-  };
-}
-
-function parseEnvVar(item: unknown, id: string, index: number): EnvVar {
-  if (typeof item !== "object" || item == null || Array.isArray(item)) {
-    throw new Error(`HERMAN.md env.vars[${index}] in ${id} must be an object`);
-  }
-  const v = item as Record<string, unknown>;
-  if (typeof v.key !== "string" || !v.key.trim()) {
-    throw new Error(`HERMAN.md env.vars[${index}] in ${id} needs key`);
-  }
-  return {
-    key: v.key,
-    ...(typeof v.required === "boolean" ? { required: v.required } : {}),
-    ...(typeof v.file === "string" ? { file: v.file } : {}),
-    ...(typeof v.default === "string" ? { default: v.default } : {}),
-    ...(typeof v.notes === "string" ? { notes: v.notes } : {}),
-    ...(typeof v.generate === "string" ? { generate: v.generate } : {}),
-  };
-}
-
-function parseDevServer(item: unknown, id: string, index: number): DevServer {
-  if (typeof item !== "object" || item == null || Array.isArray(item)) {
-    throw new Error(`HERMAN.md dev.servers[${index}] in ${id} must be an object`);
-  }
-  const s = item as Record<string, unknown>;
-  if (typeof s.id !== "string" || typeof s.label !== "string" || typeof s.command !== "string") {
-    throw new Error(`HERMAN.md dev.servers[${index}] in ${id} needs id, label, command`);
-  }
-  return {
-    id: s.id,
-    label: s.label,
-    command: s.command,
-    ...(typeof s.port === "number" ? { port: s.port } : {}),
-    ...(typeof s.primary === "boolean" ? { primary: s.primary } : {}),
-  };
+  return result.data;
 }
 
 function parseSections(body: string): HermanSections {
@@ -227,7 +110,7 @@ export function serializeHermanMd(
 }
 
 /** Minimal YAML dump for our frontmatter shape (block style). */
-function dumpFrontmatterYaml(fm: Omit<HermanFrontmatter, "extends">): string {
+export function dumpFrontmatterYaml(fm: Omit<HermanFrontmatter, "extends">): string {
   const lines: string[] = [];
   lines.push(`version: ${fm.version}`);
   if (fm.name != null) lines.push(`name: ${yamlString(fm.name)}`);
@@ -282,6 +165,16 @@ function dumpFrontmatterYaml(fm: Omit<HermanFrontmatter, "extends">): string {
         lines.push(`      command: ${yamlString(s.command)}`);
         if (s.port != null) lines.push(`      port: ${s.port}`);
         if (s.primary) lines.push(`      primary: true`);
+        if (s.exportUrlAs != null) {
+          if (typeof s.exportUrlAs === "string") {
+            lines.push(`      exportUrlAs: ${yamlString(s.exportUrlAs)}`);
+          } else if (s.exportUrlAs.length > 0) {
+            lines.push("      exportUrlAs:");
+            for (const key of s.exportUrlAs) {
+              lines.push(`        - ${yamlString(key)}`);
+            }
+          }
+        }
       }
     }
   }
@@ -289,7 +182,7 @@ function dumpFrontmatterYaml(fm: Omit<HermanFrontmatter, "extends">): string {
   return lines.join("\n");
 }
 
-function yamlString(value: string): string {
+export function yamlString(value: string): string {
   if (
     value === "" ||
     /[:#{}[\],&*?|>!%@`]/.test(value) ||

@@ -17,7 +17,6 @@
 	},
 	"dependencies": {
 		"@bacnh85/pi-fff": "^0.7.0",
-		"@narumitw/pi-goal": "^0.15.1",
 		"@earendil-works/pi-agent-core": "catalog:",
 		"@earendil-works/pi-coding-agent": "catalog:",
 		"@herman/pi-context-reporter": "workspace:*",

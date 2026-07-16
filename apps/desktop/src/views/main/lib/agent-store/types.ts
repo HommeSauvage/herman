@@ -15,6 +15,32 @@ import type {
   TabMessageHydrationStatus,
 } from "../../../../shared/rpc.js";
 import type { TabId } from "../../../../shared/tab-utils.js";
+import type { WizardAskEnvelope } from "../../../../shared/wizard-protocol.js";
+
+export type WizardStep =
+  | "templates"
+  | "describe"
+  | "working"
+  | "questions"
+  | "done"
+  | "error"
+  | "retrying"
+  | "recovery";
+
+export const INITIAL_WIZARD_STATE = {
+  active: false,
+  step: "templates" as WizardStep,
+  description: "",
+  progressLines: [] as string[],
+  envelope: null as WizardAskEnvelope | null,
+  pendingRequestId: null as string | null,
+  projectPath: null as string | null,
+  wizardError: null as string | null,
+  retryAttempt: 0,
+  retryMax: 20,
+  recoveryMode: false as false | "continue",
+  recoveryBlocked: false,
+};
 
 export type Tab = {
   id: TabId;
@@ -120,8 +146,8 @@ export type AgentState = {
     availableModels: string[];
   };
   /**
-   * Model selection context for the onboarding wizard (detached from tabs).
-   * Selection only — the list comes from modelCatalog.
+   * Onboarding wizard UI + selection context (Rookie). Bun remains the source
+   * of truth for the agent session; this slice mirrors flow for HMR / recovery.
    */
   wizard: {
     /** True while OnboardingWizard is mounted. */
@@ -129,6 +155,23 @@ export type AgentState = {
     currentModel?: string;
     /** Active wizard session id, if the agent has been started. */
     sessionId?: string;
+    step: WizardStep;
+    selectedTemplateId?: string;
+    description: string;
+    progressLines: string[];
+    envelope?: WizardAskEnvelope | null;
+    pendingRequestId?: string | null;
+    projectPath?: string | null;
+    wizardError?: string | null;
+    retryAttempt: number;
+    retryMax: number;
+    /**
+     * When `"continue"`, show the recovery screen (Continue / Start over)
+     * after a crash or cold start from a Bun checkpoint.
+     */
+    recoveryMode: false | "continue";
+    /** True when Continue is unavailable (missing project / pi session). */
+    recoveryBlocked?: boolean;
   };
   // Derived views of the active tab, kept for backward compatibility with
   // existing UI components that read global session/connection state.
@@ -203,7 +246,30 @@ export type AgentActions = {
   setWizardCurrentModel: (modelId: string) => void;
   setWizardSessionId: (sessionId: string | undefined) => void;
   setWizardActive: (active: boolean) => void;
+  setWizardStep: (step: WizardStep) => void;
+  setWizardDescription: (description: string) => void;
+  setWizardSelectedTemplateId: (templateId: string | undefined) => void;
+  setWizardProgressLines: (lines: string[] | ((prev: string[]) => string[])) => void;
+  setWizardEnvelope: (envelope: WizardAskEnvelope | null) => void;
+  setWizardPendingRequestId: (requestId: string | null) => void;
+  setWizardProjectPath: (projectPath: string | null) => void;
+  setWizardError: (error: string | null) => void;
+  setWizardRetry: (attempt: number, max?: number) => void;
+  patchWizard: (partial: Partial<AgentState["wizard"]>) => void;
+  hydrateWizardFromRecovery: (payload: {
+    sessionId: string;
+    templateId?: string;
+    description?: string;
+    progressLines?: string[];
+    projectPath?: string | null;
+    wizardError?: string | null;
+    recoveryBlocked?: boolean;
+    preferredModel?: string;
+  }) => void;
+  /** Clear flow state but keep currentModel. Sets active=false. */
   clearWizardState: () => void;
+  /** Soft deactivate on unmount without wiping flow (HMR-friendly). */
+  deactivateWizard: () => void;
   setAdVisibility: (focused: boolean, visible: boolean) => void;
   setTabAd: (tabId: TabId, placement: AdPlacement, campaign?: AdCampaign) => void;
   clearTabAds: (tabId: TabId) => void;

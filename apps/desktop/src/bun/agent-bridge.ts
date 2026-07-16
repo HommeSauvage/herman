@@ -186,13 +186,14 @@ export class AgentBridge {
   /**
    * Send an `extension_ui_response` to the agent stdin, resolving a pending
    * extension UI dialog request (e.g. a herman_wizard_ask question batch
-   * carried over an `editor` request). `value` is the string the awaiting
-   * ctx.ui.editor() / select() / input() call resolves to; pass
-   * `{ cancelled: true }` to cancel.
+   * carried over an `editor` request, or a pi-goal `confirm` dialog).
+   * `value` is the string the awaiting ctx.ui.editor() / select() / input()
+   * call resolves to; pass `{ cancelled: true }` to cancel, or
+   * `{ confirmed: true }` to accept a confirm dialog.
    */
   sendExtensionUiResponse(
     id: string,
-    payload: { value: string } | { cancelled: true },
+    payload: { value: string } | { cancelled: true } | { confirmed: boolean },
   ): void {
     if (!this.process) return;
     this.process.rpc.sendRawObject({

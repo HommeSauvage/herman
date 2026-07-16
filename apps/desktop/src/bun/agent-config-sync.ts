@@ -13,7 +13,7 @@ const logger = getLogger(["herman-desktop", "agent-config"]);
  * the agent settings and installs them into the shared agent dir's
  * npm/node_modules. Sources must use pi's protocol prefixes (npm:, git:).
  */
-const BUNDLED_EXTENSIONS = ["npm:@bacnh85/pi-fff", "npm:@narumitw/pi-goal"];
+const BUNDLED_EXTENSIONS = ["npm:@bacnh85/pi-fff", "npm:pi-goal", "npm:@hypabolic/pi-hypa"];
 
 const SUPPORTED_BUNDLED_PREFIXES = ["npm:", "git:"];
 

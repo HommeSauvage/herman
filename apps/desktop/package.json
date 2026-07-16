@@ -38,6 +38,7 @@
 		"react-scan": "catalog:",
 		"shiki": "catalog:",
 		"sonner": "catalog:",
+		"zod": "catalog:",
 		"zustand": "catalog:"
 	},
 	"devDependencies": {

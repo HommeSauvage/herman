@@ -14,6 +14,30 @@ import type {
   RequirementCheckResult,
   ResolvedManifest,
 } from "./herman-manifest.js";
+import type { WizardAskEnvelope } from "./wizard-protocol.js";
+
+/** Recovery payload for an interrupted Rookie wizard (cold start or HMR). */
+export type WizardRecoveryPayload = {
+  sessionId: string;
+  /** True when the Bun process still has a running bridge (soft reload). */
+  live: boolean;
+  /** False when Continue is unavailable (missing project / pi session). */
+  resumable: boolean;
+  blockedReason?: string;
+  templateId?: string;
+  description?: string;
+  preferredModel?: string;
+  phase?: "planning" | "coding" | "qa";
+  projectPath?: string;
+  progressLines: string[];
+  lastError?: string;
+  finished?: boolean;
+  /** Soft-reload UI hint when `live` is true. */
+  uiStep?: "working" | "questions" | "error" | "retrying" | "recovery";
+  pendingRequestId?: string;
+  envelope?: WizardAskEnvelope;
+  retryAttempt?: number;
+};
 
 export type AuthMethodType = "oauth" | "apiKey";
 
@@ -632,6 +656,18 @@ export type HermanDesktopRPC = {
       };
       setWizardModel: {
         params: { wizardSessionId: string; modelId: string };
+        response: undefined;
+      };
+      resumeWizardSession: {
+        params: { wizardSessionId: string };
+        response: undefined;
+      };
+      getWizardRecovery: {
+        params: undefined;
+        response: WizardRecoveryPayload | null;
+      };
+      discardWizardRecovery: {
+        params: undefined;
         response: undefined;
       };
       respondWizardQuestions: {

@@ -1,6 +1,8 @@
 import { Loader2 } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
 
+import { ProgressLog } from "./progress-log.js";
+
 // ── Action detection from progress lines ────────────────────────────────────
 
 type LoadingAction = "reading" | "writing" | "editing" | "running" | "general";
@@ -78,7 +80,7 @@ const LOADING_TEXTS: Record<LoadingAction, string[]> = {
   ],
 };
 
-const ROTATION_INTERVAL_MS = 3_500;
+const ROTATION_INTERVAL_MS = 9_000;
 
 // ── Hook: cycle through messages, resetting when the action changes ──────────
 
@@ -124,7 +126,7 @@ interface WizardLoadingProps {
  *  and a rotating fun message that reacts to the agent's current tool activity. */
 export function WizardLoading({
   progressLines,
-  headerText = "Hang on there, I'm working, it will take a couple of minutes…",
+  headerText = "Hang on there, I'm working, this will take some time...",
   variant = "working",
 }: WizardLoadingProps) {
   // Detect the latest action from the most recent progress line.
@@ -154,28 +156,11 @@ export function WizardLoading({
           <p className={isRetrying ? "text-sm font-medium text-amber-300" : "text-text text-sm font-medium"}>
             {headerText}
           </p>
-          <p className="text-dim mt-1 text-sm leading-relaxed">
-            <Loader2
-              size={12}
-              className={`mr-1.5 inline animate-spin align-baseline ${isRetrying ? "text-amber-400" : "text-signal"}`}
-            />
-            {cyclingText}
-          </p>
+          <p className="text-dim mt-1 text-sm leading-relaxed">{cyclingText}</p>
         </div>
       </div>
 
-      {/* Progress log */}
-      {progressLines.length > 0 && (
-        <div className="mt-5 w-full rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
-          <div className="max-h-32 space-y-1 overflow-y-auto">
-            {progressLines.map((line, i) => (
-              <div key={i} className="text-ghost text-[11px] leading-relaxed">
-                {line}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <ProgressLog lines={progressLines} className="mt-5" />
     </div>
   );
 }

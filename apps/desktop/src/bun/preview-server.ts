@@ -2,7 +2,10 @@ import { getLogger } from "@logtape/logtape";
 import { spawn, type Subprocess } from "bun";
 import { createServer } from "node:net";
 
-import type { DevServer } from "../shared/herman-manifest.js";
+import {
+  normalizeExportUrlAs,
+  type DevServer,
+} from "../shared/herman-manifest.js";
 import { ensureWorktreeDependencies } from "./worktree.js";
 
 const logger = getLogger(["herman-desktop", "preview"]);
@@ -45,21 +48,62 @@ export function setPreviewStatusHandler(
   previewStatusHandler = handler;
 }
 
+async function isPortFree(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, "127.0.0.1");
+  });
+}
+
 export async function findFreePort(startPort: number): Promise<number> {
   let port = startPort;
   while (port < startPort + 200) {
-    const free = await new Promise<boolean>((resolve) => {
-      const server = createServer();
-      server.once("error", () => resolve(false));
-      server.once("listening", () => {
-        server.close(() => resolve(true));
-      });
-      server.listen(port, "127.0.0.1");
-    });
-    if (free) return port;
+    if (await isPortFree(port)) return port;
     port += 1;
   }
   throw new Error(`No free preview port found near ${startPort}`);
+}
+
+/** Pre-allocate distinct free ports for a list of servers. */
+export async function allocatePorts(
+  servers: { id: string; port?: number }[],
+): Promise<Map<string, number>> {
+  const used = new Set<number>();
+  const out = new Map<string, number>();
+  for (const server of servers) {
+    let candidate = await findFreePort(server.port ?? 4321);
+    while (used.has(candidate)) {
+      candidate += 1;
+      if (!(await isPortFree(candidate))) {
+        // Incremented port is also taken — fall back to a full scan.
+        candidate = await findFreePort(candidate + 1);
+      }
+    }
+    used.add(candidate);
+    out.set(server.id, candidate);
+  }
+  return out;
+}
+
+/** Build env map of exportUrlAs aliases → resolved localhost URLs. */
+export function buildExportEnv(
+  servers: DevServer[],
+  ports: Map<string, number>,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const server of servers) {
+    const port = ports.get(server.id);
+    if (port == null) continue;
+    const url = `http://localhost:${port}`;
+    for (const key of normalizeExportUrlAs(server.exportUrlAs)) {
+      env[key] = url;
+    }
+  }
+  return env;
 }
 
 export async function waitForReady(url: string, timeoutMs = 20_000): Promise<void> {
@@ -84,18 +128,27 @@ function buildCommand(command: string, port: number): string[] {
   return parts;
 }
 
+type StartDevServerOpts = {
+  serverId?: string;
+  label?: string;
+  command?: string;
+  /** Preferred port; used when `resolvedPort` is not set. */
+  port?: number;
+  /** Pre-resolved port; skips findFreePort when set. */
+  resolvedPort?: number;
+  /** Extra env (e.g. sibling exportUrlAs aliases). */
+  extraEnv?: Record<string, string>;
+  /** Own exportUrlAs aliases when starting a single server. */
+  exportUrlAs?: string | string[];
+  primary?: boolean;
+};
+
 /**
  * Start a single named dev server for a project folder.
  */
 export async function startDevServer(
   folderPath: string,
-  opts?: {
-    serverId?: string;
-    label?: string;
-    command?: string;
-    port?: number;
-    primary?: boolean;
-  },
+  opts?: StartDevServerOpts,
 ): Promise<{ url?: string; port: number; serverId: string }> {
   const serverId = opts?.serverId ?? "web";
   const key = previewKey(folderPath, serverId);
@@ -104,10 +157,16 @@ export async function startDevServer(
     await stopDevServer(folderPath, serverId);
   }
 
-  const preferredPort = opts?.port ?? 4321;
-  const resolvedPort = await findFreePort(preferredPort);
+  const resolvedPort =
+    opts?.resolvedPort ?? (await findFreePort(opts?.port ?? 4321));
   const command = opts?.command ?? "npm run dev";
   await ensureWorktreeDependencies(folderPath);
+
+  const ownExportEnv: Record<string, string> = {};
+  const ownUrl = `http://localhost:${resolvedPort}`;
+  for (const keyName of normalizeExportUrlAs(opts?.exportUrlAs)) {
+    ownExportEnv[keyName] = ownUrl;
+  }
 
   const [cmd, ...args] = buildCommand(command, resolvedPort);
 
@@ -124,6 +183,8 @@ export async function startDevServer(
     stderr: "pipe",
     env: {
       ...process.env,
+      ...opts?.extraEnv,
+      ...ownExportEnv,
       PORT: String(resolvedPort),
     },
   });
@@ -133,7 +194,7 @@ export async function startDevServer(
     serverId,
     process: proc,
     port: resolvedPort,
-    url: `http://localhost:${resolvedPort}`,
+    url: ownUrl,
     primary: Boolean(opts?.primary ?? serverId === "web"),
   };
 
@@ -175,7 +236,8 @@ export async function startDevServer(
 }
 
 /**
- * Start all servers from a HERMAN.md / project manifest.
+ * Start all servers from a project manifest (herman.yaml / HERMAN.md).
+ * Pre-allocates ports and injects exportUrlAs sibling URL env aliases.
  * Returns the primary server's URL/port.
  */
 export async function startAllDevServers(
@@ -187,24 +249,41 @@ export async function startAllDevServers(
   }
 
   const primary = servers.find((s) => s.primary) ?? servers[0]!;
+  const ports = await allocatePorts(servers);
+  const exportEnv = buildExportEnv(servers, ports);
   let primaryResult: { url?: string; port: number; serverId: string } | undefined;
+  const startedIds: string[] = [];
 
-  for (const server of servers) {
-    const result = await startDevServer(folderPath, {
-      serverId: server.id,
-      label: server.label,
-      command: server.command,
-      port: server.port,
-      primary: server.id === primary.id,
-    });
-    if (server.id === primary.id) {
-      primaryResult = result;
+  try {
+    for (const server of servers) {
+      const resolvedPort = ports.get(server.id);
+      if (resolvedPort == null) {
+        throw new Error(`No port allocated for server ${server.id}`);
+      }
+      const result = await startDevServer(folderPath, {
+        serverId: server.id,
+        label: server.label,
+        command: server.command,
+        resolvedPort,
+        extraEnv: exportEnv,
+        primary: server.id === primary.id,
+      });
+      startedIds.push(server.id);
+      if (server.id === primary.id) {
+        primaryResult = result;
+      }
     }
+  } catch (error) {
+    // Roll back any servers already started so we don't leave a partial fleet.
+    for (const id of startedIds) {
+      await stopDevServer(folderPath, id).catch(() => undefined);
+    }
+    throw error;
   }
 
   return primaryResult ?? {
     serverId: primary.id,
-    port: primary.port ?? 3000,
+    port: ports.get(primary.id) ?? primary.port ?? 3000,
   };
 }
 

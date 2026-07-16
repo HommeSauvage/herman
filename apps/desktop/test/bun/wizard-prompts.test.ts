@@ -9,6 +9,7 @@ import {
   buildPlanningPrompt,
   buildQaGoal,
   DEFAULT_SETUP_GOAL,
+  formatExportUrlContract,
   validatePlanningOutputs,
   WIZARD_PLAN_FILENAME,
 } from "../../src/bun/wizard-session.js";
@@ -61,6 +62,34 @@ describe("buildPlanningPrompt", () => {
   });
 });
 
+describe("formatExportUrlContract", () => {
+  it("returns empty when no exportUrlAs is declared", () => {
+    expect(formatExportUrlContract(undefined)).toBe("");
+    expect(
+      formatExportUrlContract([
+        { id: "web", label: "Web", command: "bun run dev", port: 3000, primary: true },
+      ]),
+    ).toBe("");
+  });
+
+  it("lists server ids and alias names", () => {
+    const text = formatExportUrlContract([
+      {
+        id: "api",
+        label: "API",
+        command: "bun run dev:api",
+        exportUrlAs: ["API_SERVER", "API_URL"],
+      },
+      { id: "web", label: "Web", command: "bun run dev:web", primary: true },
+    ]);
+    expect(text).toContain("exportUrlAs");
+    expect(text).toContain("`api`");
+    expect(text).toContain("`API_SERVER`");
+    expect(text).toContain("`API_URL`");
+    expect(text).toContain("do not hardcode");
+  });
+});
+
 describe("buildCodingGoal", () => {
   it("includes framing, setup_goal, setup section, and tick-all-boxes rule in one goal", () => {
     const goal = buildCodingGoal(
@@ -87,6 +116,35 @@ describe("buildCodingGoal", () => {
     );
     expect(goal).toContain(DEFAULT_SETUP_GOAL);
   });
+
+  it("includes exportUrlAs contract when declared on servers", () => {
+    const goal = buildCodingGoal(
+      makeManifest({
+        frontmatter: {
+          dev: {
+            servers: [
+              {
+                id: "api",
+                label: "API",
+                command: "bun run dev:api",
+                exportUrlAs: "API_SERVER",
+              },
+              {
+                id: "web",
+                label: "Web",
+                command: "bun run dev:web",
+                primary: true,
+              },
+            ],
+          },
+        },
+      }),
+      "/tmp/x",
+      "/tmp/x/HERMAN_PLAN.md",
+    );
+    expect(goal).toContain("Preview URL env contract");
+    expect(goal).toContain("API_SERVER");
+  });
 });
 
 describe("buildQaGoal", () => {
@@ -102,6 +160,25 @@ describe("buildQaGoal", () => {
     expect(goal).toContain("Start the server and navigate the website");
     expect(goal).toContain("console errors");
     expect(goal).toContain("herman_complete_wizard");
+  });
+
+  it("includes exportUrlAs checklist when servers declare it", () => {
+    const goal = buildQaGoal(
+      "/tmp/x",
+      "/tmp/x/HERMAN_PLAN.md",
+      "done",
+      [
+        {
+          id: "api",
+          label: "API",
+          command: "bun run dev:api",
+          exportUrlAs: ["API_SERVER", "API_URL"],
+        },
+      ],
+    );
+    expect(goal).toContain("exportUrlAs");
+    expect(goal).toContain("API_SERVER");
+    expect(goal).toContain("hardcoded");
   });
 });
 

@@ -16,6 +16,7 @@ import { rebuildDerived } from "./derive.js";
 import { arraysEqual, contextStatsEqual, messagesEqualish, queuedMessagesEqual } from "./compare.js";
 import { computeRetryState, getTodayKey, MAX_RETRY_ATTEMPTS } from "./utils.js";
 import type { AgentActions, AgentState, Tab } from "./types.js";
+import { INITIAL_WIZARD_STATE } from "./types.js";
 
 /**
  * Merge a fresh `emptyContextStats` (which always has correct message
@@ -71,7 +72,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
   ads: INITIAL_ADS_STATE,
   onboardingVisible: false,
   modelCatalog: { availableModels: [] },
-  wizard: { active: false },
+  wizard: { ...INITIAL_WIZARD_STATE },
   session: { messages: [], isThinking: false, availableModels: [] },
   connection: { state: "idle" },
 
@@ -808,11 +809,96 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       wizard: { ...state.wizard, active },
     })),
 
-  clearWizardState: () =>
+  setWizardStep: (step) =>
     set((state) => ({
-      wizard: { active: false, currentModel: state.wizard.currentModel },
+      wizard: { ...state.wizard, step },
     })),
 
+  setWizardDescription: (description) =>
+    set((state) => ({
+      wizard: { ...state.wizard, description },
+    })),
+
+  setWizardSelectedTemplateId: (templateId) =>
+    set((state) => ({
+      wizard: { ...state.wizard, selectedTemplateId: templateId },
+    })),
+
+  setWizardProgressLines: (lines) =>
+    set((state) => ({
+      wizard: {
+        ...state.wizard,
+        progressLines: typeof lines === "function" ? lines(state.wizard.progressLines) : lines,
+      },
+    })),
+
+  setWizardEnvelope: (envelope) =>
+    set((state) => ({
+      wizard: { ...state.wizard, envelope },
+    })),
+
+  setWizardPendingRequestId: (requestId) =>
+    set((state) => ({
+      wizard: { ...state.wizard, pendingRequestId: requestId },
+    })),
+
+  setWizardProjectPath: (projectPath) =>
+    set((state) => ({
+      wizard: { ...state.wizard, projectPath },
+    })),
+
+  setWizardError: (error) =>
+    set((state) => ({
+      wizard: { ...state.wizard, wizardError: error },
+    })),
+
+  setWizardRetry: (attempt, max) =>
+    set((state) => ({
+      wizard: {
+        ...state.wizard,
+        retryAttempt: attempt,
+        ...(typeof max === "number" ? { retryMax: max } : {}),
+      },
+    })),
+
+  patchWizard: (partial) =>
+    set((state) => ({
+      wizard: { ...state.wizard, ...partial },
+    })),
+
+  hydrateWizardFromRecovery: (payload) =>
+    set((state) => ({
+      wizard: {
+        ...state.wizard,
+        active: true,
+        sessionId: payload.sessionId,
+        selectedTemplateId: payload.templateId ?? state.wizard.selectedTemplateId,
+        description: payload.description ?? state.wizard.description,
+        progressLines: payload.progressLines ?? state.wizard.progressLines,
+        projectPath: payload.projectPath ?? state.wizard.projectPath ?? null,
+        wizardError: payload.wizardError ?? null,
+        recoveryMode: "continue",
+        recoveryBlocked: Boolean(payload.recoveryBlocked),
+        step: "recovery",
+        ...(payload.preferredModel ? { currentModel: payload.preferredModel } : {}),
+        envelope: null,
+        pendingRequestId: null,
+        retryAttempt: 0,
+      },
+    })),
+
+  clearWizardState: () =>
+    set((state) => ({
+      wizard: {
+        ...INITIAL_WIZARD_STATE,
+        currentModel: state.wizard.currentModel,
+      },
+    })),
+
+  deactivateWizard: () =>
+    set((state) => ({
+      wizard: { ...state.wizard, active: false },
+    })),
   setView: (view) =>
     set((state) => {
       // Guard: never allow "session" view without a valid active tab that has

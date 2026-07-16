@@ -323,6 +323,19 @@ function shouldRefreshModels(status: number | null): boolean {
   return status === 403 || status === 503;
 }
 
+/** Extract the guidance key from a herman.yaml file. */
+function extractYamlGuidance(raw: string): string | undefined {
+  try {
+    const parsed = Bun.YAML.parse(raw) as Record<string, unknown> | undefined;
+    if (parsed && typeof parsed.guidance === "string" && parsed.guidance.trim()) {
+      return parsed.guidance.trim();
+    }
+  } catch {
+    // Invalid YAML — skip
+  }
+  return undefined;
+}
+
 /** Extract the ## Guidance section from a HERMAN.md body (lightweight, no YAML dep). */
 function extractGuidanceSection(raw: string): string | undefined {
   const bodyMatch = raw.match(/^---[\s\S]*?---\r?\n?([\s\S]*)$/);
@@ -462,7 +475,7 @@ export default async function hermanExtension(pi: ExtensionAPI) {
   // ── Rookie mode system prompt injection ──────────────────────────
   // In rookie mode, the user is non-technical. We prepend behavioral
   // instructions and append any template-specific guidance from the
-  // project's HERMAN.md (## Guidance) or legacy herman.json.
+  // project's herman.yaml or HERMAN.md (## Guidance section).
 
   const ROOKIE_INSTRUCTIONS = `
 <rookie_mode>
@@ -501,22 +514,22 @@ CRITICAL RULES:
 
     let systemPrompt = ROOKIE_INSTRUCTIONS + event.systemPrompt;
 
-    // Prefer HERMAN.md ## Guidance; fall back to legacy herman.json systemPromptHint.
+    // Prefer herman.yaml (new format), then HERMAN.md (legacy).
     try {
-      const hermanMdPath = join(ctx.cwd, "HERMAN.md");
-      if (existsSync(hermanMdPath)) {
-        const raw = readFileSync(hermanMdPath, "utf-8");
-        const guidance = extractGuidanceSection(raw);
+      const yamlPath = join(ctx.cwd, "herman.yaml");
+      if (existsSync(yamlPath)) {
+        const raw = readFileSync(yamlPath, "utf-8");
+        const guidance = extractYamlGuidance(raw);
         if (guidance) {
           systemPrompt += `\n\n<template_instructions>\n${guidance}\n</template_instructions>`;
         }
       } else {
-        const hermanJsonPath = join(ctx.cwd, "herman.json");
-        if (existsSync(hermanJsonPath)) {
-          const raw = readFileSync(hermanJsonPath, "utf-8");
-          const herman = JSON.parse(raw) as { systemPromptHint?: string };
-          if (herman.systemPromptHint) {
-            systemPrompt += `\n\n<template_instructions>\n${herman.systemPromptHint}\n</template_instructions>`;
+        const hermanMdPath = join(ctx.cwd, "HERMAN.md");
+        if (existsSync(hermanMdPath)) {
+          const raw = readFileSync(hermanMdPath, "utf-8");
+          const guidance = extractGuidanceSection(raw);
+          if (guidance) {
+            systemPrompt += `\n\n<template_instructions>\n${guidance}\n</template_instructions>`;
           }
         }
       }

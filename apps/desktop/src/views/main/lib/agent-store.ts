@@ -2,8 +2,8 @@
 // All exports are preserved for backward compatibility.
 // See agent-store/ for the modular implementation.
 
-export type { Tab, AgentState, AgentActions, AppSession } from "./agent-store/types.js";
-
+export type { Tab, AgentState, AgentActions, AppSession, WizardStep } from "./agent-store/types.js";
+export { INITIAL_WIZARD_STATE } from "./agent-store/types.js";
 export { useAgentStore } from "./agent-store/store.js";
 export { useAppStore } from "./agent-store/app-store.js";
 

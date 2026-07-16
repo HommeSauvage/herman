@@ -45,6 +45,55 @@ Keep it simple.
     expect(parsed.sections.guidance).toContain("Keep it simple");
   });
 
+  it("parses and serializes exportUrlAs as string and array", () => {
+    const asString = parseHermanMd(
+      `---
+version: 1
+name: Api
+dev:
+  servers:
+    - id: api
+      label: API
+      command: bun run dev:api
+      port: 3010
+      exportUrlAs: API_SERVER
+---
+`,
+      "api",
+    );
+    expect(asString.frontmatter.dev?.servers?.[0]?.exportUrlAs).toBe("API_SERVER");
+
+    const asArray = parseHermanMd(
+      `---
+version: 1
+name: Api
+dev:
+  servers:
+    - id: api
+      label: API
+      command: bun run dev:api
+      port: 3010
+      exportUrlAs:
+        - API_SERVER
+        - API_URL
+---
+`,
+      "api",
+    );
+    expect(asArray.frontmatter.dev?.servers?.[0]?.exportUrlAs).toEqual([
+      "API_SERVER",
+      "API_URL",
+    ]);
+
+    const serialized = serializeHermanMd(asArray.frontmatter, asArray.sections);
+    expect(serialized).toContain("exportUrlAs:");
+    expect(serialized).toContain("API_SERVER");
+    expect(serialized).toContain("API_URL");
+
+    const stringSerialized = serializeHermanMd(asString.frontmatter, asString.sections);
+    expect(stringSerialized).toContain("exportUrlAs: API_SERVER");
+  });
+
   it("merges extends frontmatter by keyed arrays", () => {
     const base = parseHermanMd(
       `---

@@ -234,6 +234,8 @@ export function RookieShell() {
                     tabId={activeTabId}
                     isWorktree={Boolean(activeTabWorktree)}
                     onPublish={handleOpenPublish}
+                    splitDragging={isDragging}
+                    publishOpen={publishOpen}
                   />
                 </div>
               </div>

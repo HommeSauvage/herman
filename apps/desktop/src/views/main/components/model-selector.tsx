@@ -227,6 +227,7 @@ export function ModelSelector() {
           animate={{ opacity: 1 }}
           exit={reducedMotion ? undefined : { opacity: 0 }}
           transition={reducedMotion ? { duration: 0 } : { duration: 0.15 }}
+          data-herman-overlay=""
           className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-24 backdrop-blur-sm"
           onClick={() => setModelSelectorOpen(false)}
           onKeyDown={handleOverlayKeyDown}

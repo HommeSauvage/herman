@@ -43,7 +43,7 @@ import {
   stopAllDevServers,
   setPreviewStatusHandler,
 } from "./preview-server.js";
-import { readProjectManifest } from "./project-manifest.js";
+import { readProjectManifest, setupProjectRepo } from "./project-manifest.js";
 import { checkRequirements } from "./requirements.js";
 import { getGalleryTemplates as loadGalleryTemplates, resolveTemplateManifest } from "./template-registry.js";
 import { WizardSessionManager } from "./wizard-session.js";
@@ -652,6 +652,15 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       setWizardModel: async ({ wizardSessionId, modelId }) => {
         wizardSessionManager.setModel(wizardSessionId, modelId);
       },
+      resumeWizardSession: async ({ wizardSessionId }) => {
+        await wizardSessionManager.resume(wizardSessionId);
+      },
+      getWizardRecovery: async () => {
+        return wizardSessionManager.getRecovery();
+      },
+      discardWizardRecovery: async () => {
+        await wizardSessionManager.discardRecovery();
+      },
       respondWizardQuestions: async ({ wizardSessionId, requestId, answers }) => {
         wizardSessionManager.respond(wizardSessionId, requestId, answers);
       },
@@ -659,10 +668,33 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         await wizardSessionManager.cancel(wizardSessionId);
       },
       adoptWizardSession: async ({ projectPath, wizardSessionId }) => {
-        const tab = await agentProcessManager.adoptWizardSession(projectPath, wizardSessionId);
+        const wizard = wizardSessionManager.get(wizardSessionId);
+
+        // Set up a clean git repo and write herman.yaml with the resolved config.
+        // This replaces the old agent QA prompt instruction to "make sure the git
+        // repository is fresh" and ensures the worktree (created by createTab in
+        // rookie mode) includes the manifest.
+        const manifest = wizard?.getResolvedManifest();
+        if (manifest && projectPath) {
+          try {
+            await setupProjectRepo(projectPath, manifest);
+          } catch (error) {
+            // The project is still usable even if repo setup failed.
+            // Log and continue — the user should not be blocked from opening.
+            logger.warning("setupProjectRepo failed during wizard handoff", {
+              projectPath,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
         // Stop the wizard bridge; the new tab starts a fresh pi session.
-        await wizardSessionManager.get(wizardSessionId)?.detach();
+        await wizard?.detach();
         wizardSessionManager.remove(wizardSessionId);
+
+        // Open the finished project directly (no session worktree) so the
+        // wizard's uncommitted changes remain visible.
+        const tab = await agentProcessManager.adoptWizardSession(projectPath, wizardSessionId);
         webviewRpc.send.tabCreated({ tab });
         webviewRpc.send.tabActivated({ tabId: tab.id });
         notifyProjectsChanged();
@@ -694,16 +726,20 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         notifySessionsChanged();
       },
       startPreview: async ({ folderPath, serverId, devCommand, devPort, all }) => {
+        const manifest = await readProjectManifest(folderPath);
         if (all || (!devCommand && !serverId)) {
-          const manifest = await readProjectManifest(folderPath);
           if (manifest?.servers?.length) {
             return startAllDevServers(folderPath, manifest.servers);
           }
         }
+        const server = serverId
+          ? manifest?.servers?.find((s) => s.id === serverId)
+          : manifest?.primary ?? manifest?.servers?.[0];
         return startDevServer(folderPath, {
-          serverId: serverId ?? "web",
-          command: devCommand,
-          port: devPort,
+          serverId: server?.id ?? serverId ?? "web",
+          command: devCommand ?? server?.command,
+          port: devPort ?? server?.port,
+          exportUrlAs: server?.exportUrlAs,
           primary: true,
         });
       },
@@ -712,16 +748,20 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       restartPreview: async ({ folderPath, serverId, devCommand, devPort, all }) => {
         await stopDevServer(folderPath, serverId);
+        const manifest = await readProjectManifest(folderPath);
         if (all || (!devCommand && !serverId)) {
-          const manifest = await readProjectManifest(folderPath);
           if (manifest?.servers?.length) {
             return startAllDevServers(folderPath, manifest.servers);
           }
         }
+        const server = serverId
+          ? manifest?.servers?.find((s) => s.id === serverId)
+          : manifest?.primary ?? manifest?.servers?.[0];
         return startDevServer(folderPath, {
-          serverId: serverId ?? "web",
-          command: devCommand,
-          port: devPort,
+          serverId: server?.id ?? serverId ?? "web",
+          command: devCommand ?? server?.command,
+          port: devPort ?? server?.port,
+          exportUrlAs: server?.exportUrlAs,
           primary: true,
         });
       },
@@ -879,6 +919,11 @@ setPreviewStatusHandler((payload) => {
 
 const wizardSessionManager = new WizardSessionManager((event) => {
   webviewRpc.send.wizardEvent({ event });
+});
+
+// Restore a paused wizard from disk before the renderer asks for recovery.
+void wizardSessionManager.restoreFromDisk().catch((error) => {
+  logger.warning("Failed to restore wizard checkpoint", { error });
 });
 
 let isFocused = false;
