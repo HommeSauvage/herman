@@ -93,11 +93,16 @@ export type LineHandler = (source: "stdout" | "stderr", line: string) => void;
  */
 export function attachLineReaders(
   child: PreviewChildProcess,
-  onLine: LineHandler,
+  onLine: LineHandler & { flush?: () => void },
 ): () => void {
   let cancelled = false;
+  let alive = 0;
   const cancel = () => {
     cancelled = true;
+  };
+
+  const maybeFlush = () => {
+    if (alive === 0) onLine.flush?.();
   };
 
   const attach = (
@@ -105,6 +110,7 @@ export function attachLineReaders(
     source: "stdout" | "stderr",
   ) => {
     if (!stream) return;
+    alive++;
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -125,6 +131,9 @@ export function attachLineReaders(
         if (!cancelled && buffer.trim()) onLine(source, buffer.replace(/\r$/, ""));
       } catch {
         // ignore read errors on process exit
+      } finally {
+        alive--;
+        maybeFlush();
       }
     })();
   };
@@ -139,9 +148,45 @@ export type InstanceLogSink = {
   onErrorLine: (source: "stdout" | "stderr", line: string) => void;
 };
 
-/** Create a line handler that updates stderr tail and filters error lines. */
-export function createInstanceLineHandler(sink: InstanceLogSink): LineHandler {
-  return (source, line) => {
+/** Number of lines captured before and after each detected error line. */
+const ERROR_CONTEXT_LINES = 25;
+
+type PendingContext = {
+  source: "stdout" | "stderr";
+  before: string[];
+  errorLine: string;
+  after: string[];
+  remainingAfter: number;
+};
+
+/**
+ * Create a line handler that updates stderr tail and filters error lines.
+ *
+ * Multi-line errors (stack traces, turborepo-style arrays, etc.) are captured
+ * as a single entry by snapping ERROR_CONTEXT_LINES before and after each
+ * detected error line.  The returned handler exposes a `flush()` method so
+ * callers can drain an in-progress context window before the process exits.
+ */
+export function createInstanceLineHandler(sink: InstanceLogSink): LineHandler & { flush: () => void } {
+  // Sliding window of recent log lines used for "before" context snapshots.
+  const ring: string[] = [];
+  let pending: PendingContext | null = null;
+
+  function flushPending() {
+    if (!pending) return;
+    const fullMessage = [
+      ...pending.before,
+      pending.errorLine,
+      ...pending.after,
+    ].join("\n");
+    sink.onErrorLine(
+      pending.source,
+      truncateErrorMessage(fullMessage, MAX_ERROR_MESSAGE_CHARS),
+    );
+    pending = null;
+  }
+
+  const handler: LineHandler = (source, line) => {
     if (source === "stderr") {
       sink.onStderrChunk(line + "\n");
       // Always log stderr at info level — most build tools route errors here.
@@ -151,10 +196,38 @@ export function createInstanceLineHandler(sink: InstanceLogSink): LineHandler {
       // errors on stdout are still detected and forwarded.
       logger.debug(`[preview stdout]`, { msg: line });
     }
+
     if (looksLikeServerError(line)) {
-      sink.onErrorLine(source, truncateErrorMessage(line, MAX_ERROR_MESSAGE_CHARS));
+      // Flush any in-progress context window so overlapping errors don't merge.
+      flushPending();
+
+      // Snapshot the N lines leading up to this error.  The ring doesn't
+      // contain this line yet — it's pushed after the error check.
+      pending = {
+        source,
+        before: ring.slice(-ERROR_CONTEXT_LINES),
+        errorLine: line,
+        after: [],
+        remainingAfter: ERROR_CONTEXT_LINES,
+      };
+    } else if (pending) {
+      // Collect "after" context for the current error window.
+      pending.after.push(line);
+      pending.remainingAfter--;
+      if (pending.remainingAfter <= 0) {
+        flushPending();
+      }
+    }
+
+    // Push to the sliding window so future errors can use it as "before" context.
+    ring.push(line);
+    // Keep memory bounded (2× context, one shift per line keeps it exactly at the cap).
+    if (ring.length > ERROR_CONTEXT_LINES * 2) {
+      ring.shift();
     }
   };
+
+  return Object.assign(handler, { flush: flushPending });
 }
 
 export { appendStderrTail, MAX_STDERR_CHARS };

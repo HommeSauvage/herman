@@ -717,8 +717,9 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       discardSession: async ({ tabId }) => {
         const tab = agentProcessManager.getTab(tabId);
         if (!tab || !tab.worktree) return;
-        await stopDevServer(tab.folderPath);
         await removeSessionWorktree(tab);
+        // closeTab defers stopDevServer so the renderer unmounts the webview
+        // before the preview server is killed — no explicit stopDevServer needed.
         const newActiveId = await agentProcessManager.closeTab(tabId);
         webviewRpc.send.tabClosed({ tabId });
         if (newActiveId) {
@@ -785,8 +786,8 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       getPreviewStatus: async ({ folderPath, serverId }) => {
         return getDevServerStatus(folderPath, serverId);
       },
-      getProjectManifest: async ({ folderPath }) => {
-        return readProjectManifest(folderPath);
+      getProjectManifest: async ({ folderPath, projectRoot }) => {
+        return readProjectManifest(folderPath, projectRoot);
       },
       getSkills: async ({ projectDir }) => {
         const { loadSettings } = await import("./settings.js");
@@ -916,9 +917,9 @@ const agentProcessManager = new AgentProcessManager({
         webviewRpc.send.agentStatusChanged({ tabId, state, stderr });
       },
       tabFolderChanged: (payload) => {
-        const { tabId, folderPath } = payload;
-        logger.trace("Tab folder changed", { tabId, folderPath });
-        webviewRpc.send.tabFolderChanged({ tabId, folderPath });
+        const { tabId, folderPath, projectRoot } = payload;
+        logger.trace("Tab folder changed", { tabId, folderPath, projectRoot });
+        webviewRpc.send.tabFolderChanged({ tabId, folderPath, projectRoot });
       },
       sessionsChanged: (payload) => {
         webviewRpc.send.sessionsChanged(payload);
@@ -1279,6 +1280,8 @@ async function handleMenuAction(action?: string) {
     case "quit": {
       await agentProcessManager.closeAll();
       await stopAllDevServers();
+      // Safety net: remove any BrowserViews the renderer couldn't clean up.
+      agentProcessManager.removeOrphanedPreviewViews();
       process.exit();
       break;
     }

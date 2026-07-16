@@ -1,8 +1,9 @@
 import { Sparkles, Loader2 } from "lucide-react";
 import { getLogger } from "@logtape/logtape";
 import { useEffect, useState } from "react";
+import { Toaster } from "sonner";
 
-import type { PersistedSession, Session, Tab, TabId } from "../../shared/rpc.js";
+import type { PersistedSession, Session, SessionWorktree, Tab, TabId } from "../../shared/rpc.js";
 import { ErrorBoundary } from "./components/error-boundary.js";
 import { LoginView } from "./components/login-view.js";
 import { ModeChoiceView } from "./components/mode-choice-view.js";
@@ -140,8 +141,35 @@ function AppContent() {
     const onTabCreated = ({ tab }: { tab: Tab }) => addTab(tab);
     const onTabClosed = ({ tabId }: { tabId: TabId }) => closeTab(tabId);
     const onTabActivated = ({ tabId }: { tabId: TabId }) => activateTab(tabId);
-    const onTabFolderChanged = ({ tabId, folderPath, projectRoot }: { tabId: TabId; folderPath?: string; projectRoot?: string }) => {
-      if (folderPath) setProjectForTab(tabId, projectRoot ?? folderPath);
+    const onTabFolderChanged = ({
+      tabId,
+      folderPath,
+      projectRoot,
+      worktree,
+      worktreeStatus,
+      error,
+    }: {
+      tabId: TabId;
+      folderPath?: string;
+      projectRoot?: string;
+      worktree?: SessionWorktree;
+      worktreeStatus?: "pending" | "ready" | "error";
+      error?: string;
+    }) => {
+      // Folder / project updates only apply when we have a new folder path.
+      if (folderPath) {
+        setProjectForTab(tabId, { folderPath, projectRoot });
+      }
+      // Worktree status updates (ready, error) come from the background
+      // worktree task.  "ready" is a transient main-process marker — clear
+      // it so the renderer only sees undefined (normal) or "error".
+      if (worktree || worktreeStatus || error) {
+        useAgentStore.getState().updateTab(tabId, {
+          ...(worktree ? { worktree } : {}),
+          worktreeStatus: worktreeStatus === "ready" ? undefined : worktreeStatus,
+          ...(error ? { connectionError: error } : {}),
+        });
+      }
     };
     const onProjectsChanged = ({ projects }: { projects: string[] }) => setProjects(projects);
     const onSessionsChanged = ({ sessions }: { sessions: PersistedSession[] }) =>
@@ -245,6 +273,18 @@ function AppContent() {
 
   return (
     <ErrorBoundary>
+      <Toaster
+        theme="dark"
+        position="bottom-right"
+        visibleToasts={5}
+        gap={8}
+        closeButton
+        toastOptions={{
+          classNames: {
+            toast: "herman-toast",
+          },
+        }}
+      />
       {updateStatus && (
         <UpdateBanner status={updateStatus} onDismiss={() => setUpdateStatus(null)} />
       )}

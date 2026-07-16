@@ -89,6 +89,10 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     // process when the tab is created. Use folderPath as a fallback here.
     tab.projectRoot = path;
     tab.projectColor = getProjectColor(path);
+    // Inherit the user's preferred default model for new tabs.
+    if (state.settings.models.defaultModel) {
+      tab.currentModel = state.settings.models.defaultModel;
+    }
     if (!title && path) {
       tab.title = getProjectName(path);
     }
@@ -130,6 +134,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
                     projectColor: closedTab.projectColor,
                     createdAt: closedTab.createdAt,
                     updatedAt: closedTab.updatedAt,
+                    currentModel: closedTab.currentModel,
                   }
                 : session,
             )
@@ -143,6 +148,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
                 projectColor: closedTab.projectColor,
                 createdAt: closedTab.createdAt,
                 updatedAt: closedTab.updatedAt,
+                currentModel: closedTab.currentModel,
               },
             ]
         : state.sessions.filter((session) => session.id !== id);
@@ -185,6 +191,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         projectColor: tab.projectColor,
         createdAt: tab.createdAt,
         updatedAt: tab.updatedAt,
+        currentModel: tab.currentModel,
       };
       const sessions = state.sessions.some((session) => session.id === tab.id)
         ? state.sessions.map((session) => (session.id === tab.id ? persistedSession : session))
@@ -287,12 +294,13 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     get().updateTab(id, { title });
   },
 
-  setProjectForTab: (id, folderPath) => {
-    const projectRoot = folderPath; // main process computes the real root before confirming
+  setProjectForTab: (id, project) => {
+    const folderPath = project.folderPath;
+    const projectRoot = project.projectRoot ?? folderPath;
     get().updateTab(id, {
       folderPath,
       projectRoot,
-      projectColor: getProjectColor(folderPath),
+      projectColor: getProjectColor(projectRoot),
     });
     set((state) => {
       const tab = state.tabs[id];
@@ -302,9 +310,10 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         title: tab.title,
         folderPath,
         projectRoot,
-        projectColor: getProjectColor(folderPath),
+        projectColor: getProjectColor(projectRoot),
         createdAt: tab.createdAt,
         updatedAt: Date.now(),
+        currentModel: tab.currentModel,
       };
       const sessions = state.sessions.map((session) =>
         session.id === id ? persistedSession : session,

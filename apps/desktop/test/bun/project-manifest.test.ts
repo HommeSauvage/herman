@@ -216,6 +216,31 @@ name: MD Project
     expect(manifest).toBeUndefined();
     removeTestTempDir(dir);
   });
+
+  it("falls back to projectRoot when worktree folder has no manifest", async () => {
+    const projectRoot = makeTempDir("project-root");
+    const worktree = makeTempDir("worktree-no-manifest");
+    writeFileSync(
+      join(projectRoot, "herman.yaml"),
+      `version: 1
+dev:
+  servers:
+    - id: web
+      label: Website
+      command: npm run dev
+      port: 3000
+      primary: true
+`,
+    );
+
+    const manifest = await readProjectManifest(worktree, projectRoot);
+    expect(manifest).toBeTruthy();
+    expect(manifest!.servers[0]!.command).toBe("npm run dev");
+    expect(manifest!.servers[0]!.port).toBe(3000);
+
+    removeTestTempDir(projectRoot);
+    removeTestTempDir(worktree);
+  });
 });
 
 describe("setupProjectRepo", () => {

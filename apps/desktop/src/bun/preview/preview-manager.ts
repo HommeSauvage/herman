@@ -520,6 +520,7 @@ export class PreviewManager {
       },
       onErrorLine: (source, line) => {
         if (this.previews.get(key) !== instance) return;
+        if (instance.stoppedIntentionally) return;
         logger.info("Preview error line detected", {
           folderPath,
           serverId,
@@ -538,6 +539,9 @@ export class PreviewManager {
     attachLineReaders(child, lineHandler);
 
     void child.exited.then((exitCode) => {
+      // Drain any in-progress error context window so partial output isn't lost.
+      lineHandler.flush();
+
       flight.abort.signal.removeEventListener("abort", onFlightAbort);
       if (this.previews.get(key) !== instance) return;
       if (instance.generation !== generation) return;

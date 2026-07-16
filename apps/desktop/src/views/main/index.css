@@ -388,6 +388,49 @@ body {
   }
 }
 
+/* Sonner toast overrides — match Herman's dark palette */
+.herman-toast {
+  --toast-bg: var(--color-surface);
+  --toast-border: var(--color-mist);
+  background: var(--color-surface) !important;
+  border: 1px solid var(--color-mist) !important;
+  border-radius: var(--radius) !important;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 25px 50px -12px rgba(0, 0, 0, 0.6) !important;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+}
+
+.herman-toast [data-title] {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.herman-toast [data-description] {
+  font-size: 11px;
+  color: var(--color-ghost);
+  margin-top: 2px;
+}
+
+.herman-toast [data-close-button] {
+  color: var(--color-ghost);
+  transition: color 0.15s;
+}
+
+.herman-toast [data-close-button]:hover {
+  color: var(--color-dim);
+}
+
+.herman-toast [data-button] {
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 0.75rem;
+  transition: all 0.15s;
+}
+
 /* Session progress bar — the indefinite whip that signals work in progress */
 @keyframes session-progress-whip {
   0% {

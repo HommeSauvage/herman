@@ -33,7 +33,10 @@ export function ProjectSelect({ tabId }: ProjectSelectProps) {
       if (projectRoot !== currentProjectRoot) {
         // Optimistic update: immediately reflect the selection so the UI is always
         // responsive. The RPC call restarts the agent bridge with the new folder.
-        useAgentStore.getState().setProjectForTab(tabId, projectRoot);
+        useAgentStore.getState().setProjectForTab(tabId, {
+          folderPath: projectRoot,
+          projectRoot,
+        });
         void selectTabProject(tabId, projectRoot);
       }
       setOpen(false);

@@ -54,6 +54,7 @@ export class TabSessionStore {
       createdAt: tab.createdAt,
       updatedAt: tab.updatedAt,
       revertMessageId: tab.revertMessageId,
+      currentModel: tab.currentModel,
     };
   }
 
@@ -81,6 +82,7 @@ export class TabSessionStore {
       composerValue,
       queuedMessages: [],
       revertMessageId: persisted.revertMessageId,
+      currentModel: persisted.currentModel,
     };
   }
 

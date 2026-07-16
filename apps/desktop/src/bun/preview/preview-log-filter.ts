@@ -63,9 +63,14 @@ const SERVER_ERROR_PATTERNS: RegExp[] = [
   /\bCannot import\b/i,
 ];
 
+const NOT_ERROR_PATTERNS: RegExp[] = [
+  /\bterminated by signal\b/i,
+];
+
 export function looksLikeServerError(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
+  if (NOT_ERROR_PATTERNS.some((pattern) => pattern.test(trimmed))) return false;
   return SERVER_ERROR_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 

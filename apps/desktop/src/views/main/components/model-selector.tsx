@@ -212,10 +212,23 @@ export function ModelSelector() {
     }
 
     if (!tabId) return;
+    const store = useAgentStore.getState();
+
     // Optimistically update the UI so the model changes immediately.
     // The async models_sync event will confirm it later.
-    useAgentStore.getState().setModels(tabId, modelId);
+    store.setModels(tabId, modelId);
     setModelSelectorOpen(false);
+
+    // Persist as the user's default model for future sessions.
+    const next = {
+      ...store.settings,
+      models: { ...store.settings.models, defaultModel: modelId },
+    };
+    store.setSettings(next);
+    void desktopRpc.request.saveSettings({ settings: next }).catch(() => {
+      // Best-effort persistence.
+    });
+
     await selectModel(tabId, modelId);
   }
 

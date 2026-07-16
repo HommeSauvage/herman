@@ -1,5 +1,5 @@
 import { getLogger } from "@logtape/logtape";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import type { PendingAttachment, QueuedFollowUp, TabId } from "../../../shared/rpc.js";
@@ -246,6 +246,27 @@ export function Composer() {
       handleQueueFlush(tabId);
     }
   }, [tabId, handleQueueFlush]);
+
+  // ---- Flush queued messages when worktree becomes ready ------------
+
+  const worktreeStatus = useAgentStore((s) =>
+    s.activeTabId ? s.tabs[s.activeTabId]?.worktreeStatus : undefined,
+  );
+
+  const prevWorktreeStatus = useRef(worktreeStatus);
+  useEffect(() => {
+    const wasPending = prevWorktreeStatus.current === "pending";
+    const isReady = worktreeStatus === undefined || worktreeStatus === "ready";
+    prevWorktreeStatus.current = worktreeStatus;
+
+    if (wasPending && isReady && tabId) {
+      // The worktree just became ready — flush any queued messages.
+      const tab = useAgentStore.getState().tabs[tabId];
+      if (tab?.queuedMessages?.length && !isTabWorking(tab)) {
+        handleQueueFlush(tabId);
+      }
+    }
+  }, [worktreeStatus, tabId, handleQueueFlush]);
 
   // ---- Keyboard handler -----------------------------------------------
 

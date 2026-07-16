@@ -132,8 +132,10 @@ export function applyAgentEvent(
     }
     case "herman/models_sync":
     case "models_sync": {
+      // Only adopt the agent's default model if this tab doesn't already
+      // have one (e.g. restored from session or inherited from settings).
       withPatch({
-        currentModel: event.currentModel ?? tab.currentModel,
+        currentModel: tab.currentModel ?? event.currentModel,
         availableModels: event.models,
       });
       break;

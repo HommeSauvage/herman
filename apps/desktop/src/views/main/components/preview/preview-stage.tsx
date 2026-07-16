@@ -1,8 +1,8 @@
 import { Loader2, Monitor, Play } from "lucide-react";
+import { type Ref } from "react";
 
 import { DEVICE_WIDTHS, type DeviceMode, type PreviewStage as PreviewStageKind } from "../../lib/preview-store.js";
-import { PreviewErrorBanner, type PreviewRuntimeError } from "../preview-error-banner.js";
-import { PreviewWebview, type PreviewClientError } from "../preview-webview.js";
+import { PreviewWebview, type PreviewClientError, type PreviewWebviewHandle } from "../preview-webview.js";
 import { PreviewErrorBox } from "./preview-error-box.js";
 
 type PreviewStageProps = {
@@ -16,14 +16,12 @@ type PreviewStageProps = {
   passthrough: boolean;
   continuousSync: boolean;
   onClientError: (error: PreviewClientError) => void;
-  runtimeErrors: PreviewRuntimeError[];
-  showRuntimeBanner: boolean;
-  onDismissBanner: () => void;
-  onAskFixRuntime: () => void;
   onAskFixManifest: () => void;
   onAskFixServer: () => void;
   onRetryServer: () => void;
   askDisabled: boolean;
+  webviewRef?: Ref<PreviewWebviewHandle>;
+  onNavigate?: (url: string) => void;
 };
 
 /**
@@ -42,14 +40,12 @@ export function PreviewStage({
   passthrough,
   continuousSync,
   onClientError,
-  runtimeErrors,
-  showRuntimeBanner,
-  onDismissBanner,
-  onAskFixRuntime,
   onAskFixManifest,
   onAskFixServer,
   onRetryServer,
   askDisabled,
+  webviewRef,
+  onNavigate,
 }: PreviewStageProps) {
   switch (stage) {
     case "manifest_loading":
@@ -132,6 +128,7 @@ export function PreviewStage({
           }}
         >
           <PreviewWebview
+            ref={webviewRef}
             url={url ?? ""}
             reloadRevision={reloadRevision}
             hidden={hidden}
@@ -139,15 +136,8 @@ export function PreviewStage({
             continuousSync={continuousSync}
             className="bg-white"
             onClientError={onClientError}
+            onNavigate={onNavigate}
           />
-          {showRuntimeBanner && (
-            <PreviewErrorBanner
-              errors={runtimeErrors}
-              onDismiss={onDismissBanner}
-              onAsk={onAskFixRuntime}
-              disabled={askDisabled}
-            />
-          )}
         </div>
       );
 

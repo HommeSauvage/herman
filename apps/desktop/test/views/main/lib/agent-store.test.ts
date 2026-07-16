@@ -124,6 +124,20 @@ describe("activateTab", () => {
   });
 });
 
+describe("setProjectForTab", () => {
+  it("keeps folderPath and projectRoot distinct for worktree tabs", () => {
+    const id = useAgentStore.getState().createTab("/tmp/worktrees/tab-1");
+    useAgentStore.getState().setProjectForTab(id, {
+      folderPath: "/tmp/worktrees/tab-1",
+      projectRoot: "/project/root",
+    });
+
+    const tab = useAgentStore.getState().tabs[id];
+    expect(tab.folderPath).toBe("/tmp/worktrees/tab-1");
+    expect(tab.projectRoot).toBe("/project/root");
+  });
+});
+
 describe("appendUserMessage", () => {
   it("appends a user message", () => {
     const id = useAgentStore.getState().createTab("/project");

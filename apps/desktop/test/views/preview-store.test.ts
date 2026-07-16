@@ -83,7 +83,7 @@ describe("preview-store", () => {
 
     // Folder B's own (default-mocked) manifest fetch resolves first.
     await new Promise((r) => setTimeout(r, 10));
-    expect(store.getState().manifest.phase).toBe("loaded");
+    expect(store.getState().manifest.phase).toBe("failed");
     expect(store.getState().manifest.value).toBeNull();
 
     // Folder A's stale response arrives late — it must be ignored because
@@ -96,6 +96,42 @@ describe("preview-store", () => {
 
     expect(store.getState().folderPath).toBe("/proj-b");
     expect(store.getState().manifest.value).toBeNull();
+  });
+
+  it("keeps preview state when activate is called with the same identity", () => {
+    store.getState().__resetForTests({
+      folderPath: "/proj-a",
+      projectRoot: "/proj-a",
+      tabId: "t1",
+      isWorktree: true,
+      generation: 3,
+      manifest: {
+        phase: "loaded",
+        value: {
+          primary: { id: "web", label: "Web", command: "npm run dev" },
+          servers: [{ id: "web", label: "Web", command: "npm run dev", primary: true }],
+        },
+      },
+      server: {
+        folderPath: "/proj-a",
+        serverId: "web",
+        phase: "ready",
+        url: "http://localhost:3000",
+        port: 3000,
+      },
+    });
+
+    store.getState().activate({
+      folderPath: "/proj-a",
+      projectRoot: "/proj-a",
+      tabId: "t1",
+      isWorktree: true,
+    });
+
+    expect(store.getState().generation).toBe(3);
+    expect(store.getState().server?.phase).toBe("ready");
+    expect(store.getState().manifest.phase).toBe("loaded");
+    expect(selectPreviewStage(store.getState())).toBe("ready");
   });
 
   it("keeps ready when a ready event lands before the in-flight start RPC resolves (ready-before-RPC)", async () => {
@@ -299,6 +335,13 @@ describe("preview-store", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(store.getState().manifest.phase).toBe("failed");
     expect(store.getState().operation).toBe("none");
+    expect(selectPreviewStage(store.getState())).toBe("manifest_failed");
+  });
+
+  it("shows a recoverable manifest failure when no manifest exists in an open folder", async () => {
+    store.getState().activate({ folderPath: "/project", projectRoot: "/project" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(store.getState().manifest.phase).toBe("failed");
     expect(selectPreviewStage(store.getState())).toBe("manifest_failed");
   });
 

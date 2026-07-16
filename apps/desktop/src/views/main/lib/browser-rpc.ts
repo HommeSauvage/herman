@@ -327,6 +327,7 @@ function toPersistedSession(tab: Tab): PersistedSession {
     projectColor: tab.projectColor,
     createdAt: tab.createdAt,
     updatedAt: tab.updatedAt,
+    currentModel: tab.currentModel,
   };
 }
 

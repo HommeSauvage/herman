@@ -21,52 +21,60 @@ const logger = getLogger(["herman-desktop", "project-manifest"]);
  */
 export async function readProjectManifest(
   folderPath: string,
+  projectRoot?: string,
 ): Promise<ProjectManifestView | undefined> {
-  // 1. herman.yaml — new pure-YAML format (already resolved, no extends)
-  const yamlPath = join(folderPath, "herman.yaml");
-  if (existsSync(yamlPath)) {
-    try {
-      return await readHermanYaml(yamlPath);
-    } catch (error) {
-      logger.warning("Failed to read herman.yaml, falling back to HERMAN.md", {
-        folderPath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+  const candidateRoots = [folderPath];
+  if (projectRoot && projectRoot !== folderPath) {
+    candidateRoots.push(projectRoot);
   }
 
-  // 2. HERMAN.md — original format (may have extends)
-  const hermanMdPath = join(folderPath, "HERMAN.md");
-  if (existsSync(hermanMdPath)) {
-    try {
-      const raw = await readFile(hermanMdPath, "utf-8");
-      const parsed = parseHermanMd(raw, "project");
-      const servers = parsed.frontmatter.dev?.servers ?? [];
-      const primary =
-        servers.find((s) => s.primary) ?? (servers.length > 0 ? servers[0] : undefined);
-      return {
-        servers,
-        primary,
-        ...(parsed.frontmatter.dev?.install
-          ? { install: parsed.frontmatter.dev.install }
-          : {}),
-        ...(parsed.sections.guidance ? { guidance: parsed.sections.guidance } : {}),
-        ...(parsed.frontmatter.env ? { env: parsed.frontmatter.env } : {}),
-        ...(parsed.frontmatter.requirements
-          ? { requirements: parsed.frontmatter.requirements }
-          : {}),
-        ...(primary
-          ? {
-              devCommand: primary.command,
-              ...(primary.port != null ? { devPort: primary.port } : {}),
-            }
-          : {}),
-      };
-    } catch (error) {
-      logger.warning("Failed to read HERMAN.md", {
-        folderPath,
-        error: error instanceof Error ? error.message : String(error),
-      });
+  for (const root of candidateRoots) {
+    // 1. herman.yaml — new pure-YAML format (already resolved, no extends)
+    const yamlPath = join(root, "herman.yaml");
+    if (existsSync(yamlPath)) {
+      try {
+        return await readHermanYaml(yamlPath);
+      } catch (error) {
+        logger.warning("Failed to read herman.yaml, falling back to HERMAN.md", {
+          folderPath: root,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // 2. HERMAN.md — original format (may have extends)
+    const hermanMdPath = join(root, "HERMAN.md");
+    if (existsSync(hermanMdPath)) {
+      try {
+        const raw = await readFile(hermanMdPath, "utf-8");
+        const parsed = parseHermanMd(raw, "project");
+        const servers = parsed.frontmatter.dev?.servers ?? [];
+        const primary =
+          servers.find((s) => s.primary) ?? (servers.length > 0 ? servers[0] : undefined);
+        return {
+          servers,
+          primary,
+          ...(parsed.frontmatter.dev?.install
+            ? { install: parsed.frontmatter.dev.install }
+            : {}),
+          ...(parsed.sections.guidance ? { guidance: parsed.sections.guidance } : {}),
+          ...(parsed.frontmatter.env ? { env: parsed.frontmatter.env } : {}),
+          ...(parsed.frontmatter.requirements
+            ? { requirements: parsed.frontmatter.requirements }
+            : {}),
+          ...(primary
+            ? {
+                devCommand: primary.command,
+                ...(primary.port != null ? { devPort: primary.port } : {}),
+              }
+            : {}),
+        };
+      } catch (error) {
+        logger.warning("Failed to read HERMAN.md", {
+          folderPath: root,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 

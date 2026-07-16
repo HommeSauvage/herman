@@ -10,6 +10,17 @@ const logger = getLogger(["herman-desktop", "view", "agent-actions"]);
 export async function sendPrompt(tabId: TabId, text: string, options?: { keepComposer?: boolean; skipAttachments?: boolean }) {
   const store = useAgentStore.getState();
   const tab = store.tabs[tabId];
+
+  // If the session worktree is still being created, queue the message instead
+  // of trying to send it to an agent that hasn't started yet.
+  if (tab?.worktreeStatus === "pending") {
+    store.queueMessage(tabId, text);
+    if (!options?.keepComposer) {
+      store.setComposerValue(tabId, "");
+    }
+    return;
+  }
+
   // Serialize pending attachments into the prompt text before the
   // user message is stored / sent.  The agent only ever sees the
   // final string, so the on-screen chips can stay a UI-only concept.

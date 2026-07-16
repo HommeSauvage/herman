@@ -46,6 +46,7 @@ When making changes to files, first understand the project's existing patterns. 
 - NEVER assume that a given library is available. Check that the codebase already uses it.
 - When you create something new, first look at how similar things are already built in the project.
 - Always follow security best practices. Never expose or log secrets and keys.
+- Do NOT add comments unless they are necessary to explain non-obvious logic. Never use comments to talk to the user or describe your changes.
 
 # Code style
 

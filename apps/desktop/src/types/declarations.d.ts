@@ -20,6 +20,8 @@ interface ElectrobunWebviewElement extends HTMLElement {
   loadURL(url: string): void;
   goBack(): void;
   goForward(): void;
+  canGoBack(): Promise<boolean>;
+  canGoForward(): Promise<boolean>;
   syncDimensions(force?: boolean): void;
   toggleHidden(value?: boolean): void;
   togglePassthrough(value?: boolean): void;

@@ -50,6 +50,9 @@ export type Tab = {
   projectRoot: string;
   projectColor: string;
   worktree?: SessionWorktree;
+  /** Tracks background worktree creation. "pending" while the worktree is being
+   *  created; "ready" once the agent can start; "error" if it failed. */
+  worktreeStatus?: "pending" | "ready" | "error";
   messages: Message[];
   isThinking: boolean;
   currentModel?: string;
@@ -197,7 +200,10 @@ export type AgentActions = {
   reorderTabs: (order: TabId[]) => void;
   updateTab: (id: TabId, partial: Partial<Omit<Tab, "id">>) => boolean;
   renameTab: (id: TabId, title: string) => void;
-  setProjectForTab: (id: TabId, folderPath: string) => void;
+  setProjectForTab: (
+    id: TabId,
+    project: { folderPath: string; projectRoot?: string },
+  ) => void;
   appendUserMessage: (tabId: TabId, content: string, messageId?: string) => string | undefined;
   startAssistantMessage: (tabId: TabId) => void;
   appendAssistantDelta: (tabId: TabId, delta: string) => void;

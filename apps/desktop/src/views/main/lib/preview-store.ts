@@ -45,7 +45,7 @@ export const DEVICE_WIDTHS: Record<DeviceMode, string> = {
 
 type ManifestState =
   | { phase: "idle"; value: null }
-  | { phase: "loading"; value: null }
+  | { phase: "loading"; value: ProjectManifestView | null }
   | { phase: "loaded"; value: ProjectManifestView | null }
   | { phase: "failed"; value: null; error: string };
 
@@ -58,6 +58,7 @@ type DraftState = {
 
 type PreviewStoreState = {
   folderPath: string;
+  projectRoot: string;
   tabId: string | undefined;
   isWorktree: boolean;
   generation: number;
@@ -72,10 +73,14 @@ type PreviewStoreState = {
   errorIdCounter: number;
   deviceMode: DeviceMode;
   discardDialogOpen: boolean;
+  /** Full URL currently shown in the preview (may differ from server root after in-app nav). */
+  currentUrl: string | null;
+  canGoBack: boolean;
 };
 
 type PreviewActivateContext = {
   folderPath: string;
+  projectRoot?: string;
   tabId?: string;
   isWorktree?: boolean;
 };
@@ -95,6 +100,8 @@ type PreviewStoreActions = {
   dismissRuntimeErrors: () => void;
   setDeviceMode: (mode: DeviceMode) => void;
   setDiscardDialogOpen: (open: boolean) => void;
+  setCurrentUrl: (url: string) => void;
+  setCanGoBack: (can: boolean) => void;
   /** Test helper: replace state slices. */
   __resetForTests: (partial?: Partial<PreviewStoreState>) => void;
 };
@@ -108,6 +115,7 @@ const emptyDraft = (): DraftState => ({
 
 const initialState = (): PreviewStoreState => ({
   folderPath: "",
+  projectRoot: "",
   tabId: undefined,
   isWorktree: false,
   generation: 0,
@@ -122,6 +130,8 @@ const initialState = (): PreviewStoreState => ({
   errorIdCounter: 0,
   deviceMode: "desktop",
   discardDialogOpen: false,
+  currentUrl: null,
+  canGoBack: false,
 });
 
 function isCurrent(
@@ -144,21 +154,44 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
     ...initialState(),
 
     activate: (ctx) => {
-      const generation = get().generation + 1;
+      const state = get();
       const folderPath = ctx.folderPath;
+      const projectRoot = ctx.projectRoot ?? "";
       const tabId = ctx.tabId;
       const isWorktree = Boolean(ctx.isWorktree);
+      const sameIdentity =
+        state.folderPath === folderPath &&
+        state.projectRoot === projectRoot &&
+        state.tabId === tabId &&
+        state.isWorktree === isWorktree;
+      const generation = sameIdentity ? state.generation : state.generation + 1;
+      if (sameIdentity) {
+        if (folderPath && folderPath.length >= 3 && state.manifest.phase === "idle") {
+          void get().loadAndStart(generation);
+        }
+        if (tabId && isWorktree) {
+          void get().refreshDraft();
+        }
+        return;
+      }
 
       set({
         ...initialState(),
         generation,
         folderPath,
+        projectRoot,
         tabId,
         isWorktree,
         deviceMode: get().deviceMode, // preserve across folders
         manifest:
           folderPath && folderPath.length >= 3
-            ? { phase: "loading", value: null }
+            ? {
+                phase: "loading",
+                value:
+                  state.manifest.phase === "loaded" && state.manifest.value
+                    ? state.manifest.value
+                    : null,
+              }
             : { phase: "idle", value: null },
       });
 
@@ -171,18 +204,31 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
     },
 
     loadAndStart: async (generation) => {
-      const { folderPath } = get();
+      const { folderPath, projectRoot, manifest } = get();
       if (!folderPath || folderPath.length < 3) return;
 
-      set({ manifest: { phase: "loading", value: null }, operation: "start" });
+      set({
+        manifest: {
+          phase: "loading",
+          value: manifest.phase === "loaded" && manifest.value ? manifest.value : null,
+        },
+        operation: "start",
+      });
 
       try {
-        const m = await desktopRpc.request.getProjectManifest({ folderPath });
+        let m = await desktopRpc.request.getProjectManifest({ folderPath, projectRoot });
+        if (!m && projectRoot && projectRoot !== folderPath) {
+          m = await desktopRpc.request.getProjectManifest({ folderPath: projectRoot, projectRoot });
+        }
         if (!isCurrent(get(), generation, folderPath)) return;
 
         if (!m) {
           set({
-            manifest: { phase: "loaded", value: null },
+            manifest: {
+              phase: "failed",
+              value: null,
+              error: "Couldn't find a valid herman.yaml or HERMAN.md for this project.",
+            },
             operation: "none",
             server: null,
             activeServerId: null,
@@ -229,6 +275,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
           },
           activeServerId: result.serverId ?? activeServerId,
           operation: result.starting ? "start" : "none",
+          ...(result.url ? { currentUrl: result.url, canGoBack: false } : {}),
         });
       } catch (err) {
         if (!isCurrent(get(), generation, folderPath)) return;
@@ -295,6 +342,10 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         if (prevUrl !== null && snapshot.url && prevUrl !== snapshot.url) {
           next.runtimeErrors = [];
           next.bannerDismissed = false;
+        }
+        if (snapshot.url) {
+          next.currentUrl = snapshot.url;
+          next.canGoBack = false;
         }
         // When server becomes ready and we have accumulated runtime errors,
         // ensure the banner is explicitly undismissed so it shows immediately.
@@ -390,7 +441,9 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
           },
           activeServerId: result.serverId ?? state.activeServerId,
           operation: result.starting ? "restart" : "none",
-          ...(result.phase === "ready" ? { reloadRevision: get().reloadRevision + 1 } : {}),
+          ...(result.phase === "ready"
+            ? { reloadRevision: get().reloadRevision + 1, currentUrl: result.url ?? null, canGoBack: false }
+            : {}),
         });
       } catch (err) {
         if (!isCurrent(get(), generation, folderPath)) return;
@@ -414,6 +467,8 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         operation: "switch",
         runtimeErrors: [],
         bannerDismissed: false,
+        currentUrl: null,
+        canGoBack: false,
         server: {
           folderPath,
           serverId: server.id,
@@ -442,6 +497,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
             error: result.error,
           },
           operation: result.starting ? "switch" : "none",
+          ...(result.url ? { currentUrl: result.url, canGoBack: false } : {}),
         });
       } catch (err) {
         if (!isCurrent(get(), generation, folderPath)) return;
@@ -537,6 +593,8 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
     dismissRuntimeErrors: () => set({ bannerDismissed: true }),
     setDeviceMode: (mode) => set({ deviceMode: mode }),
     setDiscardDialogOpen: (open) => set({ discardDialogOpen: open }),
+    setCurrentUrl: (url) => set({ currentUrl: url }),
+    setCanGoBack: (can) => set({ canGoBack: can }),
 
     __resetForTests: (partial) => set({ ...initialState(), ...partial }),
   }));
@@ -556,6 +614,7 @@ export type PreviewStage =
   | "waiting";
 
 export function selectPreviewStage(state: PreviewStoreState): PreviewStage {
+  if (!state.folderPath) return "no_manifest";
   if (state.manifest.phase === "loading") return "manifest_loading";
   if (state.manifest.phase === "failed") return "manifest_failed";
 
@@ -594,12 +653,14 @@ export function selectIsSynced(state: PreviewStoreState): boolean {
   return !state.draft.canApply && !selectIsSaving(state);
 }
 
-export function selectStatusCopy(state: PreviewStoreState): string {
+export function selectSaveTooltip(state: PreviewStoreState): string {
   if (selectIsSaving(state)) return "Saving to your project…";
-  if (selectIsSynced(state)) return "Working in a safe draft copy · Up to date";
-  return `Working in a safe draft copy · Unsaved changes${
-    state.draft.changedFiles > 0 ? ` · ${state.draft.changedFiles} file(s) changed` : ""
-  }`;
+  if (selectIsSynced(state)) return "All changes saved";
+  const count = state.draft.changedFiles;
+  if (count > 0) {
+    return `Changes in this tab are not saved yet. ${count} file${count === 1 ? "" : "s"} to save.`;
+  }
+  return "Changes in this tab are not saved yet.";
 }
 
 export { formatRuntimeErrors };

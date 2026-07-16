@@ -1,25 +1,27 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 
 import type { DevServer } from "../../../shared/herman-manifest.js";
 import { usePreviewController } from "../hooks/use-preview-controller.js";
+import { usePreviewErrorToasts } from "../hooks/use-preview-error-toasts.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { useIsActiveTabWorking } from "../lib/agent-store/hooks.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import {
-  formatRuntimeErrors,
   selectIsSaving,
   selectIsSynced,
   selectPreviewStage,
+  selectSaveTooltip,
   selectShowRuntimeBanner,
-  selectStatusCopy,
   usePreviewStore,
 } from "../lib/preview-store.js";
-import { PreviewDraftBar } from "./preview/preview-draft-bar.js";
+import { PreviewBrowserBar, PreviewToolbar } from "./preview/preview-toolbar.js";
+import { PreviewSaveErrorStrip } from "./preview/preview-save-error-strip.js";
 import { PreviewStage } from "./preview/preview-stage.js";
-import { PreviewToolbar } from "./preview/preview-toolbar.js";
+import type { PreviewWebviewHandle } from "./preview-webview.js";
 
 type PreviewPaneProps = {
   folderPath: string;
+  projectRoot?: string;
   tabId?: string;
   isWorktree?: boolean;
   onPublish?: () => void;
@@ -31,13 +33,16 @@ type PreviewPaneProps = {
 
 export function PreviewPane({
   folderPath,
+  projectRoot,
   tabId,
   isWorktree,
   onPublish,
   splitDragging,
   publishOpen,
 }: PreviewPaneProps) {
-  usePreviewController({ folderPath, tabId, isWorktree });
+  usePreviewController({ folderPath, projectRoot, tabId, isWorktree });
+
+  const webviewRef = useRef<PreviewWebviewHandle>(null);
 
   const stage = usePreviewStore(selectPreviewStage);
   const manifest = usePreviewStore((s) => s.manifest);
@@ -51,33 +56,62 @@ export function PreviewPane({
   const draft = usePreviewStore((s) => s.draft);
   const isSaving = usePreviewStore(selectIsSaving);
   const isSynced = usePreviewStore(selectIsSynced);
-  const statusCopy = usePreviewStore(selectStatusCopy);
-  const discardDialogOpen = usePreviewStore((s) => s.discardDialogOpen);
+  const saveTooltip = usePreviewStore(selectSaveTooltip);
+  const currentUrl = usePreviewStore((s) => s.currentUrl);
+  const canGoBack = usePreviewStore((s) => s.canGoBack);
   const setDeviceMode = usePreviewStore((s) => s.setDeviceMode);
-  const setDiscardDialogOpen = usePreviewStore((s) => s.setDiscardDialogOpen);
   const restart = usePreviewStore((s) => s.restart);
   const switchServer = usePreviewStore((s) => s.switchServer);
   const applyDraft = usePreviewStore((s) => s.applyDraft);
-  const discardDraft = usePreviewStore((s) => s.discardDraft);
   const askHermanToFix = usePreviewStore((s) => s.askHermanToFix);
-  const dismissRuntimeErrors = usePreviewStore((s) => s.dismissRuntimeErrors);
   const acceptClientError = usePreviewStore((s) => s.acceptClientError);
+  const setCurrentUrl = usePreviewStore((s) => s.setCurrentUrl);
+  const setCanGoBack = usePreviewStore((s) => s.setCanGoBack);
 
   const isTabWorking = useIsActiveTabWorking();
   const modelSelectorOpen = useAgentStore((s) => s.ui.modelSelectorOpen);
 
-  const overlayOpen = discardDialogOpen || Boolean(publishOpen) || modelSelectorOpen;
+  const overlayOpen = Boolean(publishOpen) || modelSelectorOpen;
   const askDisabled = isTabWorking || !tabId;
+  const showControls = Boolean(folderPath && folderPath.length >= 3);
+  const baseUrl = server?.url;
 
-  const handleOpenExternal = useCallback(() => {
-    if (server?.url) {
-      void desktopRpc.request.openExternal({ url: server.url });
-    }
-  }, [server?.url]);
+  // Replace the fragile absolute-positioned error banner with Sonner toasts.
+  usePreviewErrorToasts(runtimeErrors, showRuntimeBanner);
+
+  const handleOpenExternal = useCallback(
+    (url: string) => {
+      void desktopRpc.request.openExternal({ url });
+    },
+    [],
+  );
 
   const handleSwitchServer = useCallback(
     (target: DevServer) => void switchServer(target),
     [switchServer],
+  );
+
+  const handleNavigate = useCallback(
+    (url: string) => {
+      setCurrentUrl(url);
+      webviewRef.current?.loadURL(url);
+    },
+    [setCurrentUrl],
+  );
+
+  const handleGoBack = useCallback(() => {
+    webviewRef.current?.goBack();
+  }, []);
+
+  const refreshCanGoBack = useCallback(async () => {
+    return (await webviewRef.current?.canGoBack()) ?? false;
+  }, []);
+
+  const handleWebviewNavigate = useCallback(
+    (url: string) => {
+      setCurrentUrl(url);
+    },
+    [setCurrentUrl],
   );
 
   const manifestError = manifest.phase === "failed" ? manifest.error : undefined;
@@ -87,33 +121,42 @@ export function PreviewPane({
   return (
     <div className="flex h-full flex-col bg-void">
       <PreviewToolbar
-        isRunning={stage === "ready"}
+        showControls={showControls}
         deviceMode={deviceMode}
         onDeviceModeChange={setDeviceMode}
-        isRestarting={operation === "restart"}
-        onRestart={() => void restart()}
         servers={servers}
         activeServerId={activeServerId}
         onSwitchServer={handleSwitchServer}
-        previewUrl={server?.url}
-        onOpenExternal={handleOpenExternal}
+        showSave={Boolean(isWorktree)}
+        isSaving={isSaving}
+        isSynced={isSynced}
+        changedFiles={draft.changedFiles}
+        saveDisabled={isSaving || !draft.canApply || isTabWorking}
+        saveTooltip={saveTooltip}
+        onSave={() => void applyDraft()}
         onPublish={onPublish}
         showPublish={Boolean(onPublish && manifest.value)}
       />
 
-      {isWorktree && (
-        <PreviewDraftBar
-          statusCopy={statusCopy}
-          isSaving={isSaving}
-          isSynced={isSynced}
-          saveDisabled={isSaving || !draft.canApply || isTabWorking}
-          onDiscardClick={() => setDiscardDialogOpen(true)}
-          onApply={() => void applyDraft()}
-          discardOpen={discardDialogOpen}
-          onDiscardOpenChange={setDiscardDialogOpen}
-          onConfirmDiscard={() => void discardDraft()}
-          saveError={draft.error}
-          onAskFixSaveError={() => void askHermanToFix(draft.error ?? "", "save")}
+      <PreviewBrowserBar
+        showControls={showControls}
+        baseUrl={baseUrl}
+        currentUrl={currentUrl}
+        canGoBack={canGoBack}
+        canRestart={Boolean(manifest.value)}
+        isRestarting={operation === "restart"}
+        onGoBack={handleGoBack}
+        onRestart={() => void restart()}
+        onNavigate={handleNavigate}
+        onOpenExternal={handleOpenExternal}
+        onCanGoBackChange={setCanGoBack}
+        refreshCanGoBack={refreshCanGoBack}
+      />
+
+      {isWorktree && draft.error && (
+        <PreviewSaveErrorStrip
+          error={draft.error}
+          onAskFix={() => void askHermanToFix(draft.error ?? "", "save")}
           askDisabled={askDisabled}
         />
       )}
@@ -124,20 +167,18 @@ export function PreviewPane({
           manifestError={manifestError}
           serverError={serverError}
           deviceMode={deviceMode}
-          url={server?.url}
+          url={currentUrl ?? baseUrl}
           reloadRevision={reloadRevision}
           hidden={overlayOpen}
           passthrough={Boolean(splitDragging)}
           continuousSync={Boolean(splitDragging)}
           onClientError={acceptClientError}
-          runtimeErrors={runtimeErrors}
-          showRuntimeBanner={showRuntimeBanner}
-          onDismissBanner={dismissRuntimeErrors}
-          onAskFixRuntime={() => void askHermanToFix(formatRuntimeErrors(runtimeErrors), "runtime")}
           onAskFixManifest={() => void askHermanToFix(manifestError ?? "", "preview")}
           onAskFixServer={() => void askHermanToFix(serverError ?? "", "preview")}
           onRetryServer={() => void restart()}
           askDisabled={askDisabled}
+          webviewRef={webviewRef}
+          onNavigate={handleWebviewNavigate}
         />
       </div>
     </div>

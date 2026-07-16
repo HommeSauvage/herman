@@ -283,6 +283,8 @@ export type PersistedSession = {
   updatedAt: number;
   /** Revert point: messages at or after this ID are considered reverted. */
   revertMessageId?: string;
+  /** Model the user last selected for this session. Restored on reopen. */
+  currentModel?: string;
 };
 
 /** A browseable pi session (from pi session JSONL headers), for the home screen. */
@@ -358,6 +360,9 @@ export type Tab = {
   projectRoot: string;
   projectColor: string;
   worktree?: SessionWorktree;
+  /** Tracks background worktree creation. "pending" while the worktree is being
+   *  created; "ready" once the agent can start; "error" if it failed. */
+  worktreeStatus?: "pending" | "ready" | "error";
   messages: Message[];
   isThinking: boolean;
   currentModel?: string;
@@ -402,7 +407,7 @@ export type OutgoingMessages = {
   tabMessagesHydrated: TabMessagesHydrated;
   tabClosed: { tabId: TabId };
   tabActivated: { tabId: TabId };
-  tabFolderChanged: { tabId: TabId; folderPath?: string; projectRoot?: string };
+  tabFolderChanged: { tabId: TabId; folderPath?: string; projectRoot?: string; worktree?: SessionWorktree; worktreeStatus?: "pending" | "ready" | "error"; error?: string };
   projectsChanged: { projects: string[] };
   sessionsChanged: { sessions: PersistedSession[] };
   projectOpened: { folderPath: string; projectRoot: string; projects: string[] };
@@ -746,7 +751,7 @@ export type HermanDesktopRPC = {
         response: PreviewFleetSnapshot;
       };
       getProjectManifest: {
-        params: { folderPath: string };
+        params: { folderPath: string; projectRoot?: string };
         response: ProjectManifestView | undefined;
       };
       getSkills: {

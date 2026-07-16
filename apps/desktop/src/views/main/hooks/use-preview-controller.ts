@@ -7,6 +7,7 @@ import { usePreviewStore } from "../lib/preview-store.js";
 
 type UsePreviewControllerParams = {
   folderPath: string;
+  projectRoot?: string;
   tabId?: TabId;
   isWorktree?: boolean;
 };
@@ -20,7 +21,12 @@ type UsePreviewControllerParams = {
  * Never stops the underlying Bun preview server(s) on cleanup — servers keep
  * running across tab switches / unmounts so re-opening the pane is instant.
  */
-export function usePreviewController({ folderPath, tabId, isWorktree }: UsePreviewControllerParams): void {
+export function usePreviewController({
+  folderPath,
+  projectRoot,
+  tabId,
+  isWorktree,
+}: UsePreviewControllerParams): void {
   useEffect(() => {
     // Listeners are registered *before* `activate` so no push event that
     // arrives while the initial load is in flight can be missed.
@@ -34,14 +40,14 @@ export function usePreviewController({ folderPath, tabId, isWorktree }: UsePrevi
     desktopRpc.addMessageListener("previewStatusChanged", handleStatus);
     desktopRpc.addMessageListener("previewLog", handleLog);
 
-    usePreviewStore.getState().activate({ folderPath, tabId, isWorktree });
+    usePreviewStore.getState().activate({ folderPath, projectRoot, tabId, isWorktree });
 
     return () => {
       desktopRpc.removeMessageListener("previewStatusChanged", handleStatus);
       desktopRpc.removeMessageListener("previewLog", handleLog);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folderPath, tabId, isWorktree]);
+  }, [folderPath, projectRoot, tabId, isWorktree]);
 
   const isThinking = useAgentStore((state) =>
     tabId ? (state.tabs[tabId]?.isThinking ?? false) : false,

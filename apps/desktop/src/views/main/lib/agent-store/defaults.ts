@@ -101,6 +101,7 @@ export function syncSessionFromTab(sessions: PersistedSession[], tab: Tab): Pers
     projectColor: tab.projectColor,
     createdAt: tab.createdAt,
     updatedAt: tab.updatedAt,
+    currentModel: tab.currentModel,
   };
   return sessions.some((session) => session.id === tab.id)
     ? sessions.map((session) => (session.id === tab.id ? persisted : session))
