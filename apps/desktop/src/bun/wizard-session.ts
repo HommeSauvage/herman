@@ -39,7 +39,6 @@ export const WIZARD_RESUME_GOAL_PROMPT = "/goal resume";
 
 export const CODING_TOKEN_BUDGET = '300k';
 export const QA_TOKEN_BUDGET = '200k';
-export const DOCS_TOKEN_BUDGET = '200k';
 
 // ── Retry constants ──────────────────────────────────────────────────────────
 
@@ -538,7 +537,7 @@ export class WizardSession {
     this.phaseGoal = goalBody;
     await bridge.sendCommand({
       type: "prompt",
-      message: `/goal --tokens ${DOCS_TOKEN_BUDGET} ${goalBody}`,
+      message: goalBody,
     });
   }
 
@@ -1330,10 +1329,11 @@ Do not write chat-style explanations — work autonomously and report progress o
 ## Your job
 1. Ask the user what you still need via \`herman_wizard_ask\` (project name is collected on the first call).
 2. Clone the template source into ~/Herman/<projectName>.
-3. Read the cloned repo's docs (README, AGENTS.md, and other markdown) to understand the project.
-4. If anything is still unclear, ask follow-up questions via \`herman_wizard_ask\`.
-5. Write a complete plan to \`HERMAN_PLAN.md\` in the project root (checkbox task list of everything to do).
-6. Call \`herman_complete_planning\` with { projectPath, planPath } when the plan is ready.
+3. Delete the .git folder from the cloned repo.
+4. Read the cloned repo's docs (README, AGENTS.md, and other markdown) to understand the project.
+5. If anything is still unclear, ask follow-up questions via \`herman_wizard_ask\`.
+6. Write a complete plan to \`HERMAN_PLAN.md\` in the project root (checkbox task list of everything to do).
+7. Call \`herman_complete_planning\` with { projectPath, planPath } when the plan is ready.
 
 ## Operating rules
 - PROJECT NAME FIRST: call \`herman_wizard_ask\` before cloning. Herman auto-injects \`projectName\`
@@ -1343,15 +1343,20 @@ Do not write chat-style explanations — work autonomously and report progress o
   \`projectName\` IS the display name (blog title, store name, product name, site title). Do NOT ask
   a separate naming question from ## Questions — if a manifest bullet bundles a name with
   something else (e.g. 'what the blog is called and what they write about'), ask only the rest.
-- VISUAL TONE LAST: Herman appends \`visualTone\` as the last question once template-specific
-  questions are in the batch (or on a follow-up ask). Capture the answer in the plan for later
-  styling work. The visual tone question must never be a \`choice\` question — it is free text.
 - QUESTIONS: ask ONLY what the description + manifest do not already answer. Prefer \`choice\` questions
   with a small option set over free text when the answer is from a known set. Use \`multiple: true\` for
   multi-select. Use \`secret: true\` for API keys the user must paste. Never echo secret values.
   After answers arrive, read the repo docs and decide if you need more clarifying questions.
+- WHAT QUESTIONS TO ASK?: The wizard is meant for users who are not technical. 
+  Ask questions that are easy to answer and do not require technical knowledge, think about what they might miss 
+  during the planning due to their inexperience and can affect their project.
+- KEEP QUESTIONS SIMPLE AND THE WIZARD LENGTH MANAGEABLE: Don't ask too many questions, keep it between 5 and 10 questions.
+- QUESTIONS STYLE & OBJECTIVE: The questions should sound simple to the user, but your intent behind is to determine the structure, architecture and database schema of the project.
 - PLANNING ONLY: do NOT install dependencies, run migrations, write env files, or customize code
   in this phase. Your deliverable is discovery + \`HERMAN_PLAN.md\`.
+- VISUAL TONE LAST: Herman appends \`visualTone\` as the last question once template-specific
+  questions are in the batch (or on a follow-up ask). Capture the answer in the plan for later
+  styling work. The visual tone question must never be a \`choice\` question — it is free text.
 - PLAN FILE: write \`{projectPath}/HERMAN_PLAN.md\` with:
   * A short summary of the user's intent and key answers
   * Findings from README / AGENTS.md / other docs
@@ -1360,6 +1365,17 @@ Do not write chat-style explanations — work autonomously and report progress o
   Session 2 will tick those boxes while coding.
 - When the plan is ready, call \`herman_complete_planning\` ONCE with
   { projectPath, planPath: "<absolute>/HERMAN_PLAN.md", summary? }. This is your LAST tool call.
+
+### Example wizard + questions:
+What the user wants to build: "I want to build an online store for my products, I sell home-made shampoos and soaps"
+
+Your questions can be:
+- What is the name of your store?
+- How many products are you selling? (1-3, 3-10, >10) - (choices, this can help determine the complexity of schemas and admin UI)
+- Do you want to have your home page being a presentation or directly showing the products in a grid? (choices, then explain briefly the pros and cons)
+- Do you manage the delivery yourself, or are you using a delivery service? Or should we discuss this later? (free text)
+- How do you plan to accept payments? (choices, manual, stripe, paypal)
+- What about quantities? Do you want to manage the quantities or should we start simple and add it later? (choices, yes, I want to manage the stocks and quantities / start simple, add it later)
 
 ## Template manifest
 \`\`\`yaml

@@ -390,6 +390,93 @@ export default async function hermanExtension(pi: ExtensionAPI) {
   /** Captured at session_start so background refreshes can push models_sync. */
   let sessionCtx: ExtensionContext | undefined;
 
+  // ── Session info tool (live preview URL / project / worktree from host) ──
+  // Round-trips via ctx.ui.editor with a sentinel envelope. Herman Desktop
+  // intercepts silently and replies with JSON — no editor UI is shown.
+  // Shapes MUST stay in sync with apps/desktop/src/shared/session-info-protocol.ts.
+
+  const SESSION_INFO_SENTINEL = "__herman_session_info__";
+  const SESSION_INFO_PROTOCOL_VERSION = 1;
+  const SESSION_INFO_UNAVAILABLE =
+    "Session info is only available inside Herman Desktop. Do not invent a localhost port or URL — tell the user you cannot see the live preview right now.";
+
+  pi.registerTool({
+    name: "herman_get_session_info",
+    label: "Get Session Info",
+    description:
+      "Fetch the current Herman session's live project path, worktree, and preview URL/port from the desktop host. Call this before answering how to open or visit the site, or whenever you need the real localhost URL — preferred ports in herman.yaml/README may differ at runtime.",
+    promptSnippet: "Get live preview URL, port, and project/worktree details for this Herman session",
+    promptGuidelines: [
+      "Call herman_get_session_info before giving the user any localhost link or telling them how to open the preview.",
+      "Use the returned preview.primaryUrl (or a ready server url) — never invent ports from the manifest or docs.",
+      "If preview is not ready or the tool returns an error, say so plainly; do not guess a URL.",
+    ],
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    } as never,
+
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (ctx.mode !== "rpc" || !ctx.hasUI) {
+        return {
+          content: [{ type: "text", text: SESSION_INFO_UNAVAILABLE }],
+          details: { error: "unavailable" },
+        };
+      }
+
+      const envelope = {
+        [SESSION_INFO_SENTINEL]: true,
+        version: SESSION_INFO_PROTOCOL_VERSION,
+      };
+
+      const responseText = await ctx.ui.editor(
+        "Herman session info",
+        JSON.stringify(envelope),
+      );
+
+      if (responseText === undefined || responseText === null) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Could not fetch session info from Herman Desktop. Do not invent a localhost URL — tell the user you cannot see the live preview right now.",
+            },
+          ],
+          details: { error: "cancelled" },
+        };
+      }
+
+      let parsed: Record<string, unknown> | undefined;
+      try {
+        const obj = JSON.parse(responseText) as unknown;
+        if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+          parsed = obj as Record<string, unknown>;
+        }
+      } catch {
+        parsed = undefined;
+      }
+
+      if (!parsed || parsed[SESSION_INFO_SENTINEL] !== true) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Could not parse session info from Herman Desktop. Do not invent a localhost URL — tell the user you cannot see the live preview right now.",
+            },
+          ],
+          details: { error: "parse_failed" },
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(parsed, null, 2) }],
+        details: parsed,
+      };
+    },
+  });
+
   const registerModels = (nextModels: HermanModel[]) => {
     hermanModels = nextModels;
     pi.registerProvider(HERMAN_PROVIDER, buildProviderConfig(hermanModels));

@@ -671,7 +671,7 @@ export function OnboardingWizard({
               className="w-full"
             >
               <ContentWidth size="formWide">
-                <WizardLoading progressLines={progressLines} />
+                <WizardLoading progressLines={progressLines} phase={phase} />
               </ContentWidth>
             </motion.div>
           )}
@@ -686,6 +686,7 @@ export function OnboardingWizard({
               <ContentWidth size="formWide">
                 <WizardLoading
                   progressLines={progressLines}
+                  phase={phase}
                   headerText={`Connection lost — retrying (attempt ${retryAttempt} of ${retryMax})`}
                   variant="retrying"
                 />

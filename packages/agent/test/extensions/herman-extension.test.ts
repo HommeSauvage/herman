@@ -37,11 +37,17 @@ describe("hermanExtension", () => {
     const handlers = new Map<string, ((event: unknown, ctx: unknown) => unknown)[]>();
     const notifications: unknown[] = [];
     const setModelCalls: unknown[] = [];
+    const registeredTools: { name: string; description: string }[] = [];
+    const toolExecutors = new Map<
+      string,
+      (toolCallId: string, params: unknown, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<unknown>
+    >();
 
     const mockUi = {
       notify: (message: unknown) => {
         notifications.push(message);
       },
+      editor: async (_title?: string, _prefill?: string): Promise<string | undefined> => undefined,
     };
 
     const mockApi = {
@@ -57,6 +63,20 @@ describe("hermanExtension", () => {
       ) => {
         registered.push({ provider, config });
       },
+      registerTool: (tool: {
+        name: string;
+        description: string;
+        execute: (
+          toolCallId: string,
+          params: unknown,
+          signal: unknown,
+          onUpdate: unknown,
+          ctx: unknown,
+        ) => Promise<unknown>;
+      }) => {
+        registeredTools.push({ name: tool.name, description: tool.description });
+        toolExecutors.set(tool.name, tool.execute);
+      },
       on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
         const list = handlers.get(event) ?? [];
         list.push(handler);
@@ -67,6 +87,8 @@ describe("hermanExtension", () => {
         return Promise.resolve(true);
       },
       _registered: registered,
+      _registeredTools: registeredTools,
+      _toolExecutors: toolExecutors,
       _handlers: handlers,
       _notifications: notifications,
       _setModelCalls: setModelCalls,
@@ -100,6 +122,52 @@ describe("hermanExtension", () => {
     expect(mockApi._registered[0].config.apiKey).toBe("session-token");
     expect(mockApi._registered[0].config.authHeader).toBe(true);
     expect(mockApi._registered[0].config.api).toBe("openai-completions");
+  });
+
+  it("registers herman_get_session_info tool", async () => {
+    globalThis.fetch = mockFetch([
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", api: "openai-completions" },
+    ]) as unknown as typeof fetch;
+    const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
+    const { mockApi, mockUi } = createMockApi();
+
+    await hermanExtension(mockApi as never);
+
+    expect(mockApi._registeredTools.map((t) => t.name)).toContain("herman_get_session_info");
+
+    const execute = mockApi._toolExecutors.get("herman_get_session_info");
+    expect(execute).toBeTypeOf("function");
+
+    // Standalone / non-RPC: graceful unavailable message (no invented ports).
+    const unavailable = (await execute!("call-1", {}, undefined, undefined, {
+      mode: "interactive",
+      hasUI: false,
+      ui: mockUi,
+    })) as { content: { type: string; text: string }[]; details: { error: string } };
+    expect(unavailable.details.error).toBe("unavailable");
+    expect(unavailable.content[0]?.text).toContain("Herman Desktop");
+
+    // RPC + host reply with live port 3001 (not preferred 3000).
+    mockUi.editor = async () =>
+      JSON.stringify({
+        __herman_session_info__: true,
+        version: 1,
+        projectPath: "/tmp/project",
+        mode: "rookie",
+        preview: {
+          phase: "ready",
+          primaryUrl: "http://localhost:3001",
+          servers: [{ serverId: "web", phase: "ready", url: "http://localhost:3001", port: 3001 }],
+        },
+      });
+
+    const ok = (await execute!("call-2", {}, undefined, undefined, {
+      mode: "rpc",
+      hasUI: true,
+      ui: mockUi,
+    })) as { content: { type: string; text: string }[]; details: Record<string, unknown> };
+    expect(ok.content[0]?.text).toContain("http://localhost:3001");
+    expect(ok.details.preview).toMatchObject({ primaryUrl: "http://localhost:3001" });
   });
 
   it("registers models returned by the server", async () => {

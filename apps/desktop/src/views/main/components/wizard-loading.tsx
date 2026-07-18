@@ -1,7 +1,17 @@
 import { Loader2 } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
 
+import type { WizardPhaseId } from "../lib/agent-store/types.js";
 import { ProgressLog } from "./progress-log.js";
+
+// ── Phase header copy ────────────────────────────────────────────────────────
+
+const PHASE_HEADER_TEXTS: Record<WizardPhaseId, string> = {
+  planning: "Give me a moment, I'm preparing the ground...",
+  coding: "Hang on there, I'm coding now, this will take some time...",
+  qa: "Now I'm verifying that the code is well setup...",
+  docs: "All done, now I'm generating some docs, this won't take much...",
+};
 
 // ── Action detection from progress lines ────────────────────────────────────
 
@@ -58,7 +68,7 @@ const LOADING_TEXTS: Record<LoadingAction, string[]> = {
   running: [
     "The terminal and I need a moment alone. It's personal.",
     "Pressing enter and hoping for the best. You hoping too would help.",
-    "If this works on the first try I'll be genuinely surprised.",
+    "I'm trying to run a command, but it's sprinting away...",
     "Running commands… hope they work. Said every developer ever.",
     "Compiling… and praying. Quietly. You can pray louder if you want.",
     "Making the computer do things it may or may not want to do.",
@@ -116,7 +126,9 @@ function useCyclingMessages(
 interface WizardLoadingProps {
   /** Accumulated progress lines from the wizard session. */
   progressLines: string[];
-  /** Longer hint shown once above the rotating text. */
+  /** Current wizard phase — drives the default header copy. */
+  phase?: WizardPhaseId;
+  /** Override header (e.g. retry status). Takes precedence over phase copy. */
   headerText?: string;
   /** Spinner / accent color variant. */
   variant?: "working" | "retrying";
@@ -126,13 +138,15 @@ interface WizardLoadingProps {
  *  and a rotating fun message that reacts to the agent's current tool activity. */
 export function WizardLoading({
   progressLines,
-  headerText = "Hang on there, I'm working, this will take some time...",
+  phase = "planning",
+  headerText,
   variant = "working",
 }: WizardLoadingProps) {
   // Detect the latest action from the most recent progress line.
   const latestLine = progressLines.length > 0 ? progressLines[progressLines.length - 1] : "";
   const action = detectAction(latestLine);
   const cyclingText = useCyclingMessages(action, LOADING_TEXTS);
+  const resolvedHeader = headerText ?? PHASE_HEADER_TEXTS[phase];
 
   const isRetrying = variant === "retrying";
 
@@ -154,7 +168,7 @@ export function WizardLoading({
         {/* Text column */}
         <div className="min-w-0 flex-1 pt-0.5">
           <p className={isRetrying ? "text-sm font-medium text-amber-300" : "text-text text-sm font-medium"}>
-            {headerText}
+            {resolvedHeader}
           </p>
           <p className="text-dim mt-1 text-sm leading-relaxed">{cyclingText}</p>
         </div>

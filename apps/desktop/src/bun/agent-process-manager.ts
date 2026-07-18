@@ -34,8 +34,9 @@ import {
   extractMessagesFromAgentPayload,
 } from "./pi-messages.js";
 import { contextStatsFromContextReport, readPiSessionModel as readPiSessionModelFromFile } from "./session-snapshot.js";
-import { stopDevServer } from "./preview-server.js";
+import { getDevServerStatus, stopDevServer } from "./preview-server.js";
 import { rewindManager, getUserMessageIds, readPiSessionId, RevertConflictError } from "./rewind-manager.js";
+import { resolveSessionInfoHostReply } from "./session-info-host.js";
 import { deleteTabHistory, saveTabHistory } from "./tab-history.js";
 import { loadInstantHydration } from "./tab-message-hydration.js";
 import { resolvePiSessionFile, deletePiSessionFile } from "./pi-session.js";
@@ -971,7 +972,12 @@ export class AgentProcessManager {
 
     const bridge = new AgentBridge(
       tabId,
-      (id, event) => this.webviewRpc.send.agentEvent({ tabId: id, event }),
+      (id, event) => {
+        // Silent host RPC: herman_get_session_info via editor sentinel.
+        // Reply before forwarding so no editor UI appears and the tool cannot hang.
+        if (this.tryRespondSessionInfo(id, event, bridge)) return;
+        this.webviewRpc.send.agentEvent({ tabId: id, event });
+      },
       (id, state, stderr) => this.webviewRpc.send.agentStatusChanged({ tabId: id, state, stderr }),
       (id, event) => this.handleAgentEvent(id, event),
     );
@@ -1156,6 +1162,51 @@ export class AgentProcessManager {
       queuedMessages: [],
       ...(currentModel ? { currentModel } : {}),
     };
+  }
+
+  /**
+   * Intercept `herman_get_session_info` editor RPC: reply silently with live
+   * preview/project/worktree details and suppress the event from the renderer.
+   * Returns true when the event was handled.
+   */
+  private tryRespondSessionInfo(
+    tabId: TabId,
+    event: AgentEvent,
+    bridge: AgentBridge,
+  ): boolean {
+    const tab = this.store.tabs.get(tabId);
+
+    const folderPath = tab?.folderPath ?? "";
+    const preview = folderPath
+      ? getDevServerStatus(folderPath)
+      : {
+          folderPath: "",
+          phase: "stopped" as const,
+          servers: [],
+        };
+
+    const reply = resolveSessionInfoHostReply(
+      event,
+      {
+        folderPath: tab?.folderPath,
+        projectRoot: tab?.projectRoot,
+        worktree: tab?.worktree,
+        mode: this.getMode(),
+      },
+      preview,
+    );
+    if (!reply) return false;
+
+    logger.debug("Responding to herman_get_session_info", {
+      tabId,
+      requestId: reply.requestId,
+      folderPath: tab?.folderPath,
+      previewPhase: preview.phase,
+      serverCount: preview.servers.length,
+    });
+
+    bridge.sendExtensionUiResponse(reply.requestId, { value: reply.value });
+    return true;
   }
 
   private handleAgentEvent(tabId: TabId, event: AgentEvent) {

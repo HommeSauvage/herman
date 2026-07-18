@@ -20,7 +20,7 @@ const PREVIEW_NAV_RULES = [
 ] as const;
 
 const PREVIEW_MASKS =
-  "[data-herman-overlay],[data-slot='dialog-overlay'],[data-slot='dialog-content']";
+  "[data-herman-overlay],[data-slot='dialog-overlay'],[data-slot='dialog-content'],[data-sonner-toaster]";
 
 export type PreviewClientError = {
   message: string;

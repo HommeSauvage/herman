@@ -2,6 +2,10 @@ import { isAdPlacement } from "@herman/rpc/ads";
 import type { AdCampaign, AdEvent, AdPlacement } from "@herman/rpc/ads";
 import type { ModelMetadata } from "./rpc.js";
 import {
+  tryParseSessionInfoRequestEnvelope,
+  type SessionInfoRequestEnvelope,
+} from "./session-info-protocol.js";
+import {
   tryParseWizardEnvelope,
   type WizardAskEnvelope,
 } from "./wizard-protocol.js";
@@ -209,6 +213,22 @@ export function tryParseWizardRequest(
   if (event.method !== "editor") return undefined;
   const prefill = typeof event.prefill === "string" ? event.prefill : undefined;
   const envelope = tryParseWizardEnvelope(prefill);
+  if (!envelope) return undefined;
+  return { requestId: event.id, envelope };
+}
+
+/**
+ * If an `extension_ui_request` is an `editor` dialog carrying a session-info
+ * request (sentinel `__herman_session_info__`), return the request id so the
+ * host can reply silently with live preview/project details.
+ */
+export function tryParseSessionInfoRequest(
+  event: AgentEvent,
+): { requestId: string; envelope: SessionInfoRequestEnvelope } | undefined {
+  if (event.type !== "extension_ui_request") return undefined;
+  if (event.method !== "editor") return undefined;
+  const prefill = typeof event.prefill === "string" ? event.prefill : undefined;
+  const envelope = tryParseSessionInfoRequestEnvelope(prefill);
   if (!envelope) return undefined;
   return { requestId: event.id, envelope };
 }
