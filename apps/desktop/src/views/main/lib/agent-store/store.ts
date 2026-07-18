@@ -89,9 +89,10 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     // process when the tab is created. Use folderPath as a fallback here.
     tab.projectRoot = path;
     tab.projectColor = getProjectColor(path);
-    // Inherit the user's preferred default model for new tabs.
-    if (state.settings.models.defaultModel) {
-      tab.currentModel = state.settings.models.defaultModel;
+    // Inherit the user's last-used model for new tabs (the main process
+    // does the same for real tab creation).
+    if (state.settings.models.lastUsedModel) {
+      tab.currentModel = state.settings.models.lastUsedModel;
     }
     if (!title && path) {
       tab.title = getProjectName(path);
@@ -490,13 +491,8 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         updatedAt: Date.now(),
       };
       const tabs = { ...state.tabs, [tabId]: updated };
-      const nextCatalog =
-        availableModels && availableModels.length > 0
-          ? { availableModels: [...new Set(availableModels)] }
-          : state.modelCatalog;
       return {
         tabs,
-        modelCatalog: nextCatalog,
         ...rebuildDerived({ ...state, tabs }, tabs),
       };
     });
@@ -686,19 +682,12 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         }, 0);
       }
 
-      // Keep the shared catalog in sync with every agent models_sync.
-      let modelCatalog = state.modelCatalog;
-      if (
-        (event.type === "models_sync" || event.type === "herman/models_sync") &&
-        Array.isArray(event.models) &&
-        event.models.length > 0
-      ) {
-        modelCatalog = { availableModels: [...new Set(event.models)] };
-      }
+      // NOTE: the shared model catalog is intentionally NOT updated from
+      // models_sync events — the main-process ModelCatalogService owns it
+      // and pushes authoritative snapshots via modelCatalogChanged.
 
       return {
         tabs,
-        modelCatalog,
         ...rebuildDerived({ ...state, tabs, ui }, tabs),
         ads: nextAds,
       };
@@ -804,6 +793,24 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       return { modelCatalog: { availableModels: next } };
     }),
 
+  /** Apply an authoritative catalog snapshot from the main process. */
+  applyModelCatalog: (snapshot) =>
+    set((state) => {
+      const models = [...new Set(snapshot.models)];
+      const catalogUnchanged = arraysEqual(state.modelCatalog.availableModels, models);
+      const metadata = snapshot.modelMetadata ?? {};
+      const hasNewMetadata = Object.keys(metadata).some(
+        (key) => state.ui.modelMetadata[key] !== metadata[key],
+      );
+      if (catalogUnchanged && !hasNewMetadata) return state;
+      return {
+        ...(catalogUnchanged ? {} : { modelCatalog: { availableModels: models } }),
+        ui: hasNewMetadata
+          ? { ...state.ui, modelMetadata: { ...state.ui.modelMetadata, ...metadata } }
+          : state.ui,
+      };
+    }),
+
   setWizardCurrentModel: (modelId) =>
     set((state) => ({
       wizard: { ...state.wizard, currentModel: modelId },
@@ -890,6 +897,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         recoveryMode: "continue",
         recoveryBlocked: Boolean(payload.recoveryBlocked),
         step: "recovery",
+        phase: payload.phase ?? "planning",
         ...(payload.preferredModel ? { currentModel: payload.preferredModel } : {}),
         envelope: null,
         pendingRequestId: null,
@@ -1137,10 +1145,6 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       }
       syncMessageCounter(Object.values(record).map((t) => t.messages));
       const tabOrder = tabs.map((tab) => tab.id);
-      const catalogModels = new Set<string>(state.modelCatalog.availableModels);
-      for (const tab of Object.values(record)) {
-        for (const modelId of tab.availableModels) catalogModels.add(modelId);
-      }
       const nextState: AgentState = {
         ...state,
         tabs: record,
@@ -1148,7 +1152,6 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         activeTabId,
         projects: projects ?? state.projects,
         sessions: sessions ?? state.sessions,
-        modelCatalog: { availableModels: Array.from(catalogModels) },
         ui: {
           ...state.ui,
           view: activeTabId ? "session" : "home",

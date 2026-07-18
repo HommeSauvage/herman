@@ -1,5 +1,5 @@
 import { mock } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -21,6 +21,8 @@ const mockSessionMessages = new Map<
 >();
 const mockGetMessagesDelays = new Map<string, { emptyAttempts: number }>();
 const mockGetMessagesFailures = new Set<string>();
+const mockSetModelFailures = new Set<string>();
+const tabModelChangedEvents: { tabId: string; currentModel?: string }[] = [];
 
 class MockAgentBridge {
   tabId: string;
@@ -29,6 +31,7 @@ class MockAgentBridge {
   folderPath?: string;
   lastStartOpts?: { piSessionId?: string };
   getMessagesAttempts = 0;
+  setModelCalls: { provider: string; modelId: string }[] = [];
   onEvent?: (tabId: string, event: AgentEvent) => void;
   onStatusChange?: (tabId: string, state: string, stderr?: string) => void;
 
@@ -67,7 +70,22 @@ class MockAgentBridge {
     mockSessionMessages.delete(this.tabId);
   }
 
-  async sendCommand(command: { type?: string; message?: string }) {
+  async sendCommand(command: { type?: string; message?: string; provider?: string; modelId?: string }) {
+    if (command.type === "set_model") {
+      this.setModelCalls.push({
+        provider: command.provider ?? "",
+        modelId: command.modelId ?? "",
+      });
+      if (mockSetModelFailures.has(this.tabId)) {
+        return {
+          type: "response" as const,
+          command: "set_model",
+          success: false as const,
+          error: `Model not found: ${command.provider}/${command.modelId}`,
+        };
+      }
+      return { type: "response" as const, command: "set_model", success: true as const };
+    }
     if (command.type === "get_state") {
       return {
         type: "response" as const,
@@ -117,6 +135,10 @@ class MockAgentBridge {
     return this.started && !this.stopped ? "running" : "idle";
   }
 
+  getState() {
+    return this.state;
+  }
+
   emitEvent(event: AgentEvent) {
     this.onEvent?.(this.tabId, event);
   }
@@ -128,6 +150,8 @@ beforeEach(() => {
   mockSessionMessages.clear();
   mockGetMessagesDelays.clear();
   mockGetMessagesFailures.clear();
+  mockSetModelFailures.clear();
+  tabModelChangedEvents.length = 0;
   setHermantAppDir(tempDir);
   mock.module("../../src/bun/agent-bridge.js", () => ({
     AgentBridge: MockAgentBridge,
@@ -187,6 +211,9 @@ async function createManager(
     getMode?: () => "rookie" | "normal" | undefined;
     fetchImpl?: typeof fetch;
     onSessionsChanged?: (sessions: PersistedSession[]) => void;
+    getNewTabModel?: () => string | undefined;
+    onExplicitModelSelection?: (modelId: string) => void;
+    onAgentModelsSync?: (models: string[]) => void;
   } = {},
 ) {
   const { AgentProcessManager } = await import("../../src/bun/agent-process-manager.js");
@@ -199,6 +226,9 @@ async function createManager(
     getToken: rest.getToken ?? (async () => undefined),
     getHermanEnabled: rest.getHermanEnabled ?? (() => true),
     getMode: rest.getMode ?? (() => "normal"),
+    getNewTabModel: rest.getNewTabModel,
+    onExplicitModelSelection: rest.onExplicitModelSelection,
+    onAgentModelsSync: rest.onAgentModelsSync,
     webviewRpc: {
       send: {
         agentEvent: () => {},
@@ -206,6 +236,9 @@ async function createManager(
         tabFolderChanged: () => {},
         sessionsChanged: (payload) => onSessionsChanged?.(payload.sessions),
         tabMessagesHydrated: () => {},
+        tabModelChanged: (payload) => {
+          tabModelChangedEvents.push(payload);
+        },
       },
     },
   });
@@ -318,8 +351,10 @@ describe("AgentProcessManager", () => {
   });
 
   it("restore hydrates open tabs from pi JSONL", async () => {
+    const projectDir = join(tempDir, "project");
+    mkdirSync(projectDir, { recursive: true });
     const manager = await createManager();
-    const tab = await manager.createTab("/project");
+    const tab = await manager.createTab(projectDir);
     await drainAgent(manager);
     await manager.sendCommand(tab.id, { type: "prompt", message: "hello" });
     writePiSessionFile(tab.id, piSessionLines([{ id: "u1", role: "user", content: "hello" }]));
@@ -333,6 +368,30 @@ describe("AgentProcessManager", () => {
       { id: "u1", role: "user", content: "hello" },
     ]);
     expect(restoredManager.getMessageHydrationResult(tab.id)?.status).toBe("success");
+  });
+
+  it("restore skips the agent and surfaces a clear error when the project folder is gone", async () => {
+    const projectDir = join(tempDir, "deleted-project");
+    mkdirSync(projectDir, { recursive: true });
+    const manager = await createManager();
+    const tab = await manager.createTab(projectDir);
+    await drainAgent(manager);
+    const instancesBefore = mockInstances.length;
+
+    // Simulate the folder being moved/deleted while the app is closed.
+    rmSync(projectDir, { recursive: true, force: true });
+
+    const restoredManager = await createManager();
+    const restored = await restoredManager.restore();
+    await restoredManager.waitForAgentRuntime();
+
+    // No new bridge is started for the missing folder...
+    expect(mockInstances.length).toBe(instancesBefore);
+    // ...and the restored tab carries a clear, actionable error instead of a
+    // misleading posix_spawn ENOENT against the agent binary.
+    expect(restored.tabs).toHaveLength(1);
+    expect(restored.tabs[0]?.connectionError).toContain("no longer exists");
+    expect(restored.tabs[0]?.connectionError).toContain(projectDir);
   });
 
   it("reports failed hydration when get_messages returns no data", async () => {
@@ -928,5 +987,251 @@ describe("AgentProcessManager", () => {
     expect(readFileSync(join(worktreePath, "a.txt"), "utf-8")).toBe("v2\n");
 
     rewindManager.dispose(tab.id);
+  });
+});
+
+describe("AgentProcessManager model selection", () => {
+  function emitModelsSync(
+    tabId: string,
+    models: string[],
+    currentModel?: string,
+    instanceIndex = 0,
+  ) {
+    const bridge = mockInstances[instanceIndex];
+    if (!bridge) throw new Error("no mock bridge");
+    bridge.emitEvent({
+      type: "models_sync",
+      models,
+      ...(currentModel ? { currentModel } : {}),
+    } as AgentEvent);
+  }
+
+  it("setTabModel persists the selection for the session, even with no agent running", async () => {
+    const manager = await createManager();
+    // No folder → no agent bridge is started.
+    const tab = await manager.createTab();
+
+    const result = await manager.setTabModel(tab.id, "kimi-k2.7-code", { explicit: true });
+
+    expect(result).toEqual({ ok: true, model: "herman/kimi-k2.7-code", applied: false });
+    expect(manager.getTab(tab.id)?.currentModel).toBe("herman/kimi-k2.7-code");
+    expect(tabModelChangedEvents).toEqual([
+      { tabId: tab.id, currentModel: "herman/kimi-k2.7-code" },
+    ]);
+
+    // A new manager (app restart) restores the selection from window state.
+    const restoredManager = await createManager();
+    const restored = await restoredManager.restore();
+    expect(restored.tabs[0]?.currentModel).toBe("herman/kimi-k2.7-code");
+  });
+
+  it("applies the desired model once the agent registry advertises it", async () => {
+    const manager = await createManager();
+    const tab = await manager.createTab("/project");
+    await drainAgent(manager);
+
+    // Before any models_sync there is no registry — setTabModel persists but
+    // does not fire a blind set_model.
+    await manager.setTabModel(tab.id, "herman/kimi", { explicit: true });
+    expect(mockInstances[0].setModelCalls).toEqual([]);
+
+    // The first models_sync (registry ready) drives the apply.
+    emitModelsSync(tab.id, ["herman/kimi", "herman/glm"], "herman/glm");
+    await manager.waitForAgentRuntime();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockInstances[0].setModelCalls).toEqual([{ provider: "herman", modelId: "kimi" }]);
+  });
+
+  it("does not re-apply when the agent already has the desired model", async () => {
+    const manager = await createManager();
+    const tab = await manager.createTab("/project");
+    await drainAgent(manager);
+
+    emitModelsSync(tab.id, ["herman/kimi"], "herman/kimi");
+    await manager.setTabModel(tab.id, "herman/kimi", { explicit: true });
+    // Agent already reported kimi as current — no set_model needed.
+    expect(mockInstances[0].setModelCalls).toEqual([]);
+    // But the tab state and persistence still reflect the explicit choice.
+    expect(manager.getTab(tab.id)?.currentModel).toBe("herman/kimi");
+  });
+
+  it("waits for a model that is not in the registry and applies it when it appears", async () => {
+    const manager = await createManager();
+    const tab = await manager.createTab("/project");
+    await drainAgent(manager);
+
+    emitModelsSync(tab.id, ["herman/glm"], "herman/glm");
+    await manager.setTabModel(tab.id, "herman/kimi", { explicit: true });
+    expect(mockInstances[0].setModelCalls).toEqual([]);
+
+    // The model appears in a later sync (e.g. after a server-side change).
+    emitModelsSync(tab.id, ["herman/glm", "herman/kimi"], "herman/glm");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockInstances[0].setModelCalls).toEqual([{ provider: "herman", modelId: "kimi" }]);
+  });
+
+  it("bounds set_model retries per registry snapshot, and a changed list re-opens the budget", async () => {
+    const manager = await createManager();
+    const tab = await manager.createTab("/project");
+    await drainAgent(manager);
+    mockSetModelFailures.add(tab.id);
+
+    await manager.setTabModel(tab.id, "herman/kimi", { explicit: true });
+
+    // The same registry snapshot keeps failing; attempts are capped at 3.
+    for (let i = 0; i < 5; i++) {
+      emitModelsSync(tab.id, ["herman/kimi", "herman/glm"], "herman/glm");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const attempts = mockInstances[0].setModelCalls.length;
+    expect(attempts).toBe(3);
+
+    // A changed registry (new model shows up) earns a fresh budget.
+    emitModelsSync(tab.id, ["herman/kimi", "herman/glm", "herman/new"], "herman/glm");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockInstances[0].setModelCalls.length).toBeGreaterThan(attempts);
+  });
+
+  it("records explicit selections as the last-used model (normalized)", async () => {
+    const recorded: string[] = [];
+    const manager = await createManager({
+      onExplicitModelSelection: (modelId) => recorded.push(modelId),
+    });
+    const tab = await manager.createTab();
+
+    await manager.setTabModel(tab.id, "kimi", { explicit: true });
+    expect(recorded).toEqual(["herman/kimi"]);
+  });
+
+  it("adopts the agent-reported model for tabs without a selection, without recording it", async () => {
+    const recorded: string[] = [];
+    const manager = await createManager({
+      onExplicitModelSelection: (modelId) => recorded.push(modelId),
+    });
+    const tab = await manager.createTab("/project");
+    await drainAgent(manager);
+
+    expect(manager.getTab(tab.id)?.currentModel).toBeUndefined();
+    emitModelsSync(tab.id, ["herman/glm"], "herman/glm");
+
+    expect(manager.getTab(tab.id)?.currentModel).toBe("herman/glm");
+    // Agent defaults are not user choices — the global last-used stays unset.
+    expect(recorded).toEqual([]);
+  });
+
+  it("restores the persisted model into a fresh agent after restart", async () => {
+    const projectDir = join(tempDir, "model-project");
+    mkdirSync(projectDir, { recursive: true });
+    const manager = await createManager();
+    const tab = await manager.createTab(projectDir);
+    await drainAgent(manager);
+    emitModelsSync(tab.id, ["herman/kimi", "herman/glm"], "herman/glm");
+    await manager.setTabModel(tab.id, "herman/kimi", { explicit: true });
+
+    // Simulate app restart: a new manager restores the open tab and starts a
+    // fresh bridge; the persisted model is applied on the first models_sync.
+    const instancesBefore = mockInstances.length;
+    const restoredManager = await createManager();
+    await restoredManager.restore();
+    await restoredManager.waitForAgentRuntime();
+    const freshBridge = mockInstances[instancesBefore];
+    expect(freshBridge).toBeDefined();
+
+    freshBridge.emitEvent({
+      type: "models_sync",
+      models: ["herman/kimi", "herman/glm"],
+      currentModel: "herman/glm",
+    } as AgentEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(freshBridge.setModelCalls).toEqual([{ provider: "herman", modelId: "kimi" }]);
+  });
+
+  it("createTab seeds the model from getNewTabModel", async () => {
+    const manager = await createManager({ getNewTabModel: () => "herman/seeded" });
+    const tab = await manager.createTab("/project");
+    expect(tab.currentModel).toBe("herman/seeded");
+  });
+
+  it("openPiSession restores the model the pi session was using", async () => {
+    const manager = await createManager();
+    const sessionId = "sess-model-test";
+    writePiSessionFile(
+      "unused-tab",
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: sessionId,
+          timestamp: "2026-07-09T00:00:00.000Z",
+          cwd: "/project",
+        }),
+        JSON.stringify({
+          type: "model_change",
+          id: "mc-1",
+          parentId: null,
+          timestamp: "2026-07-09T00:00:01.000Z",
+          provider: "herman",
+          modelId: "glm-4.5",
+        }),
+      ],
+      sessionId,
+    );
+
+    const tab = await manager.openPiSession("/project", sessionId);
+
+    expect(tab.currentModel).toBe("herman/glm-4.5");
+  });
+
+  it("keeps the selected model when reopening a tab from session history", async () => {
+    const manager = await createManager();
+    const tab = await manager.createTab("/project");
+    await drainAgent(manager);
+    emitModelsSync(tab.id, ["herman/kimi", "herman/glm"], "herman/glm");
+    await manager.setTabModel(tab.id, "herman/kimi", { explicit: true });
+
+    // Give the session a conversation, then close and reopen from history.
+    await manager.sendCommand(tab.id, { type: "prompt", message: "hello" });
+    writePiSessionFile(tab.id, piSessionLines([{ id: "u1", role: "user", content: "hello" }]));
+    await manager.closeTab(tab.id);
+
+    const sessions = manager.getProjectsAndSessions().sessions;
+    expect(sessions[0]?.currentModel).toBe("herman/kimi");
+
+    await manager.openSession(tab.id);
+    expect(manager.getTab(tab.id)?.currentModel).toBe("herman/kimi");
+
+    // And the (new) agent gets the persisted model applied on first sync.
+    const instancesBefore = mockInstances.length;
+    await manager.waitForAgentRuntime();
+    const freshBridge = mockInstances[instancesBefore - 1];
+    freshBridge.emitEvent({
+      type: "models_sync",
+      models: ["herman/kimi", "herman/glm"],
+      currentModel: "herman/glm",
+    } as AgentEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(freshBridge.setModelCalls).toEqual([{ provider: "herman", modelId: "kimi" }]);
+  });
+
+  it("falls back to the new-tab model for pi sessions without model history", async () => {
+    const manager = await createManager({ getNewTabModel: () => "herman/fallback" });
+    const sessionId = "sess-no-model";
+    writePiSessionFile(
+      "unused-tab",
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: sessionId,
+          timestamp: "2026-07-09T00:00:00.000Z",
+          cwd: "/project",
+        }),
+      ],
+      sessionId,
+    );
+
+    const tab = await manager.openPiSession("/project", sessionId);
+
+    expect(tab.currentModel).toBe("herman/fallback");
   });
 });

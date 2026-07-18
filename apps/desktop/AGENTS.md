@@ -82,6 +82,9 @@ Herman supports multiple LLM providers alongside the built-in Herman proxy.
 | Settings page | `src/views/main/components/settings-view.tsx` (Providers, Models, General tabs) |
 | Provider auth dialog | `src/views/main/components/settings/provider-auth-dialog.tsx` |
 | Model selector | `src/views/main/components/model-selector.tsx` (grouped by provider) |
+| Model catalog | `src/bun/model-catalog.ts` — main-process owned; fetches `/api/agent/models`, caches to `userData/model-catalog.json` (never wiped on fetch errors), pushes `modelCatalogChanged` |
+| Model selection | `src/bun/agent-process-manager.ts` — `setTabModel()` persists the per-tab model with the session and applies it to the agent on `models_sync` (registry-ready); explicit picks record `settings.models.lastUsedModel`, which seeds fresh tabs |
+| Shared model logic | `src/shared/model-selection.ts` — pure helpers (id normalization, catalog merge, apply rule) |
 | Agent spawn | `src/bun/agent-bridge.ts` — spawns against the shared agent config |
 | Shared agent config | `src/bun/agent-config-sync.ts` — `syncAgentConfig()` writes `~/.herman/agent/{auth,models,settings}.json` once + installs bundled extensions |
 | Project → sessions | `src/bun/pi-sessions.ts` — native pi `SessionManager.list(cwd)` / `listAll()` (session JSONL headers carry `cwd`) |

@@ -5,12 +5,12 @@ import type { ElementType } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
-import { refreshHermanModels, selectModel } from "../lib/agent-actions.js";
+import { HERMAN_PROVIDER_ID, sortModelsHermanFirst } from "../../../shared/model-selection.js";
+import { refreshModelCatalog, selectModel } from "../lib/agent-actions.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 
 const EMPTY_HIDDEN_MODELS: string[] = []; // stable fallback for useShallow selector
-const HERMAN_PROVIDER_ID = 'herman';
 
 function getEnabledProviders(settings: { providers: { herman: { enabled: boolean }; custom: Record<string, { enabled?: boolean } | undefined> } }): Set<string> {
   const enabled = new Set<string>();
@@ -50,20 +50,6 @@ function groupModels(models: string[]): GroupedModels[] {
     provider,
     models,
   }));
-}
-
-function sortModelsHermanFirst(models: string[]): string[] {
-  return [...models].sort((a, b) => {
-    const [aProvider, ...aRest] = a.split("/");
-    const [bProvider, ...bRest] = b.split("/");
-    const aHerman = aProvider === HERMAN_PROVIDER_ID ? -1 : 1;
-    const bHerman = bProvider === HERMAN_PROVIDER_ID ? -1 : 1;
-    if (aHerman !== bHerman) return aHerman - bHerman;
-    if (aProvider !== bProvider) return aProvider.localeCompare(bProvider);
-    const aId = aRest.join("/");
-    const bId = bRest.join("/");
-    return aId.localeCompare(bId);
-  });
 }
 
 export function ModelSelector() {
@@ -124,13 +110,13 @@ export function ModelSelector() {
       setSearch("");
       setFocusedIndex(-1);
       inputRef.current?.focus();
-      // Same refresh path for chat and wizard: ask a running tab agent to
-      // re-sync models. The catalog updates via models_sync.
-      if (tabId && settings.providers.herman.enabled) {
-        void refreshHermanModels(tabId);
+      // Silent refresh from the server — the cached catalog stays intact on
+      // failure, so this is always safe.
+      if (settings.providers.herman.enabled) {
+        void refreshModelCatalog();
       }
     }
-  }, [open, tabId, settings.providers.herman.enabled]);
+  }, [open, settings.providers.herman.enabled]);
 
   function handleOverlayKeyDown(event: React.KeyboardEvent) {
     if (event.key === "Escape") {
@@ -186,18 +172,15 @@ export function ModelSelector() {
   }, [search]);
 
   async function handleSelect(modelId: string) {
+    const store = useAgentStore.getState();
+
     if (wizardActive) {
-      const store = useAgentStore.getState();
       store.setWizardCurrentModel(modelId);
       setModelSelectorOpen(false);
 
-      // Persist as the user's default model for future sessions/wizards.
-      const next = {
-        ...store.settings,
-        models: { ...store.settings.models, defaultModel: modelId },
-      };
-      store.setSettings(next);
-      void desktopRpc.request.saveSettings({ settings: next }).catch(() => {
+      // Record as the global last-used model (main-process owned) so future
+      // sessions and fresh tabs inherit it.
+      void desktopRpc.request.setLastUsedModel({ modelId }).catch(() => {
         // Best-effort persistence.
       });
 
@@ -212,22 +195,11 @@ export function ModelSelector() {
     }
 
     if (!tabId) return;
-    const store = useAgentStore.getState();
 
-    // Optimistically update the UI so the model changes immediately.
-    // The async models_sync event will confirm it later.
+    // Optimistically update the UI; the main process persists the selection
+    // for the session and pushes tabModelChanged as confirmation.
     store.setModels(tabId, modelId);
     setModelSelectorOpen(false);
-
-    // Persist as the user's default model for future sessions.
-    const next = {
-      ...store.settings,
-      models: { ...store.settings.models, defaultModel: modelId },
-    };
-    store.setSettings(next);
-    void desktopRpc.request.saveSettings({ settings: next }).catch(() => {
-      // Best-effort persistence.
-    });
 
     await selectModel(tabId, modelId);
   }

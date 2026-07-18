@@ -47,6 +47,22 @@ function migrateProviders(
   return { herman, custom };
 }
 
+function migrateModels(
+  models?: Partial<DesktopSettings["models"]>,
+): DesktopSettings["models"] {
+  const migrated: DesktopSettings["models"] = {
+    ...defaultSettings().models,
+    ...models,
+  };
+  // `defaultModel` was renamed to `lastUsedModel`: it is updated on every
+  // explicit user selection and seeds fresh tabs.
+  if (!migrated.lastUsedModel && migrated.defaultModel) {
+    migrated.lastUsedModel = migrated.defaultModel;
+  }
+  delete migrated.defaultModel;
+  return migrated;
+}
+
 export async function loadSettings(): Promise<DesktopSettings> {
   const path = sp();
   ensureDir(dirname(path));
@@ -63,7 +79,7 @@ export async function loadSettings(): Promise<DesktopSettings> {
       ...defaultSettings(),
       ...rawWithoutError,
       providers: migrateProviders(raw.providers),
-      models: { ...defaultSettings().models, ...raw.models },
+      models: migrateModels(raw.models),
     };
   } catch (error) {
     logStorageError(logger, "loadSettings", path, error);
@@ -82,6 +98,19 @@ export async function saveSettings(settings: DesktopSettings): Promise<void> {
     logStorageError(logger, "saveSettings", path, error);
     throw error;
   }
+}
+
+/**
+ * Read-modify-write settings on disk and return the next value. Use this for
+ * main-process-initiated changes (e.g. recording the last-used model) so a
+ * stale full-object `saveSettings` from the renderer cannot clobber them.
+ */
+export async function updateSettings(
+  mutate: (settings: DesktopSettings) => DesktopSettings,
+): Promise<DesktopSettings> {
+  const next = mutate(await loadSettings());
+  await saveSettings(next);
+  return next;
 }
 
 export async function clearSettings(): Promise<void> {

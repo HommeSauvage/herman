@@ -151,21 +151,33 @@ export type InstanceLogSink = {
 /** Number of lines captured before and after each detected error line. */
 const ERROR_CONTEXT_LINES = 25;
 
+/**
+ * Maximum time (ms) to wait for "after" context lines before flushing.
+ * Prevents errors from being stuck indefinitely when the dev server stops
+ * producing output after an error (e.g., watch-mode compilation failure).
+ */
+const ERROR_CONTEXT_TIMEOUT_MS = 2_000;
+
 type PendingContext = {
   source: "stdout" | "stderr";
   before: string[];
   errorLine: string;
   after: string[];
   remainingAfter: number;
+  /** Timer that flushes the pending context after ERROR_CONTEXT_TIMEOUT_MS. */
+  timer: ReturnType<typeof setTimeout>;
 };
 
 /**
  * Create a line handler that updates stderr tail and filters error lines.
  *
  * Multi-line errors (stack traces, turborepo-style arrays, etc.) are captured
- * as a single entry by snapping ERROR_CONTEXT_LINES before and after each
- * detected error line.  The returned handler exposes a `flush()` method so
- * callers can drain an in-progress context window before the process exits.
+ * as a single entry by snapping ERROR_CONTEXT_LINES before and (up to)
+ * ERROR_CONTEXT_LINES after each detected error line, bounded by a timeout
+ * so errors are never stuck in the buffer indefinitely.
+ *
+ * The returned handler exposes a `flush()` method so callers can drain an
+ * in-progress context window before the process exits.
  */
 export function createInstanceLineHandler(sink: InstanceLogSink): LineHandler & { flush: () => void } {
   // Sliding window of recent log lines used for "before" context snapshots.
@@ -174,6 +186,7 @@ export function createInstanceLineHandler(sink: InstanceLogSink): LineHandler & 
 
   function flushPending() {
     if (!pending) return;
+    clearTimeout(pending.timer);
     const fullMessage = [
       ...pending.before,
       pending.errorLine,
@@ -203,12 +216,15 @@ export function createInstanceLineHandler(sink: InstanceLogSink): LineHandler & 
 
       // Snapshot the N lines leading up to this error.  The ring doesn't
       // contain this line yet — it's pushed after the error check.
+      // A timeout guarantees the error is reported even when the dev server
+      // stops producing output (e.g., watch-mode compilation failure).
       pending = {
         source,
         before: ring.slice(-ERROR_CONTEXT_LINES),
         errorLine: line,
         after: [],
         remainingAfter: ERROR_CONTEXT_LINES,
+        timer: setTimeout(() => flushPending(), ERROR_CONTEXT_TIMEOUT_MS),
       };
     } else if (pending) {
       // Collect "after" context for the current error window.

@@ -6,6 +6,23 @@ import { join } from "node:path";
 const testTmpRoot = join(tmpdir(), "herman-desktop-tests");
 const activeDirs = new Set<string>();
 
+/**
+ * Process-wide fallback for HERMAN_APP_DIR. Several app modules persist state
+ * fire-and-forget (debounced window-state writes, unawaited saves) that can
+ * land AFTER a test's afterEach cleared the env var — writing into the real
+ * ~/.herman and corrupting the developer's actual app state. Keeping
+ * HERMAN_APP_DIR always set during a test run makes that impossible.
+ */
+let fallbackAppDir: string | undefined;
+
+function fallbackTestAppDir(): string {
+  if (!fallbackAppDir) {
+    fallbackAppDir = mkdtempSync(join(ensureTestTmpRoot(), "herman-appdir-fallback-"));
+    activeDirs.add(fallbackAppDir);
+  }
+  return fallbackAppDir;
+}
+
 function ensureTestTmpRoot(): string {
   if (!existsSync(testTmpRoot)) {
     mkdirSync(testTmpRoot, { recursive: true });
@@ -43,9 +60,6 @@ export function setHermantAppDir(tempDir: string): void {
 
 export function clearHermantAppDir(tempDir: string, previousValue?: string): void {
   removeTestTempDir(tempDir);
-  if (previousValue === undefined) {
-    delete process.env.HERMAN_APP_DIR;
-  } else {
-    process.env.HERMAN_APP_DIR = previousValue;
-  }
+  // Never leave HERMAN_APP_DIR unset mid-run (see fallbackTestAppDir).
+  process.env.HERMAN_APP_DIR = previousValue ?? fallbackTestAppDir();
 }

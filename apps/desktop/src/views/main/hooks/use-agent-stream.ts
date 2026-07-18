@@ -165,11 +165,16 @@ function useAgentEventPolling() {
         const { tabs: freshTabs } = await desktopRpc.request.getTabs();
         const freshTab = freshTabs.find((t) => t.id === activeTabId);
         if (freshTab) {
+          // Only adopt the main process's currentModel as a fallback when
+          // the renderer doesn't already have one (e.g. lost models_sync IPC
+          // event on startup).  User-initiated model changes update the
+          // renderer store optimistically; the poll must not overwrite them.
+          const currentModelFallback = tab.currentModel ? undefined : freshTab.currentModel;
           const changed = useAgentStore.getState().updateTab(activeTabId, {
             ...(streaming ? {} : { messages: freshTab.messages, contextStats: freshTab.contextStats }),
             isThinking: freshTab.isThinking,
             availableModels: freshTab.availableModels,
-            currentModel: freshTab.currentModel,
+            ...(currentModelFallback ? { currentModel: currentModelFallback } : {}),
             connectionError: freshTab.connectionError,
             ...(freshTab.connectionState !== tab.connectionState
               ? { connectionState: freshTab.connectionState }

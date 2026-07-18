@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -8,7 +8,14 @@ import type {
   ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
 import { PROTECTED_PROVIDER_KEY_VARS } from "@herman/agent/protected-keys";
-import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
+import {
+  HERMAN_REFRESH_MODELS_MESSAGE,
+  LEGACY_HERMAN_MODELS_CACHE_FILENAME,
+  MODEL_CATALOG_FILENAME,
+  type HermanModelEntry,
+  type LegacyHermanModelsCacheFile,
+  type ModelCatalogFile,
+} from "@herman/rpc/agent";
 import type { AdCampaign, AdPlacement } from "@herman/rpc/ads";
 import { getLogger } from "@logtape/logtape";
 
@@ -83,55 +90,95 @@ function hermanAppDir(): string {
   return join(homedir(), ".herman");
 }
 
-function modelsCachePath(): string {
-  return join(hermanAppDir(), "herman-models-cache.json");
+function modelCatalogPath(): string {
+  return join(hermanAppDir(), MODEL_CATALOG_FILENAME);
 }
 
-type HermanModel = {
-  id: string;
-  name: string;
-  api?: "openai-completions" | "anthropic-messages";
-  providerId?: string;
-  contextWindow?: number;
-  maxTokens?: number;
-  compat?: {
-    supportsStore?: boolean;
-    supportsDeveloperRole?: boolean;
-    supportsReasoningEffort?: boolean;
-    supportsUsageInStreaming?: boolean;
-    maxTokensField?: "max_tokens" | "max_completion_tokens";
-  };
-};
+function legacyModelsCachePath(): string {
+  return join(hermanAppDir(), LEGACY_HERMAN_MODELS_CACHE_FILENAME);
+}
 
-type ModelsCache = {
-  serverUrl: string;
-  fetchedAt: string;
-  models: HermanModel[];
-};
+type HermanModel = HermanModelEntry;
 
-function loadCachedModels(serverUrl: string): HermanModel[] | undefined {
+/**
+ * Read the desktop-owned model catalog synchronously for cache-first provider
+ * registration. Falls back to the legacy cache file (older extensions) and
+ * migrates it. Returns undefined when nothing usable is on disk. Never
+ * throws — a corrupt cache just means a slow (network) start.
+ */
+function readCatalogFromDisk(serverUrl: string): HermanModel[] | undefined {
   try {
-    const path = modelsCachePath();
-    if (!existsSync(path)) return undefined;
-    const raw = readFileSync(path, "utf-8");
-    const cache = JSON.parse(raw) as ModelsCache;
-    if (cache.serverUrl !== serverUrl) return undefined;
-    if (!Array.isArray(cache.models)) return undefined;
-    return cache.models;
+    const path = modelCatalogPath();
+    if (existsSync(path)) {
+      const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<ModelCatalogFile>;
+      if (parsed.serverUrl === serverUrl && Array.isArray(parsed.herman)) {
+        return parsed.herman;
+      }
+      return undefined;
+    }
   } catch (error) {
-    extLog("debug", "Failed to load cached Herman models", { error: String(error) });
+    extLog("debug", "Failed to read model catalog cache", { error: String(error) });
+    return undefined;
+  }
+
+  // Legacy migration: adopt the old extension-owned cache if present.
+  try {
+    const legacyPath = legacyModelsCachePath();
+    if (!existsSync(legacyPath)) return undefined;
+    const legacy = JSON.parse(readFileSync(legacyPath, "utf-8")) as LegacyHermanModelsCacheFile;
+    if (legacy.serverUrl !== serverUrl || !Array.isArray(legacy.models)) return undefined;
+    extLog("info", "Adopted legacy Herman models cache", { modelCount: legacy.models.length });
+    return legacy.models;
+  } catch (error) {
+    extLog("debug", "Failed to read legacy models cache", { error: String(error) });
     return undefined;
   }
 }
 
-function saveCachedModels(serverUrl: string, models: HermanModel[]): void {
+/**
+ * Write fresh models to the shared catalog file, preserving the `custom`
+ * section owned by the desktop. Called ONLY after a successful fetch — a
+ * failed refresh must never remove previously cached models. Atomic via
+ * tmp+rename so a concurrent desktop read never sees a torn file.
+ */
+function writeCatalogToDisk(serverUrl: string, models: HermanModel[]): void {
   try {
     const dir = hermanAppDir();
     mkdirSync(dir, { recursive: true });
-    const cache: ModelsCache = { serverUrl, fetchedAt: new Date().toISOString(), models };
-    writeFileSync(modelsCachePath(), JSON.stringify(cache, null, 2));
+
+    let custom: Record<string, string[]> = {};
+    try {
+      const path = modelCatalogPath();
+      if (existsSync(path)) {
+        const existing = JSON.parse(readFileSync(path, "utf-8")) as Partial<ModelCatalogFile>;
+        if (existing.custom && typeof existing.custom === "object") {
+          custom = existing.custom;
+        }
+      }
+    } catch {
+      // Corrupt existing file — overwrite with just our section.
+    }
+
+    const file: ModelCatalogFile = {
+      version: 1,
+      serverUrl,
+      fetchedAt: new Date().toISOString(),
+      herman: models,
+      custom,
+    };
+    const path = modelCatalogPath();
+    const tmpPath = join(dir, `.tmp-${process.pid}-${Date.now()}-model-catalog.json`);
+    writeFileSync(tmpPath, JSON.stringify(file, null, 2));
+    renameSync(tmpPath, path);
+
+    // Migration cleanup: the shared catalog supersedes the legacy cache.
+    try {
+      rmSync(legacyModelsCachePath(), { force: true });
+    } catch {
+      // Best-effort cleanup.
+    }
   } catch (error) {
-    extLog("debug", "Failed to save cached Herman models", { error: String(error) });
+    extLog("debug", "Failed to persist model catalog", { error: String(error) });
   }
 }
 
@@ -155,16 +202,26 @@ async function fetchHermanModels(): Promise<HermanModel[]> {
 
   const payload = (await response.json()) as { models?: HermanModel[] };
   extLog("info", "Models received", { count: payload.models?.length });
-  return payload.models ?? [];
+  const models = payload.models ?? [];
+  if (models.length === 0) {
+    // The Herman proxy always serves at least one model — an empty list is a
+    // misconfiguration, not a reason to wipe the on-disk cache.
+    throw new Error("Herman server returned an empty model list");
+  }
+  return models;
 }
 
+/**
+ * Fetch fresh models and persist them; fall back to the on-disk cache when
+ * the fetch fails. Throws only when there is no cache to fall back to.
+ */
 async function loadModelsWithCache(): Promise<{ models: HermanModel[]; fromCache: boolean }> {
   try {
     const models = await fetchHermanModels();
-    saveCachedModels(config.serverUrl, models);
+    writeCatalogToDisk(serverBaseUrl(), models);
     return { models, fromCache: false };
   } catch (error) {
-    const cached = loadCachedModels(config.serverUrl);
+    const cached = readCatalogFromDisk(serverBaseUrl());
     if (cached && cached.length > 0) {
       extLog("info", "Loaded Herman models from cache", { modelCount: cached.length });
       return { models: cached, fromCache: true };
@@ -202,7 +259,7 @@ function buildProviderConfig(models: HermanModel[]): ProviderConfig {
     },
     models: models.map((model) => ({
       id: model.id,
-      name: model.name,
+      name: model.name ?? model.id,
       api: model.api ?? providerApi ?? "openai-completions",
       reasoning: true,
       input: ["text"],
@@ -330,6 +387,8 @@ export default async function hermanExtension(pi: ExtensionAPI) {
   let hermanModels: HermanModel[] = [];
   let fetchError: string | undefined;
   const hermanEnabled = Boolean(config.serverUrl);
+  /** Captured at session_start so background refreshes can push models_sync. */
+  let sessionCtx: ExtensionContext | undefined;
 
   const registerModels = (nextModels: HermanModel[]) => {
     hermanModels = nextModels;
@@ -340,24 +399,51 @@ export default async function hermanExtension(pi: ExtensionAPI) {
     });
   };
 
+  function notifyModelsSync(ctx: ExtensionContext) {
+    const available = ctx.modelRegistry.getAvailable().map((model) => ({
+      provider: model.provider,
+      id: model.id,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+    }));
+    sendModelsSync(
+      ctx.ui,
+      available,
+      ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+    );
+  }
+
+  /**
+   * Silent background refresh after a cache-first startup. On success the
+   * provider is re-registered and the shared cache file updated; on failure
+   * the cached registration stays in place (the cache is never wiped).
+   */
+  async function refreshModelsInBackground() {
+    try {
+      const models = await fetchHermanModels();
+      writeCatalogToDisk(serverBaseUrl(), models);
+      registerModels(models);
+      fetchError = undefined;
+      extLog("info", "Refreshed Herman models in background", { modelCount: models.length });
+      // The session may already have started with cached models — push the
+      // fresh list so the UI and the model apply logic see it.
+      if (sessionCtx) {
+        notifyModelsSync(sessionCtx);
+      }
+    } catch (error) {
+      extLog("info", "Background Herman models refresh failed; keeping cache", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async function refreshModelsAndNotify(ctx: ExtensionContext) {
     if (!hermanEnabled) return;
     extLog("info", "Refreshing Herman models");
     try {
       const { models, fromCache } = await loadModelsWithCache();
-      hermanModels = models;
-      pi.registerProvider(HERMAN_PROVIDER, buildProviderConfig(hermanModels));
-      const available = ctx.modelRegistry.getAvailable().map((model) => ({
-        provider: model.provider,
-        id: model.id,
-        contextWindow: model.contextWindow,
-        maxTokens: model.maxTokens,
-      }));
-      sendModelsSync(
-        ctx.ui,
-        available,
-        ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-      );
+      registerModels(models);
+      notifyModelsSync(ctx);
       extLog("info", "Herman models refreshed", {
         modelCount: hermanModels.length,
         fromCache,
@@ -372,17 +458,27 @@ export default async function hermanExtension(pi: ExtensionAPI) {
   if (hermanEnabled) {
     assertNoLocalKeys();
 
-    try {
-      const { models } = await loadModelsWithCache();
-      registerModels(models);
-    } catch (error) {
-      fetchError = error instanceof Error ? error.message : String(error);
-      extLog("error", "Failed to fetch Herman models and no cache available", { error: fetchError });
-      registerModels([]);
+    const cached = readCatalogFromDisk(serverBaseUrl());
+    if (cached && cached.length > 0) {
+      // Cache-first: register instantly (no network wait at spawn), then
+      // refresh from the server in the background. The cache also feeds the
+      // desktop catalog, so both processes agree on the model list.
+      registerModels(cached);
+      void refreshModelsInBackground();
+    } else {
+      try {
+        const { models } = await loadModelsWithCache();
+        registerModels(models);
+      } catch (error) {
+        fetchError = error instanceof Error ? error.message : String(error);
+        extLog("error", "Failed to fetch Herman models and no cache available", { error: fetchError });
+        registerModels([]);
+      }
     }
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    sessionCtx = ctx;
     if (fetchError) {
       extLog("error", "Session start with fetch error", { fetchError });
       ctx.ui.notify(
@@ -462,17 +558,7 @@ export default async function hermanExtension(pi: ExtensionAPI) {
   });
 
   pi.on("model_select", async (_event, ctx) => {
-    const available = ctx.modelRegistry.getAvailable().map((model) => ({
-      provider: model.provider,
-      id: model.id,
-      contextWindow: model.contextWindow,
-      maxTokens: model.maxTokens,
-    }));
-    sendModelsSync(
-      ctx.ui,
-      available,
-      ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-    );
+    notifyModelsSync(ctx);
   });
 
   // Note: the `herman/context_usage` event used to be emitted from this
@@ -594,19 +680,8 @@ export default async function hermanExtension(pi: ExtensionAPI) {
     if (shouldRefreshModels(event.status)) {
       try {
         const { models, fromCache } = await loadModelsWithCache();
-        hermanModels = models;
-        pi.registerProvider(HERMAN_PROVIDER, buildProviderConfig(hermanModels));
-        const available = ctx.modelRegistry.getAvailable().map((model) => ({
-          provider: model.provider,
-          id: model.id,
-          contextWindow: model.contextWindow,
-          maxTokens: model.maxTokens,
-        }));
-        sendModelsSync(
-          ctx.ui,
-          available,
-          ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-        );
+        registerModels(models);
+        notifyModelsSync(ctx);
         extLog("info", "Refreshed Herman models after proxy failure", {
           status: event.status,
           modelCount: hermanModels.length,

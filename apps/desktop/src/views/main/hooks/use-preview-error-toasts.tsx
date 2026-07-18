@@ -1,9 +1,12 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
+import { getLogger } from "@logtape/logtape";
 
 import type { PreviewRuntimeError } from "../components/preview-error-banner";
 import { formatRuntimeErrors, usePreviewStore } from "../lib/preview-store";
+
+const logger = getLogger(["herman-desktop", "view", "preview-error-toasts"]);
 
 /**
  * Syncs `runtimeErrors` from the preview store to Sonner toasts. Each error
@@ -31,8 +34,16 @@ export function usePreviewErrorToasts(
   });
 
   useEffect(() => {
+    logger.debug("Preview error toast effect running", {
+      show,
+      errorCount: runtimeErrors.length,
+      existingToastCount: toastIdsRef.current.size,
+      dismissedCount: dismissedIdsRef.current.size,
+    });
+
     if (!show) {
       // Dismiss every toast and reset tracking.
+      logger.debug("Hiding preview error toasts");
       for (const id of toastIdsRef.current.values()) {
         toast.dismiss(id);
       }
@@ -46,6 +57,7 @@ export function usePreviewErrorToasts(
     // Remove toasts for errors no longer in the list.
     for (const [errorId, toastId] of toastIdsRef.current) {
       if (!currentIds.has(errorId)) {
+        logger.debug("Removing stale preview error toast", { errorId });
         toast.dismiss(toastId);
         toastIdsRef.current.delete(errorId);
       }
@@ -55,6 +67,12 @@ export function usePreviewErrorToasts(
     for (const err of runtimeErrors) {
       if (toastIdsRef.current.has(err.id)) continue;
       if (dismissedIdsRef.current.has(err.id)) continue;
+
+      logger.info("Creating preview error toast", {
+        errorId: err.id,
+        source: err.source,
+        message: err.message.slice(0, 200),
+      });
 
       const toastId = toast.error(err.message, {
         description:

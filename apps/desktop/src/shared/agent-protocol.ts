@@ -173,6 +173,11 @@ export type WizardSessionEvent =
       currentModel?: string;
     }
   | {
+      type: "wizard_phase";
+      wizardSessionId: string;
+      phase: "planning" | "coding" | "qa" | "docs";
+    }
+  | {
       type: "wizard_complete";
       wizardSessionId: string;
       projectPath: string;

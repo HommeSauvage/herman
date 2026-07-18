@@ -95,4 +95,33 @@ describe("wizard-checkpoint", () => {
     );
     expect(result.resumable).toBe(true);
   });
+
+  it("evaluateWizardCheckpoint accepts docs phase with existing project", () => {
+    const projectPath = join(tempDir, "docs-blog");
+    mkdirSync(projectPath, { recursive: true });
+    const result = evaluateWizardCheckpoint(baseCheckpoint({ phase: "docs", projectPath }));
+    expect(result.resumable).toBe(true);
+  });
+
+  it("evaluateWizardCheckpoint rejects docs phase when project folder is gone", () => {
+    const result = evaluateWizardCheckpoint(
+      baseCheckpoint({ phase: "docs", projectPath: join(tempDir, "missing-docs-project") }),
+    );
+    expect(result.resumable).toBe(false);
+    expect(result.reason).toMatch(/no longer exists/i);
+  });
+
+  it("evaluateWizardCheckpoint rejects docs phase without a project path", () => {
+    const result = evaluateWizardCheckpoint(
+      baseCheckpoint({ phase: "docs", projectPath: undefined }),
+    );
+    expect(result.resumable).toBe(false);
+    expect(result.reason).toMatch(/missing project path/i);
+  });
+
+  it("round-trips a docs-phase checkpoint", async () => {
+    await saveWizardCheckpoint(baseCheckpoint({ phase: "docs" }));
+    const loaded = await loadWizardCheckpoint();
+    expect(loaded?.phase).toBe("docs");
+  });
 });

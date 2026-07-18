@@ -113,3 +113,75 @@ describe("saveSettings", () => {
     expect(raw.providers.herman.enabled).toBe(true);
   });
 });
+
+describe("models.lastUsedModel", () => {
+  it("migrates a legacy defaultModel to lastUsedModel", async () => {
+    const { loadSettings } = await importSettings();
+    writeFileSync(
+      join(tempDir, "settings.json"),
+      JSON.stringify({
+        providers: { herman: { enabled: true } },
+        models: { defaultModel: "herman/kimi", hiddenModels: ["openai/gpt-4o"] },
+      }),
+    );
+
+    const settings = await loadSettings();
+
+    expect(settings.models.lastUsedModel).toBe("herman/kimi");
+    expect(settings.models.defaultModel).toBeUndefined();
+    expect(settings.models.hiddenModels).toEqual(["openai/gpt-4o"]);
+  });
+
+  it("prefers lastUsedModel when both fields exist", async () => {
+    const { loadSettings } = await importSettings();
+    writeFileSync(
+      join(tempDir, "settings.json"),
+      JSON.stringify({
+        providers: { herman: { enabled: true } },
+        models: { defaultModel: "herman/old", lastUsedModel: "herman/new" },
+      }),
+    );
+
+    const settings = await loadSettings();
+
+    expect(settings.models.lastUsedModel).toBe("herman/new");
+    expect(settings.models.defaultModel).toBeUndefined();
+  });
+});
+
+describe("updateSettings", () => {
+  it("read-modify-writes without clobbering unrelated fields", async () => {
+    const { saveSettings, updateSettings, loadSettings } = await importSettings();
+    await saveSettings({
+      providers: { herman: { enabled: true }, custom: {} },
+      models: { hiddenModels: ["openai/gpt-4o"] },
+      mode: "normal",
+    });
+
+    await updateSettings((current) => ({
+      ...current,
+      models: { ...current.models, lastUsedModel: "herman/kimi" },
+    }));
+
+    const settings = await loadSettings();
+    expect(settings.models.lastUsedModel).toBe("herman/kimi");
+    expect(settings.models.hiddenModels).toEqual(["openai/gpt-4o"]);
+    expect(settings.mode).toBe("normal");
+  });
+
+  it("supports clearing the last-used model", async () => {
+    const { saveSettings, updateSettings, loadSettings } = await importSettings();
+    await saveSettings({
+      providers: { herman: { enabled: true }, custom: {} },
+      models: { lastUsedModel: "herman/kimi" },
+    });
+
+    await updateSettings((current) => ({
+      ...current,
+      models: { ...current.models, lastUsedModel: undefined },
+    }));
+
+    const settings = await loadSettings();
+    expect(settings.models.lastUsedModel).toBeUndefined();
+  });
+});

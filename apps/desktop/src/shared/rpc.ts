@@ -22,6 +22,10 @@ import type {
 } from "./preview.js";
 import type { WizardAskEnvelope } from "./wizard-protocol.js";
 
+import type { ModelCatalogSnapshot, ModelMetadata } from "./model-selection.js";
+
+export type { ModelCatalogSnapshot, ModelMetadata } from "./model-selection.js";
+
 export type {
   PreviewFleetSnapshot,
   PreviewLogEvent,
@@ -41,7 +45,7 @@ export type WizardRecoveryPayload = {
   templateId?: string;
   description?: string;
   preferredModel?: string;
-  phase?: "planning" | "coding" | "qa";
+  phase?: "planning" | "coding" | "qa" | "docs";
   projectPath?: string;
   progressLines: string[];
   lastError?: string;
@@ -51,6 +55,16 @@ export type WizardRecoveryPayload = {
   pendingRequestId?: string;
   envelope?: WizardAskEnvelope;
   retryAttempt?: number;
+};
+
+/** One doc file from <project>/herman-docs/, for the Rookie docs browser. */
+export type ProjectDoc = {
+  /** File name inside herman-docs/ (e.g. "01-start-here.md"). */
+  fileName: string;
+  /** First H1 heading (fallback: humanized file name). */
+  title: string;
+  /** Raw markdown. */
+  content: string;
 };
 
 export type AuthMethodType = "oauth" | "apiKey";
@@ -131,7 +145,19 @@ export type DesktopSettings = {
     herman: HermanProviderSettings;
     custom: Record<string, ProviderSettings | undefined>;
   };
-  models: { defaultModel?: string; hiddenModels?: string[] };
+  models: {
+    /**
+     * @deprecated Migrated to `lastUsedModel` on load. Kept for
+     * back-compat with older settings files.
+     */
+    defaultModel?: string;
+    /**
+     * The last model the user explicitly selected in any tab. Seeds the
+     * model of fresh tabs. Written only by the main process.
+     */
+    lastUsedModel?: string;
+    hiddenModels?: string[];
+  };
   mode?: AppMode;
   settingsActiveTab?: "providers" | "models" | "general" | "skills";
   /** Transient error from the credential store; not persisted to disk. */
@@ -232,11 +258,6 @@ export type Usage = {
     cacheWrite: number;
     total: number;
   };
-};
-
-export type ModelMetadata = {
-  contextWindow: number;
-  maxTokens?: number;
 };
 
 export type Message =
@@ -417,6 +438,12 @@ export type OutgoingMessages = {
   adEvent: { tabId: TabId; placement: AdPlacement; campaign: AdCampaign };
   adVisibilityChanged: { focused: boolean; visible: boolean };
   activationComplete: Session;
+  /** Authoritative model catalog push (seeded on startup via getModelCatalog). */
+  modelCatalogChanged: ModelCatalogSnapshot;
+  /** A tab's desired model changed (user selection or agent reconciliation). */
+  tabModelChanged: { tabId: TabId; currentModel?: string };
+  /** Settings were mutated by the main process (e.g. lastUsedModel recorded). */
+  settingsChanged: DesktopSettings;
   /** Complete snapshot — renderer reduces one event atomically. */
   previewStatusChanged: PreviewServerSnapshot;
   previewLog: PreviewLogEvent;
@@ -635,18 +662,39 @@ export type HermanDesktopRPC = {
         params: undefined;
         response: ProviderMetadata[];
       };
-      refreshHermanModels: {
-        params: { tabId: TabId };
-        response: undefined;
+      /**
+       * Current model catalog (herman + custom), seeded from the disk cache
+       * at startup and refreshed from the server in the background.
+       */
+      getModelCatalog: {
+        params: undefined;
+        response: ModelCatalogSnapshot;
       };
       /**
-       * Read the Herman models cache file written by the agent extension
-       * (`herman-models-cache.json`). Used to seed the shared catalog when no
-       * tab agent has synced yet — not a live API client.
+       * Force a refresh of the Herman model list from the server. Never
+       * wipes the cached catalog on failure — safe to call offline.
        */
-      getHermanModelsCache: {
+      refreshModelCatalog: {
         params: undefined;
-        response: { models: string[] };
+        response: ModelCatalogSnapshot;
+      };
+      /**
+       * Select the model for a tab. Persists the selection for the session
+       * (survives restarts and agent crashes), records it as the global
+       * last-used model, and applies it to the agent — immediately when the
+       * agent's registry is ready, otherwise as soon as it becomes ready.
+       */
+      setTabModel: {
+        params: { tabId: TabId; modelId: string };
+        response: { ok: boolean; model?: string; applied: boolean; error?: string };
+      };
+      /**
+       * Record an explicit model selection not tied to a tab (e.g. the
+       * wizard's pre-start picker) as the global last-used model.
+       */
+      setLastUsedModel: {
+        params: { modelId: string };
+        response: undefined;
       };
       getGalleryTemplates: {
         params: undefined;
@@ -700,6 +748,10 @@ export type HermanDesktopRPC = {
       adoptWizardSession: {
         params: { projectPath: string; wizardSessionId: string };
         response: Tab;
+      };
+      getProjectDocs: {
+        params: { projectPath: string };
+        response: { docs: ProjectDoc[] };
       };
       getSessionChanges: {
         params: { tabId: TabId };

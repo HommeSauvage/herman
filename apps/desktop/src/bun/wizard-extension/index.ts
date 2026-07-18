@@ -12,7 +12,7 @@
  *
  *  - `herman_complete_planning` — signal that planning is done (plan MD written).
  *
- *  - `herman_complete_wizard` — signal that a coding or QA phase is finished
+ *  - `herman_complete_wizard` — signal that a coding, QA, or docs phase is finished
  *    and report the final project path. Informational; the host captures the
  *    args from the tool-execution event stream.
  *
@@ -235,7 +235,7 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 		name: "herman_wizard_ask",
 		label: "Ask Wizard Questions",
 		description:
-			`Ask the user a batch of structured onboarding questions (text, choice, or multi-select) and receive the answers immediately, with no extra model round-trip. Use this ONLY during wizard planning to collect any details you still need that are not already answered by the user's project description or the manifest. Ask via herman_wizard_ask before cloning; the project name is collected on your first call. Do not use this tool during coding or QA phases.`,
+			`Ask the user a batch of structured onboarding questions (text, choice, or multi-select) and receive the answers immediately, with no extra model round-trip. Use this ONLY during wizard planning to collect any details you still need that are not already answered by the user's project description or the manifest. Ask via herman_wizard_ask before cloning; the project name is collected on your first call. Do not use this tool during coding, QA, or docs phases.`,
 		promptSnippet: "Ask the user wizard onboarding questions and get their answers",
 		promptGuidelines: [
 			`Use herman_wizard_ask only during wizard planning whenever you need information from the user that you don't already have from their project description or the template manifest.`,
@@ -424,10 +424,10 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 		name: "herman_complete_wizard",
 		label: "Complete Wizard Phase",
 		description:
-			`Signal that the current wizard coding or QA phase is complete. Call this once at the end of the phase after all work is done. Reports the project directory path so Herman can continue. Do not call any other tools after this in the turn.`,
+			`Signal that the current wizard coding, QA, or docs phase is complete. Call this once at the end of the phase after all work is done. Reports the project directory path so Herman can continue. Do not call any other tools after this in the turn.`,
 		promptSnippet: "Report that the current wizard phase is finished and give the project path",
 		promptGuidelines: [
-			"Call herman_complete_wizard exactly once as the LAST tool call of the coding or QA phase.",
+			"Call herman_complete_wizard exactly once as the LAST tool call of the coding, QA, or docs phase.",
 			"projectPath must be the absolute path to the project directory.",
 			"Include a short summary of what was done (coding) or verified/fixed (QA).",
 		],

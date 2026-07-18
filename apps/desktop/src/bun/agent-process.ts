@@ -1,5 +1,6 @@
 import { PROTECTED_PROVIDER_KEY_SET } from "@herman/agent/protected-keys";
 import type { Subprocess } from "bun";
+import { existsSync } from "node:fs";
 import { getLogger } from "@logtape/logtape";
 
 import { AgentRpcClient } from "./agent-rpc.js";
@@ -9,6 +10,34 @@ import { waitForSubprocessExit } from "./subprocess-exit.js";
 const logger = getLogger(["herman-desktop", "agent-process"]);
 
 export type AgentProcessState = "idle" | "starting" | "running" | "stopped" | "crashed";
+
+/** Why a spawn attempt failed before (or while) the process was created. */
+export type AgentSpawnFailureReason = "binary-missing" | "cwd-missing" | "spawn-failed";
+
+/**
+ * Spawn failure with a machine-readable reason. `binary-missing` and
+ * `cwd-missing` are deterministic pre-flight failures — retrying the same
+ * spawn cannot fix them, so callers (e.g. the wizard) should fail fast
+ * instead of backing off. `spawn-failed` covers errors from posix_spawn
+ * itself and may be transient.
+ */
+export class AgentSpawnError extends Error {
+  readonly reason: AgentSpawnFailureReason;
+  readonly binaryPath: string;
+  readonly cwd: string;
+
+  constructor(
+    message: string,
+    reason: AgentSpawnFailureReason,
+    paths: { binaryPath: string; cwd: string },
+  ) {
+    super(message);
+    this.name = "AgentSpawnError";
+    this.reason = reason;
+    this.binaryPath = paths.binaryPath;
+    this.cwd = paths.cwd;
+  }
+}
 
 export type AgentProcessOptions = {
   binaryPath: string;
@@ -74,6 +103,30 @@ export class AgentProcess {
         if (value !== undefined) env[key] = value;
       }
     }
+
+    // Pre-flight validation. posix_spawn reports ENOENT against the binary
+    // path even when the missing component is actually the cwd, which makes
+    // spawn errors dangerously misleading — check both explicitly so the
+    // error names the real cause, and so callers can tell deterministic
+    // setup failures (don't retry) apart from transient ones.
+    const cwd = this.options.cwd ?? process.cwd();
+    if (!existsSync(this.options.binaryPath)) {
+      this.processState = "crashed";
+      throw new AgentSpawnError(
+        `Agent binary not found: ${this.options.binaryPath}`,
+        "binary-missing",
+        { binaryPath: this.options.binaryPath, cwd },
+      );
+    }
+    if (!existsSync(cwd)) {
+      this.processState = "crashed";
+      throw new AgentSpawnError(
+        `Agent working directory does not exist: ${cwd}`,
+        "cwd-missing",
+        { binaryPath: this.options.binaryPath, cwd },
+      );
+    }
+
     try {
       const spawnArgs = [this.options.binaryPath, "--mode", "rpc"];
       if (this.options.args) {
@@ -83,13 +136,15 @@ export class AgentProcess {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
-        cwd: this.options.cwd ?? process.cwd(),
+        cwd,
         env,
       });
     } catch (error) {
       this.processState = "crashed";
-      throw new Error(
+      throw new AgentSpawnError(
         `Failed to spawn agent process: ${error instanceof Error ? error.message : String(error)}`,
+        "spawn-failed",
+        { binaryPath: this.options.binaryPath, cwd },
       );
     }
 

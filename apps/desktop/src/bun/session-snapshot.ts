@@ -1,4 +1,5 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
 
 import type { ContextStats, Message } from "../shared/rpc.js";
 import type { TabId } from "../shared/tab-utils.js";
@@ -47,6 +48,51 @@ function buildContextStatsFromSessionFile(
 function piSessionDirFromFile(sessionFile: string): string {
   const idx = sessionFile.lastIndexOf("/");
   return idx >= 0 ? sessionFile.slice(0, idx) : sessionFile;
+}
+
+/**
+ * Last model used in a pi session, in canonical `provider/model` form.
+ * Scans the session JSONL for `model_change` entries and assistant message
+ * model markers. Used to restore a session's model when reopening it.
+ */
+export function readPiSessionModel(piSessionId?: string): string | undefined {
+  const sessionFile = resolvePiSessionFile(piSessionId);
+  if (!sessionFile) return undefined;
+  let raw: string;
+  try {
+    raw = readFileSync(sessionFile, "utf-8");
+  } catch {
+    return undefined;
+  }
+  let modelKey: string | undefined;
+  for (const line of raw.split("\n")) {
+    if (!line.includes("model")) continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (
+      entry.type === "model_change" &&
+      typeof entry.provider === "string" &&
+      typeof entry.modelId === "string"
+    ) {
+      modelKey = `${entry.provider}/${entry.modelId}`;
+      continue;
+    }
+    if (entry.type !== "message") continue;
+    const msg = entry.message as Record<string, unknown> | undefined;
+    if (
+      msg &&
+      msg.role === "assistant" &&
+      typeof msg.provider === "string" &&
+      typeof msg.model === "string"
+    ) {
+      modelKey = `${msg.provider}/${msg.model}`;
+    }
+  }
+  return modelKey;
 }
 
 type BranchEntry = {

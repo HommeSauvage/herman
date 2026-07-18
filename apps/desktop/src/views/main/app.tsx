@@ -3,7 +3,7 @@ import { getLogger } from "@logtape/logtape";
 import { useEffect, useState } from "react";
 import { Toaster } from "sonner";
 
-import type { PersistedSession, Session, SessionWorktree, Tab, TabId } from "../../shared/rpc.js";
+import type { DesktopSettings, ModelCatalogSnapshot, PersistedSession, Session, SessionWorktree, Tab, TabId } from "../../shared/rpc.js";
 import { ErrorBoundary } from "./components/error-boundary.js";
 import { LoginView } from "./components/login-view.js";
 import { ModeChoiceView } from "./components/mode-choice-view.js";
@@ -54,6 +54,12 @@ function AppContent() {
         ]);
         setSession(currentSession);
         setSettings(settings);
+        // Seed the shared model catalog from the main process (disk-cached,
+        // so it's instant even offline) before tabs restore.
+        const catalog = await desktopRpc.request.getModelCatalog().catch(() => undefined);
+        if (catalog) {
+          useAgentStore.getState().applyModelCatalog(catalog);
+        }
         const { tabs, activeTabId } = await desktopRpc.request.getTabs();
         const { projects, sessions } = await desktopRpc.request.getProjectsAndSessions();
         restoreTabs(tabs, activeTabId, projects, sessions);
@@ -174,6 +180,11 @@ function AppContent() {
     const onProjectsChanged = ({ projects }: { projects: string[] }) => setProjects(projects);
     const onSessionsChanged = ({ sessions }: { sessions: PersistedSession[] }) =>
       setSessions(sessions);
+    const onModelCatalogChanged = (snapshot: ModelCatalogSnapshot) =>
+      useAgentStore.getState().applyModelCatalog(snapshot);
+    const onTabModelChanged = ({ tabId, currentModel }: { tabId: TabId; currentModel?: string }) =>
+      useAgentStore.getState().updateTab(tabId, { currentModel });
+    const onSettingsChanged = (next: DesktopSettings) => setSettings(next);
     const onProjectOpened = ({
       folderPath,
       projectRoot,
@@ -194,6 +205,9 @@ function AppContent() {
     desktopRpc.addMessageListener("projectsChanged", onProjectsChanged);
     desktopRpc.addMessageListener("sessionsChanged", onSessionsChanged);
     desktopRpc.addMessageListener("projectOpened", onProjectOpened);
+    desktopRpc.addMessageListener("modelCatalogChanged", onModelCatalogChanged);
+    desktopRpc.addMessageListener("tabModelChanged", onTabModelChanged);
+    desktopRpc.addMessageListener("settingsChanged", onSettingsChanged);
 
     return () => {
       desktopRpc.removeMessageListener("sessionChanged", onSessionChanged);
@@ -207,6 +221,9 @@ function AppContent() {
       desktopRpc.removeMessageListener("projectsChanged", onProjectsChanged);
       desktopRpc.removeMessageListener("sessionsChanged", onSessionsChanged);
       desktopRpc.removeMessageListener("projectOpened", onProjectOpened);
+      desktopRpc.removeMessageListener("modelCatalogChanged", onModelCatalogChanged);
+      desktopRpc.removeMessageListener("tabModelChanged", onTabModelChanged);
+      desktopRpc.removeMessageListener("settingsChanged", onSettingsChanged);
     };
   }, [
     setSession,

@@ -122,6 +122,39 @@ async function createProcess(state: "idle" | "running" = "running", sub?: PipedS
 // Tests
 // --------------------------------------------------------------------------
 
+describe("AgentProcess.start pre-flight validation", () => {
+  it("fails with binary-missing when the agent binary does not exist", async () => {
+    const { AgentProcess, AgentSpawnError } = await import("../../src/bun/agent-process.js");
+    const proc = new AgentProcess({ binaryPath: "/nonexistent/herman-agent-xyz" });
+
+    const error = await proc.start().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AgentSpawnError);
+    expect((error as InstanceType<typeof AgentSpawnError>).reason).toBe("binary-missing");
+    expect((error as Error).message).toContain("/nonexistent/herman-agent-xyz");
+    expect(proc.state).toBe("crashed");
+  });
+
+  it("fails with cwd-missing when the working directory does not exist", async () => {
+    const { AgentProcess, AgentSpawnError } = await import("../../src/bun/agent-process.js");
+    // process.execPath exists, so the binary check passes and the cwd check fires.
+    const proc = new AgentProcess({
+      binaryPath: process.execPath,
+      cwd: "/nonexistent/herman-cwd-xyz",
+    });
+
+    const error = await proc.start().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(AgentSpawnError);
+    expect((error as InstanceType<typeof AgentSpawnError>).reason).toBe("cwd-missing");
+    // The message must name the real cause (the cwd), not blame the binary
+    // the way posix_spawn's ENOENT does.
+    expect((error as Error).message).toContain("/nonexistent/herman-cwd-xyz");
+    expect((error as Error).message).not.toContain("posix_spawn");
+    expect(proc.state).toBe("crashed");
+  });
+});
+
 describe("AgentProcess.stop", () => {
   it("is a no-op when not running", async () => {
     const proc = await createProcess("idle");

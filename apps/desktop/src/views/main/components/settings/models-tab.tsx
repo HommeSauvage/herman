@@ -5,16 +5,15 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
 
-import { refreshHermanModels } from "../../lib/agent-actions.js";
-import { isTabAgentRunning, useAgentStore } from "../../lib/agent-store.js";
+import { refreshModelCatalog } from "../../lib/agent-actions.js";
+import { useAgentStore } from "../../lib/agent-store.js";
 import { desktopRpc } from "../../lib/desktop-rpc.js";
 
 export function ModelsTab() {
   const settings = useAgentStore((s) => s.settings);
   const setSettings = useAgentStore((s) => s.setSettings);
-  const activeTabId = useAgentStore((s) => s.activeTabId);
 
-  // Shared catalog — same source as the ModelSelector (fed by models_sync).
+  // Shared catalog — same source as the ModelSelector (main-process owned).
   const allModels = useAgentStore(
     useShallow((s) =>
       [...s.modelCatalog.availableModels]
@@ -30,32 +29,31 @@ export function ModelsTab() {
     ),
   );
 
-  const [defaultModel, setDefaultModel] = useState(settings.models.defaultModel ?? "");
+  const [lastUsedModel, setLastUsedModel] = useState(settings.models.lastUsedModel ?? "");
+
+  // Keep the local select state in sync when the main process records a new
+  // last-used model (e.g. after picking one in the model selector).
+  useEffect(() => {
+    setLastUsedModel(settings.models.lastUsedModel ?? "");
+  }, [settings.models.lastUsedModel]);
 
   const hiddenModels = settings.models.hiddenModels ?? [];
 
   useEffect(() => {
-    // Silently refresh Herman models each time the Models settings tab is
+    // Silently refresh the catalog each time the Models settings tab is
     // opened, so the list stays current even if the server was down earlier.
-    if (activeTabId && settings.providers.herman.enabled && isTabAgentRunning(activeTabId)) {
-      void refreshHermanModels(activeTabId);
+    if (settings.providers.herman.enabled) {
+      void refreshModelCatalog();
     }
-  }, [activeTabId, settings.providers.herman.enabled]);
+  }, [settings.providers.herman.enabled]);
 
-  async function saveDefaultModel(modelId: string) {
-    const prevDefault = defaultModel;
-    const prevSettings = settings;
-    setDefaultModel(modelId);
-    const next = {
-      ...settings,
-      models: { ...settings.models, defaultModel: modelId || undefined },
-    };
-    setSettings(next);
+  async function saveLastUsedModel(modelId: string) {
+    setLastUsedModel(modelId);
     try {
-      await desktopRpc.request.saveSettings({ settings: next });
+      // Main-process owned: persists and broadcasts settingsChanged.
+      await desktopRpc.request.setLastUsedModel({ modelId });
     } catch {
-      setDefaultModel(prevDefault);
-      setSettings(prevSettings);
+      setLastUsedModel(settings.models.lastUsedModel ?? "");
       toast.error("Failed to save default model.");
     }
   }
@@ -107,11 +105,14 @@ export function ModelsTab() {
               Default Model
             </h2>
             <select
-              value={defaultModel}
-              onChange={(e) => void saveDefaultModel(e.target.value)}
+              value={lastUsedModel}
+              onChange={(e) => void saveLastUsedModel(e.target.value)}
               className="bg-surface text-text w-full max-w-xs rounded-lg border border-white/[0.06] px-3 py-2 text-sm focus:ring-1 focus:ring-white/10 focus:outline-none"
             >
               <option value="">None (use agent default)</option>
+              {lastUsedModel && !allModels.split("\x00").includes(lastUsedModel) && (
+                <option value={lastUsedModel}>{lastUsedModel} (unavailable)</option>
+              )}
               {allModels
                 .split("\x00")
                 .filter(Boolean)
@@ -122,7 +123,7 @@ export function ModelsTab() {
                 ))}
             </select>
             <p className="text-ghost mt-1.5 text-xs">
-              The default model is used when starting new conversations.
+              The last model you selected is used when starting new conversations.
             </p>
           </section>
 

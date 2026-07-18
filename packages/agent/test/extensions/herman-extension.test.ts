@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
@@ -440,5 +440,166 @@ describe("hermanExtension", () => {
         "herman/kimi-k2.7-code": { contextWindow: 128000, maxTokens: 8192 },
       },
     });
+  });
+
+  // ── Cache-first startup (shared desktop catalog) ─────────────────────────
+
+  async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
+    const start = Date.now();
+    while (!condition()) {
+      if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+
+  function writeSharedCatalog(models: { id: string; name?: string }[], custom: Record<string, string[]> = {}) {
+    writeFileSync(
+      join(cacheDir, "model-catalog.json"),
+      JSON.stringify({
+        version: 1,
+        serverUrl: "http://localhost:4000",
+        fetchedAt: "2024-01-01T00:00:00.000Z",
+        herman: models,
+        custom,
+      }),
+    );
+  }
+
+  it("registers instantly from the shared catalog and refreshes in the background", async () => {
+    writeSharedCatalog([{ id: "cached-model", name: "Cached" }], { openai: ["gpt-4o"] });
+
+    // Background refresh stays pending until we resolve it manually.
+    let resolveFetch: ((value: unknown) => void) | undefined;
+    globalThis.fetch = vi.fn().mockImplementation(
+      () => new Promise((resolve) => { resolveFetch = resolve; }),
+    ) as unknown as typeof fetch;
+
+    const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
+    const { mockApi } = createMockApi();
+    await hermanExtension(mockApi as never);
+
+    // Registration happened synchronously from the cache — no network wait.
+    expect(mockApi._registered).toHaveLength(1);
+    expect(mockApi._registered[0].config.models?.map((m) => m.id)).toEqual(["cached-model"]);
+
+    // Let the background refresh land with a fresh list.
+    resolveFetch!({
+      ok: true,
+      status: 200,
+      json: async () => ({ models: [{ id: "fresh-model", name: "Fresh" }] }),
+      text: async () => "",
+    });
+    await waitFor(() => mockApi._registered.length > 1);
+
+    const last = mockApi._registered[mockApi._registered.length - 1];
+    expect(last.config.models?.map((m) => m.id)).toEqual(["fresh-model"]);
+
+    // The shared catalog file got the fresh herman list; the desktop-owned
+    // custom section was preserved.
+    const file = JSON.parse(readFileSync(join(cacheDir, "model-catalog.json"), "utf-8"));
+    expect(file.herman.map((m: { id: string }) => m.id)).toEqual(["fresh-model"]);
+    expect(file.custom).toEqual({ openai: ["gpt-4o"] });
+  });
+
+  it("keeps the cached registration and disk cache when the background refresh fails", async () => {
+    writeSharedCatalog([{ id: "cached-model", name: "Cached" }]);
+    const before = readFileSync(join(cacheDir, "model-catalog.json"), "utf-8");
+
+    globalThis.fetch = mockFetch([], false) as unknown as typeof fetch;
+    const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
+    const { mockApi } = createMockApi();
+    await hermanExtension(mockApi as never);
+
+    // Let the background refresh settle (it fails silently).
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    // No re-registration, cached models still active, cache file untouched.
+    expect(mockApi._registered).toHaveLength(1);
+    expect(mockApi._registered[0].config.models?.[0].id).toBe("cached-model");
+    expect(readFileSync(join(cacheDir, "model-catalog.json"), "utf-8")).toBe(before);
+  });
+
+  it("pushes a fresh models_sync after session_start when the background refresh lands", async () => {
+    writeSharedCatalog([{ id: "cached-model", name: "Cached" }]);
+
+    let resolveFetch: ((value: unknown) => void) | undefined;
+    globalThis.fetch = vi.fn().mockImplementation((url: unknown) => {
+      // Ad fetches resolve immediately; the models fetch stays pending until
+      // we resolve it manually below.
+      if (String(url).includes("/api/ads/")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+          text: async () => "",
+        });
+      }
+      return new Promise((resolve) => { resolveFetch = resolve; });
+    }) as unknown as typeof fetch;
+
+    const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
+    const { mockApi, mockUi } = createMockApi();
+    await hermanExtension(mockApi as never);
+
+    const ctx = {
+      model: { id: "cached-model", provider: "herman" },
+      ui: mockUi,
+      modelRegistry: {
+        find: vi.fn(),
+        // Simulate pi's registry following (re)registration.
+        getAvailable: () => {
+          const last = mockApi._registered[mockApi._registered.length - 1];
+          return (last?.config.models ?? []).map((m) => ({ id: m.id, provider: "herman" }));
+        },
+      },
+    };
+    const handlers = mockApi._handlers.get("session_start") ?? [];
+    await handlers[0]({}, ctx);
+
+    // Now the background refresh completes with a new model list.
+    resolveFetch!({
+      ok: true,
+      status: 200,
+      json: async () => ({ models: [{ id: "fresh-model", name: "Fresh" }] }),
+      text: async () => "",
+    });
+    await waitFor(() =>
+      mockApi._notifications
+        .filter((n): n is string => typeof n === "string")
+        .map((n) => JSON.parse(n) as { type?: string; models?: string[] })
+        .some((n) => n.type === "models_sync" && n.models?.includes("herman/fresh-model")),
+    );
+  });
+
+  it("migrates the legacy cache on read and removes it after a successful refresh", async () => {
+    const legacyPath = join(cacheDir, "herman-models-cache.json");
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({
+        serverUrl: "http://localhost:4000",
+        fetchedAt: "2024-01-01T00:00:00.000Z",
+        models: [{ id: "legacy-model", name: "Legacy" }],
+      }),
+    );
+
+    globalThis.fetch = mockFetch([{ id: "fresh-model", name: "Fresh" }]) as unknown as typeof fetch;
+    const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
+    const { mockApi } = createMockApi();
+    await hermanExtension(mockApi as never);
+
+    // Instant registration from the legacy cache.
+    expect(mockApi._registered[0].config.models?.[0].id).toBe("legacy-model");
+
+    // Background refresh writes the new catalog file and removes the legacy one.
+    await waitFor(() => mockApi._registered.length > 1);
+    await waitFor(() => {
+      try {
+        readFileSync(join(cacheDir, "model-catalog.json"), "utf-8");
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    expect(() => readFileSync(legacyPath, "utf-8")).toThrow();
   });
 });

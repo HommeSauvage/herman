@@ -8,7 +8,7 @@ import { writeFileAtomically } from "./fs-utils.js";
 
 const logger = getLogger(["herman-desktop", "wizard-checkpoint"]);
 
-export type WizardCheckpointPhase = "planning" | "coding" | "qa";
+export type WizardCheckpointPhase = "planning" | "coding" | "qa" | "docs";
 
 /** Disk snapshot of an incomplete wizard so cold start / crash can offer Continue. */
 export type WizardCheckpoint = {
@@ -83,7 +83,7 @@ export function evaluateWizardCheckpoint(checkpoint: WizardCheckpoint): {
   if (!checkpoint.capturedPiSessionId) {
     return { resumable: false, reason: "Missing pi session id" };
   }
-  if (checkpoint.phase === "coding" || checkpoint.phase === "qa") {
+  if (checkpoint.phase === "coding" || checkpoint.phase === "qa" || checkpoint.phase === "docs") {
     if (!checkpoint.projectPath) {
       return { resumable: false, reason: "Missing project path" };
     }
@@ -101,7 +101,7 @@ function isWizardCheckpoint(value: unknown): value is WizardCheckpoint {
     typeof c.id === "string" &&
     typeof c.templateId === "string" &&
     typeof c.description === "string" &&
-    (c.phase === "planning" || c.phase === "coding" || c.phase === "qa") &&
+    (c.phase === "planning" || c.phase === "coding" || c.phase === "qa" || c.phase === "docs") &&
     typeof c.updatedAt === "number"
   );
 }

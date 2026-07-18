@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
 import { getLogger } from "@logtape/logtape";
 import { BrowserView, Utils } from "electrobun/bun";
+import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
 
 import type { AgentCommand, AgentEvent, AgentResponse } from "../shared/agent-protocol.js";
 import {
@@ -11,7 +13,13 @@ import {
   isAgentEndCurrent,
   syncMessageCounter,
 } from "../shared/apply-agent-event.js";
-import type { AgentStatus, ContextStats, Message, SessionWorktree, Tab, TabId, TabMessagesHydrated, TabMessageHydrationStatus } from "../shared/rpc.js";
+import type { AgentStatus, ContextStats, Message, ModelMetadata, SessionWorktree, Tab, TabId, TabMessagesHydrated, TabMessageHydrationStatus } from "../shared/rpc.js";
+import {
+  modelApplyFingerprint,
+  normalizeModelId,
+  parseModelRef,
+  shouldApplyDesiredModel,
+} from "../shared/model-selection.js";
 import {
   createTabId,
   getProjectColor,
@@ -25,7 +33,7 @@ import { deleteComposerDraft, loadComposerDraft, saveComposerDraft } from "./com
 import {
   extractMessagesFromAgentPayload,
 } from "./pi-messages.js";
-import { contextStatsFromContextReport } from "./session-snapshot.js";
+import { contextStatsFromContextReport, readPiSessionModel as readPiSessionModelFromFile } from "./session-snapshot.js";
 import { stopDevServer } from "./preview-server.js";
 import { rewindManager, getUserMessageIds, readPiSessionId, RevertConflictError } from "./rewind-manager.js";
 import { deleteTabHistory, saveTabHistory } from "./tab-history.js";
@@ -40,7 +48,6 @@ import {
   resolveProjectRoot,
 } from "./worktree.js";
 import { TabSessionStore } from "./tab-session-store.js";
-import { loadSettings } from "./settings.js";
 import { loadWindowState, saveWindowState, type PersistedSession } from "./window-state.js";
 import { isGitRepo } from "./rewind-core.js";
 
@@ -64,6 +71,8 @@ const COMPOSER_DRAFT_SAVE_DEBOUNCE_MS = 1000;
 const BACKGROUND_SYNC_READY_ATTEMPTS = 4;
 const BACKGROUND_SYNC_RETRY_MS = 100;
 const SESSION_SYNC_TIMEOUT_MS = 180_000;
+/** Max set_model attempts per (desired model, registry snapshot) pair. */
+const MAX_MODEL_APPLY_ATTEMPTS = 3;
 
 export type MessageHydrationResult = {
   status: TabMessageHydrationStatus;
@@ -87,6 +96,7 @@ export type WebviewSender = {
     tabFolderChanged: (payload: { tabId: TabId; folderPath?: string; projectRoot?: string; worktree?: SessionWorktree; worktreeStatus?: "pending" | "ready" | "error"; error?: string }) => void;
     sessionsChanged: (payload: { sessions: PersistedSession[] }) => void;
     tabMessagesHydrated: (payload: TabMessagesHydrated) => void;
+    tabModelChanged: (payload: { tabId: TabId; currentModel?: string }) => void;
   };
 };
 
@@ -96,6 +106,12 @@ export type AgentProcessManagerOptions = {
   getToken: () => Promise<string | undefined>;
   getHermanEnabled: () => boolean;
   getMode: () => "rookie" | "normal" | undefined;
+  /** Initial model for fresh tabs (validated against the catalog by the caller). */
+  getNewTabModel?: () => string | undefined;
+  /** Called when the user explicitly selects a model in a tab (records last-used). */
+  onExplicitModelSelection?: (modelId: string) => void;
+  /** Called with every agent models_sync so the shared catalog can merge custom providers. */
+  onAgentModelsSync?: (models: string[], metadata?: Record<string, ModelMetadata>) => void;
 };
 
 export class AgentProcessManager {
@@ -109,7 +125,14 @@ export class AgentProcessManager {
   private getToken: () => Promise<string | undefined>;
   private getHermanEnabled: () => boolean;
   private getMode: () => "rookie" | "normal" | undefined;
+  private getNewTabModel?: () => string | undefined;
+  private onExplicitModelSelection?: (modelId: string) => void;
+  private onAgentModelsSync?: (models: string[], metadata?: Record<string, ModelMetadata>) => void;
   private serverUrl: string;
+  /** set_model retry budget per tab, scoped by (desired model, registry snapshot). */
+  private modelApplyAttempts = new Map<TabId, { fingerprint: string; attempts: number }>();
+  /** Last model each agent confirmed via models_sync (or a successful set_model). */
+  private agentConfirmedModels = new Map<TabId, string>();
 
   constructor(options: AgentProcessManagerOptions) {
     this.webviewRpc = options.webviewRpc;
@@ -117,6 +140,9 @@ export class AgentProcessManager {
     this.getToken = options.getToken;
     this.getHermanEnabled = options.getHermanEnabled;
     this.getMode = options.getMode;
+    this.getNewTabModel = options.getNewTabModel;
+    this.onExplicitModelSelection = options.onExplicitModelSelection;
+    this.onAgentModelsSync = options.onAgentModelsSync;
     this.agentRuntime = new AgentRuntime((tabId) => this.ensureAgentForTab(tabId));
   }
 
@@ -191,9 +217,24 @@ export class AgentProcessManager {
         const tab = this.materializeTabFromHydration(persisted, instant, composerValue);
         syncMessageCounter([tab.messages]);
         this.store.tabs.set(tabId, tab);
-        if (tab.folderPath) {
+        if (!tab.folderPath) continue;
+        if (existsSync(tab.folderPath)) {
           agentTabIds.push(tabId);
+          continue;
         }
+        // The project folder was moved or deleted while the app was closed.
+        // Spawning with a missing cwd fails with a misleading posix_spawn
+        // ENOENT against the binary path — skip the spawn and surface the
+        // tab with a clear, actionable error instead.
+        logger.warning("Restored tab project folder no longer exists; skipping agent start", {
+          tabId,
+          folderPath: tab.folderPath,
+        });
+        // Ephemeral, in-memory only — re-evaluated on every restore.
+        this.store.tabs.set(tabId, {
+          ...tab,
+          connectionError: `The project folder for this session no longer exists: ${tab.folderPath}`,
+        });
       }
 
       this.agentRuntime.scheduleMany(agentTabIds);
@@ -226,13 +267,12 @@ export class AgentProcessManager {
 
   async createTab(folderPath?: string, title?: string): Promise<Tab> {
     const state = await loadWindowState();
-    const settings = await loadSettings();
     const lastFolder = state.lastFolderPath;
     const inheritedTab = this.store.activeTabId
       ? this.store.tabs.get(this.store.activeTabId)
       : undefined;
     const rawPath = folderPath ?? inheritedTab?.folderPath ?? lastFolder ?? "";
-    const tab = this.makeTab(rawPath, title, settings.models.defaultModel);
+    const tab = this.makeTab(rawPath, title, this.newTabModel());
     const mode = this.getMode();
     const projectRoot = rawPath ? await resolveProjectRoot(rawPath) : "";
     if (projectRoot) {
@@ -263,8 +303,7 @@ export class AgentProcessManager {
    */
   async adoptWizardSession(projectPath: string, wizardSessionId: string): Promise<Tab> {
     const projectRoot = await resolveProjectRoot(projectPath);
-    const settings = await loadSettings();
-    const tab = this.makeTab(projectRoot, undefined, settings.models.defaultModel);
+    const tab = this.makeTab(projectRoot, undefined, this.newTabModel());
     tab.projectRoot = projectRoot;
     tab.folderPath = projectRoot;
     tab.projectColor = getProjectColor(projectRoot);
@@ -334,8 +373,10 @@ export class AgentProcessManager {
    */
   async openPiSession(folderPath: string, piSessionId: string): Promise<Tab> {
     const projectRoot = await resolveProjectRoot(folderPath);
-    const settings = await loadSettings();
-    const tab = this.makeTab(projectRoot, undefined, settings.models.defaultModel);
+    // Prefer the model the pi session was actually using (from its JSONL) over
+    // the generic new-tab model — reopening a session should keep its model.
+    const sessionModel = this.readPiSessionModel(piSessionId);
+    const tab = this.makeTab(projectRoot, undefined, sessionModel ?? this.newTabModel());
     tab.projectRoot = projectRoot;
     tab.projectColor = getProjectColor(projectRoot);
     tab.title = getProjectName(projectRoot);
@@ -703,9 +744,9 @@ export class AgentProcessManager {
 
     const bridge = this.bridges.get(tabId);
     if (bridge) {
+      // The restarted agent re-applies the tab's model via its first models_sync.
+      this.resetModelStateForFreshAgent(tabId);
       await bridge.restart(tab.folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
-      // The agent restarted fresh — re-apply the tab's model preference.
-      await this.applyTabModelToAgent(tabId).catch(() => undefined);
     } else {
       await this.startBridge(tabId, tab.folderPath);
     }
@@ -936,16 +977,17 @@ export class AgentProcessManager {
     );
     this.bridges.set(tabId, bridge);
     try {
+      // A fresh agent process has an empty registry and the extension default
+      // model. Clear stale registry state so the tab's desired model is only
+      // applied once the new agent advertises its list (models_sync).
+      this.resetModelStateForFreshAgent(tabId);
+
       await bridge.start(folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
       await this.capturePiSessionId(tabId);
       // Enable pi's built-in auto-retry. Transient API errors (proxied
       // through the Herman server) are handled inside the agent with
       // exponential backoff, without a process restart.
       await bridge.sendCommand({ type: "set_auto_retry", enabled: true }).catch(() => undefined);
-
-      // If this tab has a preferred model (from settings or a restored
-      // session), tell the agent to switch to it now.
-      await this.applyTabModelToAgent(tabId).catch(() => undefined);
     } catch (error) {
       const stderr = error instanceof Error ? error.message : String(error);
       this.webviewRpc.send.agentStatusChanged({ tabId, state: "crashed", stderr });
@@ -953,20 +995,144 @@ export class AgentProcessManager {
   }
 
   /**
-   * Send a set_model command to the agent bridge for this tab if it has a
-   * preferred model.  No-op when the tab has no currentModel or no bridge.
+   * Reset per-tab model bookkeeping for a freshly (re)started agent process:
+   * retry budget, confirmed model, and the stale registry snapshot. The
+   * desired model (tab.currentModel) is untouched — it is re-applied when the
+   * new agent advertises its registry via models_sync.
    */
-  private async applyTabModelToAgent(tabId: TabId): Promise<void> {
+  private resetModelStateForFreshAgent(tabId: TabId): void {
+    this.modelApplyAttempts.delete(tabId);
+    this.agentConfirmedModels.delete(tabId);
     const tab = this.store.tabs.get(tabId);
-    if (!tab?.currentModel) return;
+    if (tab && tab.availableModels.length > 0) {
+      this.store.tabs.set(tabId, { ...tab, availableModels: [] });
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Model selection
+  // ---------------------------------------------------------------------
+
+  /**
+   * Select the model for a tab — the single entry point used by the UI.
+   *
+   * The selection is persisted with the session immediately (so it survives
+   * restarts regardless of agent state) and applied to the agent when
+   * possible; otherwise the apply happens as soon as the agent's registry
+   * advertises the model (models_sync). Explicit selections are also recorded
+   * as the global last-used model.
+   */
+  async setTabModel(
+    tabId: TabId,
+    modelId: string,
+    opts?: { explicit?: boolean },
+  ): Promise<{ ok: boolean; model?: string; applied: boolean; error?: string }> {
+    const tab = this.store.tabs.get(tabId);
+    if (!tab) return { ok: false, applied: false, error: "Tab not found" };
+
+    const normalized = normalizeModelId(modelId);
+    if (!normalized) return { ok: false, applied: false, error: "Invalid model id" };
+
+    if (tab.currentModel !== normalized) {
+      this.store.tabs.set(tabId, this.patchTab(tab, { currentModel: normalized }));
+      this.modelApplyAttempts.delete(tabId);
+      this.webviewRpc.send.tabModelChanged({ tabId, currentModel: normalized });
+      await this.persist();
+    }
+
+    if (opts?.explicit) {
+      this.onExplicitModelSelection?.(normalized);
+    }
+
+    const applied = await this.applyDesiredModel(tabId);
+    return { ok: true, model: normalized, applied };
+  }
+
+  /**
+   * Best-effort apply of the tab's desired model to its agent. Returns true
+   * when the agent accepted the model. No-ops when there is nothing to do:
+   * no desired model, no running bridge, or the desired model is not (yet)
+   * in the agent registry's advertised list.
+   *
+   * Retries are bounded per (desired model, registry snapshot) fingerprint —
+   * a new models_sync with a different list re-opens the budget, so a model
+   * that appears later is applied without any polling.
+   */
+  private async applyDesiredModel(tabId: TabId): Promise<boolean> {
+    const tab = this.store.tabs.get(tabId);
+    const desired = normalizeModelId(tab?.currentModel);
+    if (!tab || !desired) return false;
 
     const bridge = this.bridges.get(tabId);
-    if (!bridge) return;
+    if (!bridge || bridge.getState() !== "running") return false;
 
-    const slashIdx = tab.currentModel.indexOf("/");
-    const provider = slashIdx > 0 ? tab.currentModel.slice(0, slashIdx) : "herman";
-    const modelId = slashIdx > 0 ? tab.currentModel.slice(slashIdx + 1) : tab.currentModel;
-    await bridge.sendCommand({ type: "set_model", provider, modelId });
+    // The agent already has the desired model — nothing to do.
+    if (this.agentConfirmedModels.get(tabId) === desired) return false;
+
+    // Apply only once the agent's registry advertises the model (models_sync
+    // is the registry-ready signal). A model that is not (yet) listed is left
+    // alone — it may appear on the next refresh.
+    if (!shouldApplyDesiredModel({ desired, available: tab.availableModels })) {
+      return false;
+    }
+
+    if (!this.consumeModelApplyAttempt(tabId, desired, tab.availableModels)) return false;
+
+    const ref = parseModelRef(desired);
+    if (!ref) return false;
+    try {
+      const response = await bridge.sendCommand({
+        type: "set_model",
+        provider: ref.provider,
+        modelId: ref.modelId,
+      });
+      if (!response.success) {
+        throw new Error(response.error ?? "set_model rejected");
+      }
+      this.agentConfirmedModels.set(tabId, desired);
+      logger.debug("Applied tab model to agent", { tabId, model: desired });
+      return true;
+    } catch (error) {
+      logger.warning("Failed to apply tab model; will retry on next models sync", {
+        tabId,
+        model: desired,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  private consumeModelApplyAttempt(tabId: TabId, desired: string, available: string[]): boolean {
+    const fingerprint = modelApplyFingerprint(desired, available);
+    const entry = this.modelApplyAttempts.get(tabId);
+    if (entry && entry.fingerprint === fingerprint) {
+      if (entry.attempts >= MAX_MODEL_APPLY_ATTEMPTS) return false;
+      entry.attempts += 1;
+      return true;
+    }
+    this.modelApplyAttempts.set(tabId, { fingerprint, attempts: 1 });
+    return true;
+  }
+
+  /** Initial model for fresh tabs (validated against the catalog by the caller). */
+  private newTabModel(): string | undefined {
+    return this.getNewTabModel?.();
+  }
+
+  /** Last model used by a pi session (from its JSONL), if any. */
+  private readPiSessionModel(piSessionId?: string): string | undefined {
+    try {
+      return normalizeModelId(readPiSessionModelFromFile(piSessionId));
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Ask every running agent to re-sync its model list from the server. */
+  refreshAgentModels(): void {
+    for (const bridge of this.bridges.values()) {
+      bridge.sendRaw({ type: "prompt", message: HERMAN_REFRESH_MODELS_MESSAGE });
+    }
   }
 
   private makeTab(folderPath: string, title?: string, currentModel?: string): Tab {
@@ -1049,6 +1215,16 @@ export class AgentProcessManager {
     if (event.type === "herman/models_sync" || event.type === "models_sync") {
       patch.availableModels = event.models;
       patch.currentModel = tab.currentModel ?? event.currentModel;
+
+      // Merge custom-provider models into the shared catalog.
+      this.onAgentModelsSync?.(event.models, event.modelMetadata);
+
+      // Remember what the agent actually has selected so the apply machinery
+      // doesn't re-send set_model for a model the agent already uses.
+      const confirmed = normalizeModelId(event.currentModel);
+      if (confirmed) {
+        this.agentConfirmedModels.set(tabId, confirmed);
+      }
     }
 
     if (event.type === "herman/context_report") {
@@ -1062,6 +1238,12 @@ export class AgentProcessManager {
     }
 
     this.store.tabs.set(tabId, this.patchTab(tab, patch));
+
+    // models_sync signals a populated agent registry — (re)apply the tab's
+    // desired model when the agent doesn't have it yet.
+    if (event.type === "herman/models_sync" || event.type === "models_sync") {
+      void this.applyDesiredModel(tabId);
+    }
   }
 
   private async generateTitle(tabId: TabId, userMessage: string) {
@@ -1207,6 +1389,19 @@ export class AgentProcessManager {
     const patch: Partial<Tab> = {};
     if (instant.contextStats) {
       patch.contextStats = instant.contextStats;
+    }
+    // Older sessions predate persisted.currentModel — recover the model the
+    // session was actually using from the pi JSONL stats so reopening keeps
+    // the session's model instead of falling back to the agent default.
+    if (!persisted.currentModel && instant.contextStats?.providerId && instant.contextStats?.modelId) {
+      const recovered = normalizeModelId(
+        `${instant.contextStats.providerId}/${instant.contextStats.modelId}`,
+      );
+      if (recovered) {
+        patch.currentModel = recovered;
+        // Persist the recovered model with the session right away.
+        this.store.sessions.set(persisted.id, { ...persisted, currentModel: recovered });
+      }
     }
     const updated = Object.keys(patch).length > 0 ? { ...tab, ...patch } : tab;
     this.hydrationResults.set(persisted.id, {

@@ -2,14 +2,16 @@ import { getLogger } from "@logtape/logtape";
 import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import type { AgentEvent, WizardSessionEvent } from "../shared/agent-protocol.js";
 import { tryParseWizardRequest } from "../shared/agent-protocol.js";
+import { parseModelRef, normalizeModelId } from "../shared/model-selection.js";
 import { encodeWizardAnswers } from "../shared/wizard-protocol.js";
 import type { DevServer, ResolvedManifest } from "../shared/herman-manifest.js";
 import { normalizeExportUrlAs } from "../shared/herman-manifest.js";
 import { AgentBridge, type AgentBridgeState } from "./agent-bridge.js";
+import { AgentSpawnError } from "./agent-process.js";
 import { resolveWizardExtensionPath } from "./agent-config-sync.js";
 import { resolveTemplateManifest } from "./template-registry.js";
 import type { WizardAskEnvelope } from "../shared/wizard-protocol.js";
@@ -20,6 +22,7 @@ import {
   saveWizardCheckpoint,
   type WizardCheckpoint,
 } from "./wizard-checkpoint.js";
+import { seedStaticRookieDocs, validateDocsOutputs } from "./rookie-docs.js";
 const logger = getLogger(["herman-desktop", "wizard-session"]);
 
 /** Plan file written by the planning session; coding/QA sessions consume it. */
@@ -36,6 +39,7 @@ export const WIZARD_RESUME_GOAL_PROMPT = "/goal resume";
 
 export const CODING_TOKEN_BUDGET = '300k';
 export const QA_TOKEN_BUDGET = '200k';
+export const DOCS_TOKEN_BUDGET = '200k';
 
 // ── Retry constants ──────────────────────────────────────────────────────────
 
@@ -46,7 +50,7 @@ const BASE_DELAY_MS = 2_000;
 /** Cap on retry delay so the total span stays near 5 minutes with 20 retries. */
 const MAX_DELAY_MS = 15_000;
 
-export type WizardPhase = "planning" | "coding" | "qa";
+export type WizardPhase = "planning" | "coding" | "qa" | "docs";
 
 /** Default parent directory for user projects (matches create-project.ts). */
 function projectsDir(): string {
@@ -64,14 +68,15 @@ function delay(ms: number): Promise<void> {
 
 /** Split a "provider/modelId" string for the agent set_model command. */
 export function parseWizardModelRef(modelId: string): { provider: string; modelId: string } {
-  const slash = modelId.indexOf("/");
-  if (slash <= 0) return { provider: "herman", modelId };
-  return { provider: modelId.slice(0, slash), modelId: modelId.slice(slash + 1) };
+  // Delegate to the shared canonical parser; bare ids map to herman.
+  return parseModelRef(modelId) ?? { provider: "herman", modelId };
 }
 
 export type WizardSessionOptions = {
   /** Emit a wizard event to the renderer over the dedicated wizard channel. */
   emit: (event: WizardSessionEvent) => void;
+  /** Forward agent models_sync lists so the shared catalog can merge them. */
+  onAgentModelsSync?: (models: string[]) => void;
 };
 
 /**
@@ -218,6 +223,7 @@ export class WizardSession {
     await mkdir(projectsDir(), { recursive: true });
 
     this.phase = "planning";
+    this.emit({ type: "wizard_phase", wizardSessionId: this.id, phase: this.phase });
     await this.persistCheckpoint();
     await this.startPhaseAttempt();
 
@@ -244,8 +250,8 @@ export class WizardSession {
     if (!this.manifest) {
       this.manifest = await resolveTemplateManifest(this.templateId);
     }
-    if ((this.phase === "coding" || this.phase === "qa") && !this.projectPath) {
-      throw new Error("Cannot resume coding/QA phase: missing project path");
+    if ((this.phase === "coding" || this.phase === "qa" || this.phase === "docs") && !this.projectPath) {
+      throw new Error("Cannot resume coding/QA/docs phase: missing project path");
     }
 
     this.clearRetryTimer();
@@ -316,9 +322,28 @@ export class WizardSession {
       return;
     }
 
-    if ((this.phase === "coding" || this.phase === "qa") && !this.projectPath) {
-      this.end("Cannot start coding/QA phase: missing project path");
-      return;
+    if (this.phase === "coding" || this.phase === "qa" || this.phase === "docs") {
+      if (!this.projectPath) {
+        this.end("Cannot start coding/QA/docs phase: missing project path");
+        return;
+      }
+      // The folder could have been moved/deleted between phases (or while the
+      // app was closed). Spawning with a missing cwd fails with a misleading
+      // posix_spawn ENOENT and retrying cannot fix it — fail fast instead.
+      if (!existsSync(this.projectPath)) {
+        this.end(
+          `Cannot continue the ${this.phase} phase: the project folder no longer exists (${this.projectPath}).`,
+        );
+        return;
+      }
+    }
+
+    if (this.phase === "docs" && this.projectPath) {
+      try {
+        await seedStaticRookieDocs(this.projectPath);
+      } catch (error) {
+        logger.warning("Failed to seed rookie docs", { id: this.id, error });
+      }
     }
 
     let modelsResolved = false;
@@ -360,13 +385,30 @@ export class WizardSession {
 
     const cwd = this.phase === "planning" ? projectsDir() : (this.projectPath as string);
     const wizardExtensions = resolveWizardExtensionPath();
-    await bridge.start(cwd, {
-      mode: "rookie",
-      extensions: wizardExtensions,
-      // Resume the same pi session across retries so context (plan progress,
-      // tool calls, user answers) is preserved.
-      piSessionId: this.capturedPiSessionId,
-    });
+    try {
+      await bridge.start(cwd, {
+        mode: "rookie",
+        extensions: wizardExtensions,
+        // Resume the same pi session across retries so context (plan progress,
+        // tool calls, user answers) is preserved.
+        piSessionId: this.capturedPiSessionId,
+      });
+    } catch (error) {
+      // Deterministic pre-flight failures (missing agent binary or project
+      // folder) can never succeed on retry — end the wizard with the precise
+      // cause instead of burning the retry budget on identical failures.
+      if (error instanceof AgentSpawnError && error.reason !== "spawn-failed") {
+        logger.error("Wizard spawn pre-flight failed", {
+          id: this.id,
+          phase: this.phase,
+          reason: error.reason,
+          error: error.message,
+        });
+        this.end(`Setup failed: ${error.message}`);
+        return;
+      }
+      throw error;
+    }
 
     if (this.cancelled || this.finished || generation !== this.bridgeGeneration) return;
 
@@ -473,19 +515,30 @@ export class WizardSession {
       return;
     }
 
-    // qa
+    if (this.phase === "qa") {
+      const projectPath = this.projectPath as string;
+      const planPath = this.planPath ?? join(projectPath, WIZARD_PLAN_FILENAME);
+      const goalBody = buildQaGoal(
+        projectPath,
+        planPath,
+        this.codingSummary ?? "(no summary)",
+        manifest.frontmatter.dev?.servers,
+      );
+      this.phaseGoal = goalBody;
+      await bridge.sendCommand({
+        type: "prompt",
+        message: `/goal --tokens ${QA_TOKEN_BUDGET} ${goalBody}`,
+      });
+      return;
+    }
+
+    // docs
     const projectPath = this.projectPath as string;
-    const planPath = this.planPath ?? join(projectPath, WIZARD_PLAN_FILENAME);
-    const goalBody = buildQaGoal(
-      projectPath,
-      planPath,
-      this.codingSummary ?? "(no summary)",
-      manifest.frontmatter.dev?.servers,
-    );
+    const goalBody = buildDocsGoal(projectPath);
     this.phaseGoal = goalBody;
     await bridge.sendCommand({
       type: "prompt",
-      message: `/goal --tokens ${QA_TOKEN_BUDGET} ${goalBody}`,
+      message: `/goal --tokens ${DOCS_TOKEN_BUDGET} ${goalBody}`,
     });
   }
 
@@ -556,6 +609,7 @@ export class WizardSession {
     this.capturedPiSessionId = undefined;
     this.phaseGoal = undefined;
     this.clearRetryTimer();
+    this.emit({ type: "wizard_phase", wizardSessionId: this.id, phase: this.phase });
     // Keep phaseSignaledComplete true until the new bridge is live so dying
     // events from the previous bridge cannot schedule a retry on the new phase.
     // startPhaseAttempt resets it after invalidating bridgeGeneration.
@@ -647,6 +701,37 @@ export class WizardSession {
     return this.projectPath;
   }
 
+  /**
+   * Adopt the projectPath echoed by a completion tool call, but only when it
+   * is a valid existing directory consistent with the path validated at
+   * planning time. The model can mangle the path (e.g. drop the leading
+   * "/"); blindly trusting it would corrupt the next phase's spawn cwd.
+   * Invalid or mismatched values are ignored — the known-good path wins.
+   */
+  private adoptReportedProjectPath(reported: string | undefined): void {
+    const trimmed = reported?.trim();
+    if (!trimmed) return;
+    if (!isAbsolute(trimmed) || !existsSync(trimmed)) {
+      logger.warning("Ignoring invalid projectPath from completion tool", {
+        id: this.id,
+        phase: this.phase,
+        reported,
+        keeping: this.projectPath,
+      });
+      return;
+    }
+    if (this.projectPath && resolve(trimmed) !== resolve(this.projectPath)) {
+      logger.warning("Ignoring mismatched projectPath from completion tool", {
+        id: this.id,
+        phase: this.phase,
+        reported,
+        keeping: this.projectPath,
+      });
+      return;
+    }
+    this.projectPath = trimmed;
+  }
+
   /** Resolved (extends-flattened) template manifest for handoff. */
   getResolvedManifest(): ResolvedManifest | undefined {
     return this.manifest;
@@ -685,12 +770,23 @@ export class WizardSession {
     // and forward the list to the shared UI catalog.
     if (event.type === "models_sync" || event.type === "herman/models_sync") {
       this.modelsReady?.resolve();
+      this.opts.onAgentModelsSync?.(event.models);
       this.emit({
         type: "wizard_models",
         wizardSessionId: this.id,
         models: event.models,
         ...(event.currentModel ? { currentModel: event.currentModel } : {}),
       });
+      // (Re)apply the preferred model when the registry advertises it and the
+      // agent doesn't have it yet — self-heals after mid-session refreshes.
+      const preferred = normalizeModelId(this.preferredModel);
+      if (
+        preferred &&
+        preferred !== normalizeModelId(event.currentModel) &&
+        event.models.includes(preferred)
+      ) {
+        void this.applyPreferredModel();
+      }
       return;
     }
 
@@ -763,13 +859,13 @@ export class WizardSession {
       return;
     }
 
-    // 3. herman_complete_wizard — coding → QA, or QA → done.
+    // 3. herman_complete_wizard — coding → QA, QA → docs, docs → done.
     if (event.type === "tool_execution_start" && event.toolName === "herman_complete_wizard") {
       if (this.phaseSignaledComplete) return;
       const args = event.args as Record<string, unknown> | undefined;
       const projectPath = typeof args?.projectPath === "string" ? args.projectPath : undefined;
       const summary = typeof args?.summary === "string" ? args.summary : undefined;
-      if (projectPath) this.projectPath = projectPath;
+      this.adoptReportedProjectPath(projectPath);
 
       if (this.phase === "coding") {
         this.phaseSignaledComplete = true;
@@ -788,7 +884,30 @@ export class WizardSession {
       if (this.phase === "qa") {
         this.phaseSignaledComplete = true;
         this.clearRetryTimer();
-        const finalPath = this.projectPath ?? projectPath ?? "";
+        this.emit({
+          type: "wizard_progress",
+          wizardSessionId: this.id,
+          text: "Docs & Tutorials — writing your guides…",
+        });
+        this.recordProgress("Docs & Tutorials — writing your guides…");
+        this.advanceToPhase("docs");
+        return;
+      }
+
+      if (this.phase === "docs") {
+        // this.projectPath is already validated by adoptReportedProjectPath;
+        // never fall back to the raw agent-provided arg.
+        const finalPath = this.projectPath ?? "";
+        const docsError = validateDocsOutputs(finalPath);
+        if (docsError) {
+          // Same pattern as planning validation: tell the agent what is missing
+          // and wait for a corrected completion (or agent_end → retry).
+          logger.warning("herman_complete_wizard (docs) rejected", { id: this.id, error: docsError });
+          this.emit({ type: "wizard_progress", wizardSessionId: this.id, text: docsError });
+          return;
+        }
+        this.phaseSignaledComplete = true;
+        this.clearRetryTimer();
         this.emit({
           type: "wizard_complete",
           wizardSessionId: this.id,
@@ -937,7 +1056,10 @@ export class WizardSessionManager {
   private pendingRecovery: WizardRecoveryInfo | null = null;
   private restorePromise: Promise<WizardRecoveryInfo | null> | null = null;
 
-  constructor(private emit: (event: WizardSessionEvent) => void) {}
+  constructor(
+    private emit: (event: WizardSessionEvent) => void,
+    private onAgentModelsSync?: (models: string[]) => void,
+  ) {}
 
   /**
    * Load a paused session from disk on app startup. Discards non-resumable
@@ -987,7 +1109,10 @@ export class WizardSessionManager {
       return null;
     }
 
-    const session = await WizardSession.fromCheckpoint(checkpoint, { emit: this.emit });
+    const session = await WizardSession.fromCheckpoint(checkpoint, {
+      emit: this.emit,
+      onAgentModelsSync: this.onAgentModelsSync,
+    });
     this.sessions.set(session.id, session);
     logger.info("Restored paused wizard session from checkpoint", {
       id: session.id,
@@ -1079,7 +1204,10 @@ export class WizardSessionManager {
     this.pendingRecovery = null;
     // Replace any prior paused/live orphan so getRecovery cannot latch onto it.
     await this.disposeAllSessions();
-    const session = new WizardSession({ emit: this.emit });
+    const session = new WizardSession({
+      emit: this.emit,
+      onAgentModelsSync: this.onAgentModelsSync,
+    });
     this.sessions.set(session.id, session);
     // Start asynchronously so the RPC returns the id immediately; events flow
     // over the wizard channel. Errors surface as wizard_end.
@@ -1343,6 +1471,109 @@ ${exportChecklist}- [ ] Use any available tools in the project to verify/validat
 - [ ] Review the critical paths for the project for correctness, clarity, performance, security, and maintainability.
 ${exportContract ? `\n${exportContract}\n` : ""}
 When everything is smooth (you ticked off all the checklist items), call herman_complete_wizard with { projectPath, summary } as your last tool call.`;
+}
+
+/** Session 4 — Docs & Tutorials `/goal` body (without the `/goal ` prefix). */
+export function buildDocsGoal(projectPath: string): string {
+  return `You are in HERMAN WIZARD MODE (Docs & Tutorials phase) for a rookie (non-technical) user.
+Do NOT call herman_wizard_ask — there is no user Q&A in this phase.
+
+A working project has just been built and verified at: ${projectPath}
+Your mission: write beginner-friendly documentation and tutorials that teach the rookie how THEIR project works, how to manage its content, and how to keep improving it with Herman.
+
+All docs live in: ${projectPath}/herman-docs/ (already created; Herman has seeded static files there).
+Do not modify any project code in this phase — only files inside herman-docs/.
+
+## Seeded static files (already in herman-docs/ — do NOT regenerate)
+- \`notions-and-terminology.md\` — general Herman/web concepts. Leave content as-is.
+- \`herman-agent-quickstart.md\` — how to work with the Herman agent. Leave content as-is.
+- \`database.md\` — base explainer. Follow the HTML comment at the bottom: replace the final section with this project's real database details (engine, where it lives, what it stores, how the rookie changes data day-to-day). If the project has NO database, replace that final section with a short note saying so and explain where the site's content comes from instead.
+You may RENAME seeded files only to add a 2-digit ordering prefix (e.g. \`notions-and-terminology.md\` → \`02-notions-and-terminology.md\`), keeping the base name.
+
+## Step 1 — understand the project
+Explore before writing: package.json scripts, routes/pages, admin panel, data/content models, env files, README/AGENTS.md.
+Decide for this project: does it have an admin panel? a database? manageable content (products, posts, users)? Then tailor the docs to what actually exists — never document features the project does not have.
+
+## Step 2 — decide the structure and write the docs
+You choose the doc titles, count, and order. Rules:
+- ALWAYS include a **Start Here** doc as the entry point.
+- File names: kebab-case with a 2-digit ordering prefix: \`01-start-here.md\`, \`02-….md\`. The app's sidebar sorts by this prefix.
+- Every doc starts with exactly one \`# Title\` line — it becomes the sidebar label.
+- Cross-link docs with relative links inside the folder: \`[text](./other-doc.md)\`. Every linked file must exist.
+- Audience: a non-technical rookie. Short sentences, second person ("you"), warm and encouraging. Never use jargon without explaining it. Never tell the user to run terminal commands or edit code — Herman does technical work. (Exception: the publishing doc may include clearly fenced copy-paste commands, with a note that the rookie can ask Herman to do it for them.)
+- A good structure for a typical site with an admin panel (adapt freely — merge, split, rename, reorder):
+  - \`01-start-here.md\`
+  - \`02-notions-and-terminology.md\` (seeded)
+  - \`03-herman-agent-quickstart.md\` (seeded)
+  - \`04-database.md\` (seeded + your appendix — only when the project has a database)
+  - a doc about adding/changing features, with example prompts
+  - a doc about managing content (only when the project has an admin panel / content system)
+  - a publishing doc
+
+## The "Start Here" doc
+Here is a real example from a merchandise + blog project with an admin panel. Adapt every claim to THIS project (what it has, where things live, what the user manages):
+
+\`\`\`md
+# Start Here
+[Welcome to Herman Agent + very short description of the project]
+
+## How's the project organized?
+- The project is split in 2 main parts: **Admin Panel** and **Public Website**.
+- Your project also has a **database**, to understand what this is, read the doc in [database.md](./database.md)
+
+## How can I see my website?
+- Your website is available on the preview pane when you open the project in Herman. Each new tab will have its own URL to make it easier to work on multiple features without clashing edits.
+- Your website can also be visited from your local browser, just copy the URL from the preview pane and paste it in your browser or click the \`Open in Browser\` button in the URL bar.
+
+## Can other people see my website?
+Not when you are in \`Development Mode\`. When you are in \`Development Mode\`, your website is only visible to you on your machine. When you want to share your website with others or have it with a live domain, you need to [publish your project](./publishing.md).
+
+## Public Website
+- Your public website is the place where your content is displayed to the visitors. This is the core of your project.
+- Modifications & prompts about the public website should be about:
+  - Design & structure
+  - Pages & the logic of how they display data or collect data & forms
+  - Static pages (pages that are not managed by the admin panel, read about them in [Notions & Terminology](./notions-and-terminology.md#static-vs-dynamic-pages))
+
+Since you have an admin panel, you should not prompt the agent about adding new blog posts
+
+## Admin Panel
+The admin panel is the place to manage the website. At the moment, you can:
+- Create/Edit/Delete posts
+- Create/Edit/Delete merchandise and their categories with their photos
+- Create/Edit/Delete users
+- Add products and update their prices
+
+### Opening the admin panel
+- Your admin panel is available at /admin page
+- You must login. This project has a [seed data](./notions-and-terminology.md#seed-data) functionality. So it should generate your first user and admin user with the credentials. You can ask the Herman Agent to share them with you to login.
+
+### Summary of the Website/Admin Split
+- If you want to manage products, users, posts, do this in the admin panel, do not prompt the agent about those tasks.
+- If you want to modify **how the website looks** and how does it **present the data**, then you should prompt the agent about those tasks.
+- When the website is live in production \`my-project.com\`, you will only be working on the admin panel. \`Herman\` cannot modify the website in production. You can however keep using \`Herman\` to modify locally and then publish the changes.
+\`\`\`
+
+## The "adding features" doc
+Give concrete, copy-paste-able example prompts for Herman that fit THIS project: one brand-new feature, one new static page, one new dynamic feature, and one enhancement of an existing feature. Briefly explain the static/dynamic difference (link to the terminology doc's #static-vs-dynamic-pages section).
+
+## The "managing content" doc (only when the project has an admin/content system)
+Explain what can be managed (products, posts, users… — the real list for this project), how to open the admin panel (the real route), how login works with seed data (tell the rookie to ask Herman for the credentials), and the golden rule: manage CONTENT in the admin panel; ask Herman to change how things LOOK or WORK.
+
+## The "publishing" doc
+Structure it like this:
+- **What is publishing?** — in simple terms: the project needs somewhere to live on the internet, linked to a domain name, to be visible to the public.
+- **How can I publish my project?** — two ways:
+  - **Herman Cloud** — say it is not available yet; when it launches it will let the rookie publish their website with one button.
+  - **Doing it with a provider** —
+    - *Getting a domain name*: briefly why a domain is needed; two examples of where to buy one: Cloudflare and Namecheap.
+    - *Choosing a place for the project*: mention there are multiple ways and the rookie can always ask Herman how to publish. Give ONE concrete example: hosting with Coolify on a Hetzner server — non-technical, step by step: buying the Hetzner server (always suggest their cheapest plan), copy-paste commands to install Coolify, then easy steps to publish the project with Coolify.
+- End with: Herman is always here to answer questions about publishing and to help step by step.
+
+## Finishing up
+1. Re-check every relative link target exists in herman-docs/.
+2. Best-effort commit (never fail the phase over git errors — and it's fine if there is no git repo): \`git add herman-docs && git commit -m "Add project docs"\`
+3. Call herman_complete_wizard with { projectPath, summary } as your LAST tool call.`;
 }
 
 /** Returns an error message if planning outputs are not ready to advance; else undefined. */

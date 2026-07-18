@@ -1,3 +1,4 @@
+import { getLogger } from "@logtape/logtape";
 import { create } from "zustand";
 
 import type { DevServer, ProjectManifestView } from "../../../shared/herman-manifest.js";
@@ -6,6 +7,8 @@ import type { DesktopRpc } from "../../../shared/rpc.js";
 import type { PreviewRuntimeError } from "../components/preview-error-banner.js";
 import { useAgentStore } from "./agent-store.js";
 import { desktopRpc as realDesktopRpc } from "./desktop-rpc.js";
+
+const logger = getLogger(["herman-desktop", "view", "preview-store"]);
 import {
   appendRuntimeError,
   buildAskHermanPrompt,
@@ -369,7 +372,13 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
 
     acceptLog: (event) => {
       const state = get();
-      if (!state.folderPath || event.folderPath !== state.folderPath) return;
+      if (!state.folderPath || event.folderPath !== state.folderPath) {
+        logger.debug("Ignoring preview log — folder path mismatch", {
+          storeFolderPath: state.folderPath || "(empty)",
+          eventFolderPath: event.folderPath,
+        });
+        return;
+      }
       const labeled =
         event.serverId && state.activeServerId && event.serverId !== state.activeServerId
           ? `[${event.serverId}] ${event.line}`
@@ -379,7 +388,19 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         { source: "server", message: labeled, ts: event.ts },
         state.errorIdCounter,
       );
-      if (!changed) return;
+      if (!changed) {
+        logger.debug("Ignoring preview log — duplicate or capped", {
+          source: event.source,
+          line: event.line.slice(0, 100),
+        });
+        return;
+      }
+      logger.info("Preview log accepted — updating runtimeErrors", {
+        source: event.source,
+        line: event.line.slice(0, 200),
+        errorCount: errors.length,
+        serverPhase: state.server?.phase,
+      });
       set({ runtimeErrors: errors, errorIdCounter: nextId, bannerDismissed: false });
     },
 

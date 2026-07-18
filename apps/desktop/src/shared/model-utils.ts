@@ -1,3 +1,5 @@
+import { HERMAN_PROVIDER_ID, parseModelRef } from "./model-selection.js";
+
 /**
  * Returns the provider prefix for a model ID.
  *
@@ -6,11 +8,10 @@
  */
 export function getModelProvider(modelId?: string): string | undefined {
   if (!modelId) return undefined;
-  const slashIndex = modelId.indexOf("/");
-  return slashIndex > 0 ? modelId.slice(0, slashIndex) : "herman";
+  return parseModelRef(modelId)?.provider;
 }
 
 /** Returns true when the given model ID belongs to the herman provider. */
 export function isHermanModel(modelId?: string): boolean {
-  return getModelProvider(modelId) === "herman";
+  return getModelProvider(modelId) === HERMAN_PROVIDER_ID;
 }

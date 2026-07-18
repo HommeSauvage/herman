@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import {
   ArrowRight,
+  BookOpen,
   Sparkles,
   Loader2,
   Store,
@@ -27,10 +28,11 @@ import type { WizardSessionEvent } from "../../../shared/agent-protocol.js";
 import type { GalleryTemplate } from "../../../shared/herman-manifest.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
-import type { WizardStep } from "../lib/agent-store/types.js";
+import type { WizardStep, WizardPhaseId } from "../lib/agent-store/types.js";
 import { useConfetti } from "../hooks/use-confetti.js";
 import { ContentWidth, SignalButton } from "./ui/index.js";
 import { ModelSelector } from "./model-selector.js";
+import { WizardDocsView } from "./wizard-docs-view.js";
 import { WizardQuestions } from "./wizard-questions.js";
 import { WizardLoading } from "./wizard-loading.js";
 import { ProgressLog } from "./progress-log.js";
@@ -42,6 +44,25 @@ function shortModelLabel(modelId?: string): string {
   const slash = modelId.indexOf("/");
   return slash > 0 ? modelId.slice(slash + 1) : modelId;
 }
+
+const PHASE_HEADERS: Record<WizardPhaseId, { title: string; subtitle: string }> = {
+  planning: {
+    title: "Planning your project",
+    subtitle: "The agent is figuring out the best starting point.",
+  },
+  coding: {
+    title: "Setting up your project",
+    subtitle: "The agent is on it — this takes a moment.",
+  },
+  qa: {
+    title: "Verifying everything works",
+    subtitle: "The agent is testing your project end to end.",
+  },
+  docs: {
+    title: "Writing your docs & tutorials",
+    subtitle: "Almost there — creating guides tailored to your project.",
+  },
+};
 
 function StepHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
@@ -124,6 +145,7 @@ export function OnboardingWizard({
   const [templates, setTemplates] = useState<GalleryTemplate[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
   const [templateError, setTemplateError] = useState<string | null>(null);
+  const [docsOpen, setDocsOpen] = useState(false);
 
   const {
     step,
@@ -139,6 +161,7 @@ export function OnboardingWizard({
     retryMax,
     recoveryBlocked,
     currentModel,
+    phase,
   } = useAgentStore(
     useShallow((s) => ({
       step: s.wizard.step,
@@ -154,6 +177,7 @@ export function OnboardingWizard({
       retryMax: s.wizard.retryMax,
       recoveryBlocked: s.wizard.recoveryBlocked,
       currentModel: s.wizard.currentModel,
+      phase: s.wizard.phase,
     })),
   );
 
@@ -168,7 +192,6 @@ export function OnboardingWizard({
   const hydrateWizardFromRecovery = useAgentStore((s) => s.hydrateWizardFromRecovery);
   const clearWizardState = useAgentStore((s) => s.clearWizardState);
   const deactivateWizard = useAgentStore((s) => s.deactivateWizard);
-  const setModelCatalog = useAgentStore((s) => s.setModelCatalog);
 
   const selectedTemplate =
     selectedTemplateId ? templates.find((t) => t.id === selectedTemplateId) ?? null : null;
@@ -181,51 +204,21 @@ export function OnboardingWizard({
   const projectPathRef = useRef<string | null | undefined>(null);
   projectPathRef.current = projectPath;
 
-  // Activate wizard context and seed the shared model catalog.
+  // Activate wizard context and resolve the preferred model from the shared
+  // catalog (seeded at app init from the main-process catalog service).
   useEffect(() => {
     setWizardActive(true);
     const store = useAgentStore.getState();
 
-    const fromTabs = new Set<string>();
-    for (const tab of Object.values(store.tabs)) {
-      for (const modelId of tab.availableModels) fromTabs.add(modelId);
-    }
-    if (fromTabs.size > 0) {
-      setModelCatalog(Array.from(fromTabs), { merge: true });
-    }
-
-    const catalog = useAgentStore.getState().modelCatalog.availableModels;
+    const catalog = store.modelCatalog.availableModels;
+    const lastUsed = store.settings.models.lastUsedModel;
     const preferred =
-      store.settings.models.defaultModel &&
-      catalog.includes(store.settings.models.defaultModel)
-        ? store.settings.models.defaultModel
-        : store.wizard.currentModel && catalog.includes(store.wizard.currentModel)
-          ? store.wizard.currentModel
+      store.wizard.currentModel && catalog.includes(store.wizard.currentModel)
+        ? store.wizard.currentModel
+        : lastUsed && catalog.includes(lastUsed)
+          ? lastUsed
           : catalog[0];
     if (preferred) setWizardCurrentModel(preferred);
-
-    if (catalog.length === 0) {
-      void desktopRpc.request
-        .getHermanModelsCache()
-        .then((result) => {
-          if (result.models.length === 0) return;
-          setModelCatalog(result.models, { merge: true });
-          const next = useAgentStore.getState();
-          if (!next.wizard.currentModel) {
-            const pick =
-              next.settings.models.defaultModel &&
-              result.models.includes(next.settings.models.defaultModel)
-                ? next.settings.models.defaultModel
-                : result.models[0];
-            if (pick) setWizardCurrentModel(pick);
-          }
-        })
-        .catch((err) => {
-          logger.warning("Failed to seed models from Herman cache", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-    }
 
     return () => {
       // Soft deactivate so HMR remount can rehydrate from Bun / Zustand.
@@ -234,7 +227,6 @@ export function OnboardingWizard({
   }, [
     setWizardActive,
     setWizardCurrentModel,
-    setModelCatalog,
     deactivateWizard,
   ]);
 
@@ -256,6 +248,7 @@ export function OnboardingWizard({
           recoveryMode: false,
           recoveryBlocked: false,
           step: (recovery.uiStep ?? "working") as WizardStep,
+          phase: recovery.phase ?? "planning",
           pendingRequestId: recovery.pendingRequestId ?? null,
           envelope: recovery.envelope ?? null,
           retryAttempt: recovery.retryAttempt ?? 0,
@@ -271,6 +264,7 @@ export function OnboardingWizard({
         wizardError: recovery.lastError ?? recovery.blockedReason ?? null,
         recoveryBlocked: !recovery.resumable,
         preferredModel: recovery.preferredModel,
+        phase: recovery.phase,
       });
     }).catch((err) => {
       logger.warning("Failed to query wizard recovery", {
@@ -299,7 +293,8 @@ export function OnboardingWizard({
       const event = payload.event;
 
       if (event.type === "wizard_models") {
-        useAgentStore.getState().setModelCatalog(event.models);
+        // The main-process catalog service owns the shared catalog (it also
+        // ingests this list); here we only need the current-model fallback.
         if (event.currentModel && !useAgentStore.getState().wizard.currentModel) {
           useAgentStore.getState().setWizardCurrentModel(event.currentModel);
         }
@@ -309,8 +304,17 @@ export function OnboardingWizard({
       if (sessionRef.current && event.wizardSessionId !== sessionRef.current) return;
 
       switch (event.type) {
+        case "wizard_phase": {
+          useAgentStore.getState().patchWizard({ phase: event.phase });
+          break;
+        }
         case "wizard_progress": {
           useAgentStore.getState().setWizardProgressLines((prev) => [...prev, event.text].slice(-50));
+          // If we were retrying, the first progress event means the agent
+          // has recovered — transition back to the working state.
+          if (useAgentStore.getState().wizard.step === "retrying") {
+            useAgentStore.getState().patchWizard({ step: "working", retryAttempt: 0 });
+          }
           break;
         }
         case "wizard_request": {
@@ -514,6 +518,16 @@ export function OnboardingWizard({
     );
   }
 
+  if (docsOpen && projectPath) {
+    return (
+      <WizardDocsView
+        projectPath={projectPath}
+        onBack={() => setDocsOpen(false)}
+        onOpenProject={handleDone}
+      />
+    );
+  }
+
   return (
     <div className="relative flex h-full flex-col">
       <div className="absolute top-4 right-4 z-10">
@@ -542,10 +556,15 @@ export function OnboardingWizard({
           />
         )}
         {step === "working" && (
-          <StepHeader title="Setting up your project" subtitle="The agent is on it — this takes a moment." />
+          <StepHeader
+            title={PHASE_HEADERS[phase].title}
+            subtitle={PHASE_HEADERS[phase].subtitle}
+          />
         )}
         {step === "questions" && <StepHeader title="A few questions" subtitle="Only the bits we still need." />}
-        {step === "done" && <StepHeader title="Your project is ready" subtitle="Let's open it up." />}
+        {step === "done" && (
+          <StepHeader title="Your project is ready" subtitle="Take a minute to get familiar — or dive right in." />
+        )}
         {step === "error" && <StepHeader title="Something went wrong" subtitle="You can try again." />}
         {step === "recovery" && (
           <StepHeader
@@ -737,10 +756,17 @@ export function OnboardingWizard({
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.35 }}
                 >
-                  <SignalButton size="lg" fullWidth glow className="mt-5" onClick={handleDone}>
-                    <Sparkles size={16} />
-                    Open Project
+                  <SignalButton size="lg" fullWidth glow className="mt-5" onClick={() => setDocsOpen(true)}>
+                    <BookOpen size={16} />
+                    Let's get familiar with your project first
                   </SignalButton>
+                  <button
+                    type="button"
+                    onClick={handleDone}
+                    className="text-dim hover:text-text mt-3 w-full rounded-xl border border-mist bg-white/[0.02] px-4 py-2.5 text-sm transition hover:bg-fog"
+                  >
+                    I know how to use Herman, open the project
+                  </button>
                   <p className="text-ghost mt-2 text-center text-[11px]">
                     Opens your project in a new tab.
                   </p>

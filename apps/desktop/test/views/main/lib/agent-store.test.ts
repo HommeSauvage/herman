@@ -1097,7 +1097,14 @@ describe("context stats", () => {
   });
 });
 describe("modelCatalog", () => {
-  it("updates from models_sync via recordAgentEvent", () => {
+  it("does not let a tab's models_sync overwrite the main-process catalog", () => {
+    // The catalog is owned by the main-process ModelCatalogService and fed
+    // via applyModelCatalog; agent models_sync events only update the tab.
+    useAgentStore.getState().applyModelCatalog({
+      models: ["herman/authoritative"],
+      modelMetadata: {},
+      hermanFromCache: false,
+    });
     const id = useAgentStore.getState().createTab("/project");
     useAgentStore.getState().recordAgentEvent(id, {
       type: "models_sync",
@@ -1106,13 +1113,51 @@ describe("modelCatalog", () => {
     });
 
     expect(useAgentStore.getState().modelCatalog.availableModels).toEqual([
-      "herman/kimi",
-      "openai/gpt-4o",
+      "herman/authoritative",
     ]);
+    // ...while the tab itself still tracks its agent's registry.
     expect(useAgentStore.getState().tabs[id]?.availableModels).toEqual([
       "herman/kimi",
       "openai/gpt-4o",
     ]);
+    // The agent's current model is adopted only when the tab has none.
+    expect(useAgentStore.getState().tabs[id]?.currentModel).toBe("herman/kimi");
+  });
+
+  it("keeps the user's currentModel over the models_sync default", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    useAgentStore.getState().setModels(id, "herman/user-picked");
+    useAgentStore.getState().recordAgentEvent(id, {
+      type: "models_sync",
+      models: ["herman/kimi"],
+      currentModel: "herman/kimi",
+    });
+
+    expect(useAgentStore.getState().tabs[id]?.currentModel).toBe("herman/user-picked");
+  });
+
+  it("applyModelCatalog replaces models and merges metadata", () => {
+    useAgentStore.getState().applyModelCatalog({
+      models: ["herman/a", "openai/b"],
+      modelMetadata: { "herman/a": { contextWindow: 200_000 } },
+      hermanFromCache: true,
+    });
+
+    const state = useAgentStore.getState();
+    expect(state.modelCatalog.availableModels).toEqual(["herman/a", "openai/b"]);
+    expect(state.ui.modelMetadata["herman/a"]).toEqual({ contextWindow: 200_000 });
+
+    // A second snapshot with fewer models replaces the list (authoritative),
+    // and existing metadata is preserved across updates.
+    useAgentStore.getState().applyModelCatalog({
+      models: ["herman/a"],
+      modelMetadata: { "openai/b": { contextWindow: 128_000 } },
+      hermanFromCache: false,
+    });
+    const next = useAgentStore.getState();
+    expect(next.modelCatalog.availableModels).toEqual(["herman/a"]);
+    expect(next.ui.modelMetadata["herman/a"]).toEqual({ contextWindow: 200_000 });
+    expect(next.ui.modelMetadata["openai/b"]).toEqual({ contextWindow: 128_000 });
   });
 
   it("does not wipe a populated catalog with an empty payload", () => {
@@ -1131,16 +1176,5 @@ describe("modelCatalog", () => {
       "herman/a",
       "herman/b",
     ]);
-  });
-
-  it("seeds from tab models on restoreTabs", () => {
-    const id = useAgentStore.getState().createTab("/project");
-    useAgentStore.getState().updateTab(id, {
-      availableModels: ["herman/from-tab"],
-    });
-    const tab = useAgentStore.getState().tabs[id];
-    useAgentStore.getState().restoreTabs([tab], id);
-
-    expect(useAgentStore.getState().modelCatalog.availableModels).toContain("herman/from-tab");
   });
 });

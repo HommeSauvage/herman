@@ -1,7 +1,7 @@
 import { getLogger } from "@logtape/logtape";
 
 import type { TabId } from "../../../shared/rpc.js";
-import { isTabAgentRunning, useAgentStore } from "./agent-store.js";
+import { useAgentStore } from "./agent-store.js";
 import { desktopRpc } from "./desktop-rpc.js";
 import { formatAttachmentsForPrompt } from "./attachment-format.js";
 
@@ -133,37 +133,34 @@ export async function retryAgent(tabId: TabId) {
 }
 
 export async function selectModel(tabId: TabId, modelId: string) {
-  if (!isTabAgentRunning(tabId)) {
-    // The model can only be changed while the agent is running.
-    return;
-  }
-  const [provider, id] = modelId.includes("/") ? modelId.split("/") : ["herman", modelId];
+  // The main process persists the selection for the session, records it as
+  // the global last-used model, and applies it to the agent — immediately
+  // when the registry is ready, otherwise as soon as it becomes ready. Works
+  // whether or not the agent is currently running.
   try {
-    await desktopRpc.request.agentRequest({
+    await desktopRpc.request.setTabModel({ tabId, modelId });
+  } catch (error) {
+    logger.warning("Failed to select model", {
       tabId,
-      command: { type: "set_model", provider, modelId: id },
+      modelId,
+      error: error instanceof Error ? error.message : String(error),
     });
-  } catch {
-    // Best-effort: the model selector will still show the previous selection.
   }
 }
 
-export async function refreshHermanModels(tabId: TabId) {
-  if (!isTabAgentRunning(tabId)) {
-    // The agent must be running for the Herman extension to refresh.
-    return;
-  }
+/**
+ * Force a refresh of the shared model catalog from the Herman server.
+ * Never wipes the cached catalog on failure — safe to call offline.
+ */
+export async function refreshModelCatalog() {
   try {
-    await desktopRpc.request.refreshHermanModels({ tabId });
-  } catch {
-    // Best-effort: models are also pushed via herman/models_sync events.
+    const snapshot = await desktopRpc.request.refreshModelCatalog();
+    useAgentStore.getState().applyModelCatalog(snapshot);
+  } catch (error) {
+    logger.debug("Model catalog refresh failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
-}
-
-export async function requestAvailableModels(tabId: TabId) {
-  // Kept for backwards compatibility; opening the model selector now triggers
-  // a silent Herman refresh via refreshHermanModels instead.
-  return refreshHermanModels(tabId);
 }
 
 export async function setTabFolder(tabId: TabId, folderPath?: string) {

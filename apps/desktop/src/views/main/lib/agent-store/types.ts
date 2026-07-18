@@ -6,6 +6,7 @@ import type {
   DiffScope,
   FileDiff,
   Message,
+  ModelCatalogSnapshot,
   ModelMetadata,
   PendingAttachment,
   PersistedSession,
@@ -27,9 +28,12 @@ export type WizardStep =
   | "retrying"
   | "recovery";
 
+export type WizardPhaseId = "planning" | "coding" | "qa" | "docs";
+
 export const INITIAL_WIZARD_STATE = {
   active: false,
   step: "templates" as WizardStep,
+  phase: "planning" as WizardPhaseId,
   description: "",
   progressLines: [] as string[],
   envelope: null as WizardAskEnvelope | null,
@@ -159,6 +163,8 @@ export type AgentState = {
     /** Active wizard session id, if the agent has been started. */
     sessionId?: string;
     step: WizardStep;
+    /** Current agentic phase, mirrored from Bun `wizard_phase` events. */
+    phase: WizardPhaseId;
     selectedTemplateId?: string;
     description: string;
     progressLines: string[];
@@ -249,6 +255,8 @@ export type AgentActions = {
   fetchDiff: (tabId: TabId, scope: DiffScope) => Promise<void>;
   setModelSelectorOpen: (open: boolean) => void;
   setModelCatalog: (models: string[], opts?: { merge?: boolean }) => void;
+  /** Apply an authoritative catalog snapshot pushed by the main process. */
+  applyModelCatalog: (snapshot: ModelCatalogSnapshot) => void;
   setWizardCurrentModel: (modelId: string) => void;
   setWizardSessionId: (sessionId: string | undefined) => void;
   setWizardActive: (active: boolean) => void;
@@ -271,6 +279,7 @@ export type AgentActions = {
     wizardError?: string | null;
     recoveryBlocked?: boolean;
     preferredModel?: string;
+    phase?: WizardPhaseId;
   }) => void;
   /** Clear flow state but keep currentModel. Sets active=false. */
   clearWizardState: () => void;

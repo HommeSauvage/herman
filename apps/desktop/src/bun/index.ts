@@ -1,18 +1,15 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { getLogger } from "@logtape/logtape";
 import { BrowserWindow, BrowserView, ApplicationMenu, Updater, Utils } from "electrobun/bun";
 import type { ApplicationMenuItemConfig } from "electrobun/bun";
 
-import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
 import { config } from "../env.js";
 import { configureLogging } from "../logging.js";
 import { parseAdEventFromNotify } from "../shared/agent-protocol.js";
-import type { HermanDesktopRPC, ProviderMetadata, TabId, FileDiff } from "../shared/rpc.js";
+import { normalizeModelId, resolveSeedModel } from "../shared/model-selection.js";
+import type { DesktopSettings, HermanDesktopRPC, ProviderMetadata, TabId, FileDiff } from "../shared/rpc.js";
 import { startDeviceActivation, checkDeviceActivation } from "./activation.js";
 import { AdTelemetry } from "./ad-telemetry.js";
 import { AgentProcessManager } from "./agent-process-manager.js";
-import { hermanDir } from "./app-paths.js";
 import { syncAgentConfig } from "./agent-config-sync.js";
 import {
   getProjectFoldersFromPiSessions,
@@ -31,7 +28,8 @@ import { cancelOAuthLogin, pollOAuthLogin, startOAuthLogin } from "./oauth.js";
 import { findProjectFiles } from "./project-files.js";
 import { openFilePicker } from "./file-picker.js";
 import { loadState, saveSession, clearSession, clearAllState } from "./session.js";
-import { loadSettings, saveSettings } from "./settings.js";
+import { loadSettings, saveSettings, updateSettings } from "./settings.js";
+import { ModelCatalogService } from "./model-catalog.js";
 import { rewindManager, getUserMessageIds } from "./rewind-manager.js";
 import { resolveShellEnv } from "./shell-env.js";
 import { clearAllTabHistory } from "./tab-history.js";
@@ -45,6 +43,7 @@ import {
   setPreviewLogHandler,
 } from "./preview-server.js";
 import { readProjectManifest, setupProjectRepo } from "./project-manifest.js";
+import { listProjectDocs } from "./rookie-docs.js";
 import { checkRequirements } from "./requirements.js";
 import { getGalleryTemplates as loadGalleryTemplates, resolveTemplateManifest } from "./template-registry.js";
 import { WizardSessionManager } from "./wizard-session.js";
@@ -148,25 +147,6 @@ let desktopSettings = await loadSettings();
 
 function isHermanEnabled(): boolean {
   return desktopSettings.providers.herman.enabled;
-}
-
-/** Read herman-models-cache.json written by the agent Herman extension. */
-function readHermanModelsCache(): string[] {
-  try {
-    const cachePath = join(hermanDir(), "herman-models-cache.json");
-    if (!existsSync(cachePath)) return [];
-    const raw = readFileSync(cachePath, "utf-8");
-    const cache = JSON.parse(raw) as { models?: Array<{ id?: string }> };
-    if (!Array.isArray(cache.models)) return [];
-    return cache.models
-      .map((m) => (typeof m.id === "string" && m.id ? `herman/${m.id}` : null))
-      .filter((id): id is string => Boolean(id));
-  } catch (error) {
-    logger.debug("Failed to read Herman models cache", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return [];
-  }
 }
 
 function getMode() {
@@ -573,7 +553,16 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         const wasEnabled = isHermanEnabled();
         const { settingsActiveTab, credentialStoreError: _, ...rest } = settings;
         const previousProviders = desktopSettings.providers;
-        desktopSettings = rest as typeof desktopSettings;
+        desktopSettings = {
+          ...(rest as typeof desktopSettings),
+          models: {
+            ...rest.models,
+            // lastUsedModel is owned by the main process (setTabModel /
+            // setLastUsedModel RPCs). Never let a stale renderer snapshot
+            // clobber a selection recorded moments ago.
+            lastUsedModel: desktopSettings.models.lastUsedModel,
+          },
+        };
         await saveSettings(desktopSettings);
         if (settingsActiveTab) {
           await saveWindowState({ settingsActiveTab });
@@ -583,6 +572,11 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         if (wasEnabled !== isHermanEnabled() || providersChanged) {
           if (wasEnabled !== isHermanEnabled()) {
             ApplicationMenu.setApplicationMenu(buildApplicationMenu());
+            // Herman was toggled — refresh the catalog so the selector
+            // reflects the new state (the disk cache makes this instant).
+            void modelCatalog.refresh().then(({ hermanListChanged }) => {
+              if (hermanListChanged) agentProcessManager.refreshAgentModels();
+            });
           }
           if (providersChanged) {
             await syncAgentConfigAndRefreshAgents();
@@ -620,14 +614,23 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       getAvailableProviders: async () => {
         return BUILTIN_PROVIDERS;
       },
-      refreshHermanModels: async ({ tabId }) => {
-        agentProcessManager.sendRaw(tabId, {
-          type: "prompt",
-          message: HERMAN_REFRESH_MODELS_MESSAGE,
-        });
+      getModelCatalog: async () => {
+        return modelCatalog.getSnapshot();
       },
-      getHermanModelsCache: async () => {
-        return { models: readHermanModelsCache() };
+      refreshModelCatalog: async () => {
+        const { snapshot, hermanListChanged } = await modelCatalog.refresh();
+        if (hermanListChanged) {
+          // Running agents registered their provider models at spawn — ask
+          // them to re-sync so set_model sees the fresh list.
+          agentProcessManager.refreshAgentModels();
+        }
+        return snapshot;
+      },
+      setTabModel: async ({ tabId, modelId }) => {
+        return agentProcessManager.setTabModel(tabId, modelId, { explicit: true });
+      },
+      setLastUsedModel: async ({ modelId }) => {
+        await recordLastUsedModel(modelId);
       },
       getGalleryTemplates: async () => {
         const templates = await loadGalleryTemplates();
@@ -652,6 +655,8 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       setWizardModel: async ({ wizardSessionId, modelId }) => {
         wizardSessionManager.setModel(wizardSessionId, modelId);
+        // Selecting a model in the wizard is an explicit user choice.
+        void recordLastUsedModel(modelId);
       },
       resumeWizardSession: async ({ wizardSessionId }) => {
         await wizardSessionManager.resume(wizardSessionId);
@@ -701,6 +706,17 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         notifyProjectsChanged();
         notifySessionsChanged();
         return tab;
+      },
+      getProjectDocs: async ({ projectPath }) => {
+        try {
+          return { docs: await listProjectDocs(projectPath) };
+        } catch (error) {
+          logger.warning("getProjectDocs failed", {
+            projectPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return { docs: [] };
+        }
       },
       getSessionChanges: async ({ tabId }) => {
         const tab = agentProcessManager.getTab(tabId);
@@ -874,6 +890,46 @@ const win = new BrowserWindow({
 
 const webviewRpc = win.webview.rpc!;
 
+// ── Model catalog ─────────────────────────────────────────────────────────
+// Single source of truth for "which models exist". Seeds instantly from the
+// disk cache; refreshes from the Herman server in the background (cache is
+// never wiped on errors). The renderer seeds via getModelCatalog and stays
+// updated via modelCatalogChanged pushes.
+const modelCatalog = new ModelCatalogService({
+  getServerUrl: () => desktopSettings.providers.herman.serverUrl ?? config.serverUrl,
+  getToken: async () => {
+    const state = await loadState();
+    return state.session?.token;
+  },
+  isHermanEnabled: () => isHermanEnabled(),
+  onChange: (snapshot) => {
+    webviewRpc.send.modelCatalogChanged(snapshot);
+  },
+});
+
+/**
+ * Persist an explicit user model selection as the global last-used model.
+ * An empty model id clears the preference.
+ */
+async function recordLastUsedModel(modelId: string): Promise<void> {
+  const normalized = modelId.trim() === "" ? undefined : normalizeModelId(modelId);
+  if (modelId.trim() !== "" && !normalized) return;
+  if (desktopSettings.models.lastUsedModel === normalized) return;
+  try {
+    const next = await updateSettings((current) => ({
+      ...current,
+      models: { ...current.models, lastUsedModel: normalized },
+    }));
+    desktopSettings = next;
+    webviewRpc.send.settingsChanged(desktopSettings);
+  } catch (error) {
+    logger.warning("Failed to record last-used model", {
+      modelId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 const agentProcessManager = new AgentProcessManager({
   serverUrl: config.serverUrl,
   getToken: async () => {
@@ -882,6 +938,17 @@ const agentProcessManager = new AgentProcessManager({
   },
   getHermanEnabled: () => isHermanEnabled(),
   getMode,
+  getNewTabModel: () =>
+    resolveSeedModel({
+      lastUsed: desktopSettings.models.lastUsedModel,
+      available: modelCatalog.getSnapshot().models,
+    }),
+  onExplicitModelSelection: (modelId) => {
+    void recordLastUsedModel(modelId);
+  },
+  onAgentModelsSync: (models, metadata) => {
+    modelCatalog.ingestAgentModels(models, metadata);
+  },
   webviewRpc: {
     send: {
       agentEvent: (payload) => {
@@ -927,6 +994,9 @@ const agentProcessManager = new AgentProcessManager({
       tabMessagesHydrated: (payload) => {
         webviewRpc.send.tabMessagesHydrated(payload);
       },
+      tabModelChanged: (payload) => {
+        webviewRpc.send.tabModelChanged(payload);
+      },
     },
   },
 });
@@ -939,9 +1009,14 @@ setPreviewLogHandler((payload) => {
   webviewRpc.send.previewLog(payload);
 });
 
-const wizardSessionManager = new WizardSessionManager((event) => {
-  webviewRpc.send.wizardEvent({ event });
-});
+const wizardSessionManager = new WizardSessionManager(
+  (event) => {
+    webviewRpc.send.wizardEvent({ event });
+  },
+  (models) => {
+    modelCatalog.ingestAgentModels(models);
+  },
+);
 
 // Restore a paused wizard from disk before the renderer asks for recovery.
 void wizardSessionManager.restoreFromDisk().catch((error) => {
@@ -1163,6 +1238,11 @@ async function pollActivation() {
     const session = { token: result.accessToken };
     await saveSession(session);
     stopActivationPolling();
+    // A fresh token unlocks the Herman model list — refresh the catalog now
+    // so the selector fills in without waiting for an agent to start.
+    void modelCatalog.refresh().then(({ hermanListChanged }) => {
+      if (hermanListChanged) agentProcessManager.refreshAgentModels();
+    });
     try {
       await agentProcessManager.refreshSession();
       notifySessionChanged(session);
@@ -1226,6 +1306,14 @@ async function restoreApp() {
     // spawns await it before spawning the subprocess, but UI hydration from
     // session JSONL runs in parallel and is not blocked.
     void syncAgentConfig();
+
+    // Seed the model catalog from the disk cache synchronously so the model
+    // selector is populated immediately (even offline), then refresh from
+    // the server in the background. A failed refresh keeps the cache.
+    modelCatalog.loadFromDisk();
+    void modelCatalog.refresh().then(({ hermanListChanged }) => {
+      if (hermanListChanged) agentProcessManager.refreshAgentModels();
+    });
 
     const state = await loadState();
 

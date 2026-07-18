@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { ResolvedManifest } from "../../src/shared/herman-manifest.js";
 import {
   buildCodingGoal,
+  buildDocsGoal,
   buildPlanningPrompt,
   buildQaGoal,
   DEFAULT_SETUP_GOAL,
@@ -179,6 +180,22 @@ describe("buildQaGoal", () => {
     expect(goal).toContain("exportUrlAs");
     expect(goal).toContain("API_SERVER");
     expect(goal).toContain("hardcoded");
+  });
+});
+
+describe("buildDocsGoal", () => {
+  it("embeds the project path, seeded docs, structure rules, and completion contract", () => {
+    const goal = buildDocsGoal("/tmp/my-blog");
+    expect(goal).toContain("Do NOT call herman_wizard_ask");
+    expect(goal).toContain("/tmp/my-blog");
+    expect(goal).toContain("herman-docs");
+    expect(goal).toContain("notions-and-terminology.md");
+    expect(goal).toContain("herman-agent-quickstart.md");
+    expect(goal).toContain("database.md");
+    expect(goal).toContain("01-start-here.md");
+    expect(goal).toContain("herman_complete_wizard");
+    // Seeds may only be renamed to add a 2-digit ordering prefix.
+    expect(goal).toContain("RENAME seeded files only to add a 2-digit ordering prefix");
   });
 });
 

@@ -59,6 +59,9 @@ function createBrowserRpc(): DesktopRpc {
     previewLog: [],
     updateStatus: [],
     wizardEvent: [],
+    modelCatalogChanged: [],
+    tabModelChanged: [],
+    settingsChanged: [],
   };
 
   ws.addEventListener("open", async () => {
@@ -234,8 +237,21 @@ function createBrowserRpc(): DesktopRpc {
       pollOAuthLogin: async () => ({ status: "pending" as const }),
       cancelOAuthLogin: async () => {},
       getAvailableProviders: async () => [] as ProviderMetadata[],
-      refreshHermanModels: async () => {},
-      getHermanModelsCache: async () => ({ models: [] }),
+      getModelCatalog: async () => ({
+        models: useAgentStore.getState().modelCatalog.availableModels,
+        modelMetadata: {},
+        hermanFromCache: false,
+      }),
+      refreshModelCatalog: async () => ({
+        models: useAgentStore.getState().modelCatalog.availableModels,
+        modelMetadata: {},
+        hermanFromCache: false,
+      }),
+      setTabModel: async ({ tabId, modelId }: { tabId: TabId; modelId: string }) => {
+        useAgentStore.getState().setModels(tabId, modelId);
+        return { ok: true, model: modelId, applied: true };
+      },
+      setLastUsedModel: async () => {},
       getTemplates: async () => [],
       getGalleryTemplates: async () => [],
       resolveTemplateManifest: async () => {
@@ -250,6 +266,7 @@ function createBrowserRpc(): DesktopRpc {
       respondWizardQuestions: async () => {},
       cancelWizard: async () => {},
       adoptWizardSession: async ({ projectPath }) => createTab(projectPath),
+      getProjectDocs: async () => ({ docs: [] }),
       getSessionChanges: async () => ({ isWorktree: false, changedFiles: 0, canApply: false }),
       applySession: async () => ({ status: "error" as const, error: "Unavailable in browser mock" }),
       discardSession: async () => {},
