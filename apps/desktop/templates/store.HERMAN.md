@@ -1,5 +1,5 @@
 ---
-version: 1
+version: 2
 extends: base
 name: Store
 description: A simple online shop where you can list products and let visitors add them to a cart. Think of it like a digital catalog where people can browse what you sell.

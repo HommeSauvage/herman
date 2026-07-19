@@ -75,7 +75,6 @@ export function resolveShellEnv(): boolean {
     }
     return cachedShellEnv !== null;
   }
-
   const currentPath = process.env.PATH ?? "";
   const hasUserPaths =
     currentPath.includes("/.nvm/") ||
@@ -102,4 +101,41 @@ export function resolveShellEnv(): boolean {
   process.env.PATH = shellEnv.PATH;
   logger.info("Resolved shell PATH", { path: shellEnv.PATH });
   return true;
+}
+
+/**
+ * Forget the cached login-shell environment so the next resolveShellEnv()
+ * re-reads it. Call after Herman installs tools that modify shell rc files
+ * (e.g. bun's installer), so subsequent resolves see the fresh PATH.
+ */
+export function invalidateShellEnvCache(): void {
+  cachedShellEnv = undefined;
+}
+
+/**
+ * Prepend directories to the current process PATH (children inherit it).
+ * Used after Herman installs a tool whose location is known (e.g. brew,
+ * bun) so requirement re-checks and spawned agents see it immediately,
+ * without waiting for a login-shell re-resolve. `~` is expanded.
+ */
+export function augmentProcessPath(dirs: string[]): void {
+  const home = process.env.HOME ?? "";
+  const current = (process.env.PATH ?? "").split(":").filter(Boolean);
+  const additions: string[] = [];
+  for (const dir of dirs) {
+    const expanded = dir.startsWith("~") ? home + dir.slice(1) : dir;
+    if (expanded && !current.includes(expanded) && !additions.includes(expanded)) {
+      additions.push(expanded);
+    }
+  }
+  if (additions.length === 0) return;
+  process.env.PATH = [...additions, ...current].join(":");
+  // Keep the cache coherent: if a cached shell env exists, update it too so
+  // a later resolveShellEnv() doesn't clobber the augmented PATH.
+  if (cachedShellEnv?.PATH) {
+    const cachedParts = cachedShellEnv.PATH.split(":").filter(Boolean);
+    const missing = additions.filter((d) => !cachedParts.includes(d));
+    if (missing.length > 0) cachedShellEnv.PATH = [...missing, ...cachedParts].join(":");
+  }
+  logger.info("Augmented process PATH", { additions });
 }

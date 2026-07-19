@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe("serializeHermanYaml", () => {
-  it("produces a pure-YAML manifest from a resolved template", async () => {
+  it("produces a pure-YAML v2 manifest from a resolved template", async () => {
     clearTemplateRegistryCache();
     const resolved = await resolveTemplateManifest("blog");
     const yaml = serializeHermanYaml(resolved);
@@ -35,54 +35,52 @@ describe("serializeHermanYaml", () => {
     expect(yaml).not.toContain("## Setup");
     expect(yaml).not.toContain("## Questions");
 
-    // Should contain resolved dev servers from base
-    expect(yaml).toContain("dev:");
+    // v2: no `dev:` section; top-level servers + setup (from laravel chain)
+    expect(yaml).not.toContain("dev:");
     expect(yaml).toContain("servers:");
-    // Command may be quoted in YAML (contains colon)
-    expect(yaml).toContain("bun run dev:web");
-    expect(yaml).toContain("port: 3000");
+    expect(yaml).toContain("composer run dev");
+    expect(yaml).toContain("port: 8000");
+    expect(yaml).toContain("portEnv: SERVER_PORT");
+    expect(yaml).toContain("setup:");
+    expect(yaml).toContain("composer install");
 
-    // Should contain install command
-    expect(yaml).toContain("install: bun install");
-
-    // Should contain env vars
-    expect(yaml).toContain("BETTER_AUTH_SECRET");
+    // Should contain env file vars
+    expect(yaml).toContain("APP_KEY");
 
     // Should contain guidance section
     expect(yaml).toContain("guidance:");
-    expect(yaml).toContain("simple content models");
 
     // Should be valid YAML
     const parsed = Bun.YAML.parse(yaml) as Record<string, unknown>;
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
     expect(parsed.name).toBe("Blog");
-    expect(parsed.dev).toBeTruthy();
+    expect(parsed.servers).toBeTruthy();
+    expect(parsed.setup).toBeTruthy();
   });
 
-  it("round-trips exportUrlAs into herman.yaml", () => {
+  it("round-trips exportUrlAs and portEnv into herman.yaml", () => {
     const yaml = serializeHermanYaml({
       id: "custom",
       frontmatter: {
-        version: 1,
+        version: 2,
         name: "Multi",
-        dev: {
-          servers: [
-            {
-              id: "api",
-              label: "API",
-              command: "bun run dev:api",
-              port: 3010,
-              exportUrlAs: ["API_SERVER", "API_URL"],
-            },
-            {
-              id: "web",
-              label: "Website",
-              command: "bun run dev:web",
-              port: 3000,
-              primary: true,
-            },
-          ],
-        },
+        servers: [
+          {
+            id: "api",
+            label: "API",
+            command: "bun run dev:api",
+            port: 3010,
+            exportUrlAs: ["API_SERVER", "API_URL"],
+          },
+          {
+            id: "web",
+            label: "Website",
+            command: "bun run dev:web",
+            port: 3000,
+            portEnv: "PORT",
+            primary: true,
+          },
+        ],
       },
       sections: {},
       serialized: "",
@@ -91,33 +89,39 @@ describe("serializeHermanYaml", () => {
     expect(yaml).toContain("exportUrlAs:");
     expect(yaml).toContain("API_SERVER");
     expect(yaml).toContain("API_URL");
+    expect(yaml).toContain("portEnv: PORT");
 
     const parsed = Bun.YAML.parse(yaml) as {
-      dev: { servers: Array<{ id: string; exportUrlAs?: string | string[] }> };
+      servers: Array<{ id: string; exportUrlAs?: string | string[]; portEnv?: string | string[] }>;
     };
-    const api = parsed.dev.servers.find((s) => s.id === "api");
+    const api = parsed.servers.find((s) => s.id === "api");
     expect(api?.exportUrlAs).toEqual(["API_SERVER", "API_URL"]);
+    const web = parsed.servers.find((s) => s.id === "web");
+    expect(web?.portEnv).toBe("PORT");
   });
 });
 
 describe("readProjectManifest", () => {
-  it("reads a herman.yaml file", async () => {
+  it("reads a v2 herman.yaml file", async () => {
     const dir = makeTempDir("yaml");
-    const yaml = `version: 1
+    const yaml = `version: 2
 name: Test Project
-dev:
-  install: npm install
-  servers:
-    - id: web
-      label: Website
-      command: npm run dev
-      port: 3000
-      primary: true
+setup:
+  - id: install
+    label: Installing dependencies
+    run: npm install
+servers:
+  - id: web
+    label: Website
+    command: npm run dev
+    port: 3000
+    primary: true
 env:
-  file: .env.local
-  vars:
-    - key: API_KEY
-      required: true
+  files:
+    - path: .env.local
+      vars:
+        API_KEY:
+          required: true
 guidance: Keep it simple.
 requirements:
   - id: node
@@ -132,13 +136,57 @@ requirements:
     expect(manifest!.servers[0]!.command).toBe("npm run dev");
     expect(manifest!.servers[0]!.port).toBe(3000);
     expect(manifest!.primary?.command).toBe("npm run dev");
-    expect(manifest!.install).toBe("npm install");
+    expect(manifest!.setup?.[0]?.run).toBe("npm install");
     expect(manifest!.devCommand).toBe("npm run dev");
     expect(manifest!.devPort).toBe(3000);
     expect(manifest!.guidance).toBe("Keep it simple.");
-    expect(manifest!.env?.file).toBe(".env.local");
-    expect(manifest!.env?.vars).toHaveLength(1);
+    expect(manifest!.env?.files[0]?.path).toBe(".env.local");
+    expect(Object.keys(manifest!.env?.files[0]?.vars ?? {})).toEqual(["API_KEY"]);
     expect(manifest!.requirements).toHaveLength(1);
+
+    removeTestTempDir(dir);
+  });
+
+  it("migrates a v1 herman.yaml on read", async () => {
+    const dir = makeTempDir("yaml-v1");
+    // The real-world v1 shape (mamine-cooking-v2): dev.install + dev.servers + env.vars
+    const yaml = `version: 1
+name: Cooking
+dev:
+  install: composer run setup
+  servers:
+    - id: web
+      label: Website
+      command: composer run dev
+      port: 8000
+      primary: true
+env:
+  file: .env
+  vars:
+    - key: APP_KEY
+      required: true
+      generate: php artisan key:generate --show
+    - key: DB_CONNECTION
+      default: sqlite
+`;
+    writeFileSync(join(dir, "herman.yaml"), yaml);
+
+    const manifest = await readProjectManifest(dir);
+    expect(manifest).toBeTruthy();
+    // dev.install → setup step (idempotency comes from the stamp, not heuristics)
+    expect(manifest!.setup).toEqual([
+      { id: "install", label: "Running project setup", run: "composer run setup" },
+    ]);
+    // dev.servers → servers
+    expect(manifest!.servers[0]!.command).toBe("composer run dev");
+    expect(manifest!.servers[0]!.port).toBe(8000);
+    // env.file + env.vars[] → env.files[]
+    expect(manifest!.env?.files).toHaveLength(1);
+    expect(manifest!.env?.files[0]?.path).toBe(".env");
+    expect(manifest!.env?.files[0]?.vars?.APP_KEY?.generate).toBe(
+      "php artisan key:generate --show",
+    );
+    expect(manifest!.env?.files[0]?.vars?.DB_CONNECTION?.value).toBe("sqlite");
 
     removeTestTempDir(dir);
   });
@@ -146,15 +194,14 @@ requirements:
   it("falls back to HERMAN.md when herman.yaml is absent", async () => {
     const dir = makeTempDir("herman-md-fallback");
     const md = `---
-version: 1
+version: 2
 name: MD Project
-dev:
-  servers:
-    - id: web
-      label: Web
-      command: echo dev
-      port: 8080
-      primary: true
+servers:
+  - id: web
+    label: Web
+    command: echo dev
+    port: 8080
+    primary: true
 ---
 
 ## Setup
@@ -172,18 +219,17 @@ Run it.
 
   it("prefers herman.yaml over HERMAN.md when both exist", async () => {
     const dir = makeTempDir("both");
-    writeFileSync(join(dir, "herman.yaml"), `version: 1
+    writeFileSync(join(dir, "herman.yaml"), `version: 2
 name: YAML Wins
-dev:
-  servers:
-    - id: web
-      label: Yaml Web
-      command: yarn dev
-      port: 4000
-      primary: true
+servers:
+  - id: web
+    label: Yaml Web
+    command: yarn dev
+    port: 4000
+    primary: true
 `);
     writeFileSync(join(dir, "HERMAN.md"), `---
-version: 1
+version: 2
 name: MD Project
 ---
 
@@ -199,8 +245,8 @@ name: MD Project
   it("falls back to HERMAN.md when herman.yaml is invalid", async () => {
     const dir = makeTempDir("invalid-yaml");
     // herman.yaml is missing required `version: number` — zod rejects it
-    writeFileSync(join(dir, "herman.yaml"), `name: Broken\ndev:\n  servers:\n    - command: echo\n`);
-    writeFileSync(join(dir, "HERMAN.md"), `---\nversion: 1\ndev:\n  servers:\n    - id: web\n      label: Web\n      command: echo fallback\n      port: 9999\n      primary: true\n---\n`);
+    writeFileSync(join(dir, "herman.yaml"), `name: Broken\nservers:\n  - command: echo\n`);
+    writeFileSync(join(dir, "HERMAN.md"), `---\nversion: 2\nservers:\n  - id: web\n    label: Web\n    command: echo fallback\n    port: 9999\n    primary: true\n---\n`);
 
     const manifest = await readProjectManifest(dir);
     expect(manifest).toBeTruthy();
@@ -222,14 +268,13 @@ name: MD Project
     const worktree = makeTempDir("worktree-no-manifest");
     writeFileSync(
       join(projectRoot, "herman.yaml"),
-      `version: 1
-dev:
-  servers:
-    - id: web
-      label: Website
-      command: npm run dev
-      port: 3000
-      primary: true
+      `version: 2
+servers:
+  - id: web
+    label: Website
+    command: npm run dev
+    port: 3000
+    primary: true
 `,
     );
 
@@ -264,7 +309,7 @@ describe("setupProjectRepo", () => {
     const yamlPath = join(dir, "herman.yaml");
     expect(existsSync(yamlPath)).toBe(true);
     const yamlContent = readFileSync(yamlPath, "utf-8");
-    expect(yamlContent).toContain("bun run dev:web");
+    expect(yamlContent).toContain("composer run dev");
 
     // Should be a valid git repo with at least one commit
     const { git } = await import("../../src/bun/rewind-core.js");

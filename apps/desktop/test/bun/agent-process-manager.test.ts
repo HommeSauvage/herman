@@ -15,10 +15,14 @@ import type { PersistedSession } from "../../src/bun/window-state.js";
 let tempDir: string;
 let mockInstances: MockAgentBridge[] = [];
 const originalFetch = globalThis.fetch;
+/** ≥20-char UUID so extractPiSessionIdFromFilePath accepts it. */
+const DEFAULT_PI_SESSION_ID = "019f442d-33f0-75c3-a71e-54e95c3e27fe";
+
 const mockSessionMessages = new Map<
   string,
   Array<Record<string, unknown>>
 >();
+const mockGetStateSessionIds = new Map<string, string>();
 const mockGetMessagesDelays = new Map<string, { emptyAttempts: number }>();
 const mockGetMessagesFailures = new Set<string>();
 const mockSetModelFailures = new Set<string>();
@@ -91,7 +95,12 @@ class MockAgentBridge {
         type: "response" as const,
         command: "get_state",
         success: true as const,
-        data: { sessionId: this.lastStartOpts?.piSessionId ?? "mock-session" },
+        data: {
+          sessionId:
+            this.lastStartOpts?.piSessionId ??
+            mockGetStateSessionIds.get(this.tabId) ??
+            "mock-session",
+        },
       };
     }
     if (command.type === "get_messages") {
@@ -148,6 +157,7 @@ beforeEach(() => {
   tempDir = createTestTempDir("herman-apm-");
   mockInstances = [];
   mockSessionMessages.clear();
+  mockGetStateSessionIds.clear();
   mockGetMessagesDelays.clear();
   mockGetMessagesFailures.clear();
   mockSetModelFailures.clear();
@@ -168,10 +178,28 @@ async function drainAgent(manager: Awaited<ReturnType<typeof createManager>>): P
   await manager.waitForAgentRuntime();
 }
 
-function writePiSessionFile(
+/** Wait for the background bootstrap to finish (rookie git projects). */
+async function waitForWorktreeReady(
+  manager: Awaited<ReturnType<typeof createManager>>,
   tabId: string,
+  timeoutMs = 15_000,
+) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const tab = manager.getTab(tabId);
+    if (tab?.setup.phase === "ready" && tab.worktree) return tab;
+    if (tab?.setup.phase === "error") {
+      throw new Error(tab.setup.error ?? "workspace setup failed");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for worktree on tab ${tabId}`);
+}
+
+function writePiSessionFile(
+  _tabId: string,
   lines: string[],
-  sessionId = "sess-1",
+  sessionId = DEFAULT_PI_SESSION_ID,
 ): void {
   const sessionsDir = join(tempDir, "agent", "sessions");
   mkdirSync(sessionsDir, { recursive: true });
@@ -183,12 +211,13 @@ function writePiSessionFile(
 
 function piSessionLines(
   messages: Array<Record<string, unknown>>,
+  sessionId = DEFAULT_PI_SESSION_ID,
 ): string[] {
   return [
     JSON.stringify({
       type: "session",
       version: 3,
-      id: "sess-1",
+      id: sessionId,
       timestamp: "2026-07-09T00:00:00.000Z",
       cwd: "/project",
     }),
@@ -202,6 +231,19 @@ function piSessionLines(
       }),
     ),
   ];
+}
+
+/** Write JSONL and persist piSessionId via mock get_state + capture on restart. */
+async function attachPiSession(
+  manager: Awaited<ReturnType<typeof createManager>>,
+  tabId: string,
+  messages: Array<Record<string, unknown>>,
+  sessionId = DEFAULT_PI_SESSION_ID,
+): Promise<string> {
+  writePiSessionFile(tabId, piSessionLines(messages, sessionId), sessionId);
+  mockGetStateSessionIds.set(tabId, sessionId);
+  await manager.restartTabAgent(tabId);
+  return sessionId;
 }
 
 async function createManager(
@@ -233,7 +275,7 @@ async function createManager(
       send: {
         agentEvent: () => {},
         agentStatusChanged: () => {},
-        tabFolderChanged: () => {},
+        sessionStateChanged: () => {},
         sessionsChanged: (payload) => onSessionsChanged?.(payload.sessions),
         tabMessagesHydrated: () => {},
         tabModelChanged: (payload) => {
@@ -267,6 +309,10 @@ describe("AgentProcessManager", () => {
   it("creates a worktree for every rookie tab on a git project", async () => {
     const { git } = await import("../../src/bun/rewind-core.js");
     writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
+    writeFileSync(
+      join(tempDir, ".gitignore"),
+      "node_modules\npackage-lock.json\nbun.lock\nbun.lockb\n",
+    );
     mkdirSync(join(tempDir, "node_modules"), { recursive: true });
     await git("init -b main", tempDir);
     await git("add -A", tempDir);
@@ -274,16 +320,18 @@ describe("AgentProcessManager", () => {
     const manager = await createManager({ getMode: () => "rookie" });
     const first = await manager.createTab(tempDir);
     const second = await manager.createTab(tempDir);
+    const firstReady = await waitForWorktreeReady(manager, first.id);
+    const secondReady = await waitForWorktreeReady(manager, second.id);
     // mainFolderPath is now normalized to the canonical git root (resolves symlinks)
-    expect(first.worktree?.mainFolderPath).toBe(first.projectRoot);
-    expect(first.folderPath).toContain(".worktrees");
-    expect(second.worktree?.mainFolderPath).toBe(second.projectRoot);
-    expect(second.folderPath).toContain(".worktrees");
-    expect(first.folderPath).not.toBe(second.folderPath);
+    expect(firstReady.worktree?.mainFolderPath).toBe(firstReady.projectRoot);
+    expect(firstReady.folderPath).toContain(".worktrees");
+    expect(secondReady.worktree?.mainFolderPath).toBe(secondReady.projectRoot);
+    expect(secondReady.folderPath).toContain(".worktrees");
+    expect(firstReady.folderPath).not.toBe(secondReady.folderPath);
     // Both tabs share the same project root
-    expect(first.projectRoot).toBe(second.projectRoot);
+    expect(firstReady.projectRoot).toBe(secondReady.projectRoot);
     // The project root matches the canonical git path
-    expect(first.projectRoot).toBe(second.worktree?.mainFolderPath);
+    expect(firstReady.projectRoot).toBe(secondReady.worktree?.mainFolderPath);
   });
 
   it("closeTab removes the open tab and stops the bridge", async () => {
@@ -293,6 +341,77 @@ describe("AgentProcessManager", () => {
 
     expect(manager.getTabs().tabs).toHaveLength(0);
     expect(mockInstances[0].stopped).toBe(true);
+  });
+
+  it("adopts the wizard's first session through the same worktree pipeline (Bug C)", async () => {
+    const { git } = await import("../../src/bun/rewind-core.js");
+    writeFileSync(join(tempDir, "index.txt"), "wizard output\n");
+    writeFileSync(
+      join(tempDir, ".gitignore"),
+      "node_modules\npackage-lock.json\nbun.lock\nbun.lockb\n",
+    );
+    await git("init -b main", tempDir);
+    await git("add -A", tempDir);
+    await git("-c user.email=herman@local -c user.name=Herman commit -m \"Initial project\"", tempDir);
+
+    const manager = await createManager({ getMode: () => "rookie" });
+    // The wizard committed everything, so a worktree from HEAD carries the
+    // full wizard output — no special direct-on-main path.
+    const tab = await manager.adoptWizardSession(tempDir, "wizard-1");
+    expect(tab.setup.phase).toBe("pending");
+
+    const ready = await waitForWorktreeReady(manager, tab.id);
+    expect(ready.folderPath).toContain(".worktrees");
+    expect(ready.worktree?.mainFolderPath).toBe(ready.projectRoot);
+    expect(ready.setup.phase).toBe("ready");
+
+    // The wizard's committed output is present in the isolated workspace.
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(join(ready.folderPath, "index.txt"), "utf-8")).toBe("wizard output\n");
+
+    // The persisted session is pinned to worktree isolation.
+    const sessions = manager.getProjectsAndSessions().sessions;
+    expect(sessions.find((s) => s.id === tab.id)?.isolation).toBe("worktree");
+  });
+
+  it("never silently migrates a direct session into a worktree on reopen", async () => {
+    const { git } = await import("../../src/bun/rewind-core.js");
+    writeFileSync(join(tempDir, "index.txt"), "v1\n");
+    writeFileSync(
+      join(tempDir, ".gitignore"),
+      "node_modules\npackage-lock.json\nbun.lock\nbun.lockb\n",
+    );
+    await git("init -b main", tempDir);
+    await git("add -A", tempDir);
+    await git("-c user.email=herman@local -c user.name=Herman commit -m init", tempDir);
+
+    // Legacy wizard-adopted session: persisted with direct isolation.
+    const manager = await createManager({ getMode: () => "rookie" });
+    const { saveWindowState } = await import("../../src/bun/window-state.js");
+    const now = Date.now();
+    await saveWindowState({
+      sessions: [
+        {
+          id: "legacy-direct",
+          title: "Legacy",
+          folderPath: tempDir,
+          projectRoot: tempDir,
+          projectColor: "#fff",
+          isolation: "direct",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+    // Register in the manager's store via restore.
+    await manager.restore();
+
+    const tab = await manager.openSession("legacy-direct");
+    expect(tab).toBeTruthy();
+    // Still direct: no worktree, no pending setup — the tab opens on main.
+    expect(tab!.setup.phase).toBe("none");
+    expect(tab!.worktree).toBeUndefined();
+    expect(tab!.folderPath).toBe(tempDir);
   });
 
   it("closeTab preserves session archive and history", async () => {
@@ -331,7 +450,7 @@ describe("AgentProcessManager", () => {
     const tab = await manager.createTab("/project");
     await drainAgent(manager);
     await manager.sendCommand(tab.id, { type: "prompt", message: "hello" });
-    writePiSessionFile(tab.id, piSessionLines([{ id: "u1", role: "user", content: "hello" }]));
+    await attachPiSession(manager, tab.id, [{ id: "u1", role: "user", content: "hello" }]);
     await manager.closeTab(tab.id);
 
     await manager.openSession(tab.id);
@@ -357,7 +476,7 @@ describe("AgentProcessManager", () => {
     const tab = await manager.createTab(projectDir);
     await drainAgent(manager);
     await manager.sendCommand(tab.id, { type: "prompt", message: "hello" });
-    writePiSessionFile(tab.id, piSessionLines([{ id: "u1", role: "user", content: "hello" }]));
+    await attachPiSession(manager, tab.id, [{ id: "u1", role: "user", content: "hello" }]);
     await manager.closeTab(tab.id);
     await manager.openSession(tab.id);
 
@@ -790,20 +909,17 @@ describe("AgentProcessManager", () => {
     const tab = await manager.createTab("/project");
     await drainAgent(manager);
     await manager.sendCommand(tab.id, { type: "prompt", message: "run ls" });
-    writePiSessionFile(
-      tab.id,
-      piSessionLines([
-        { id: "u1", role: "user", content: "run ls" },
-        { id: "a1", role: "assistant", content: "Running" },
-        {
-          id: "t1",
-          role: "toolResult",
-          toolName: "bash",
-          toolCallId: "tool-1",
-          content: [{ type: "text", text: "done" }],
-        },
-      ]),
-    );
+    await attachPiSession(manager, tab.id, [
+      { id: "u1", role: "user", content: "run ls" },
+      { id: "a1", role: "assistant", content: "Running" },
+      {
+        id: "t1",
+        role: "toolResult",
+        toolName: "bash",
+        toolCallId: "tool-1",
+        content: [{ type: "text", text: "done" }],
+      },
+    ]);
     await manager.closeTab(tab.id);
 
     await manager.openSession(tab.id);
@@ -822,7 +938,7 @@ describe("AgentProcessManager", () => {
     const tab = await manager.createTab("/project");
     await drainAgent(manager);
     await manager.sendCommand(tab.id, { type: "prompt", message: "hello" });
-    writePiSessionFile(tab.id, piSessionLines([{ id: "u1", role: "user", content: "hello" }]));
+    await attachPiSession(manager, tab.id, [{ id: "u1", role: "user", content: "hello" }]);
     await manager.closeTab(tab.id);
 
     await manager.openSession(tab.id);
@@ -837,7 +953,7 @@ describe("AgentProcessManager", () => {
     const tab = await manager.createTab("/project");
     await drainAgent(manager);
     await manager.sendCommand(tab.id, { type: "prompt", message: "hello" });
-    writePiSessionFile(tab.id, piSessionLines([{ id: "u1", role: "user", content: "hello" }]));
+    await attachPiSession(manager, tab.id, [{ id: "u1", role: "user", content: "hello" }]);
     mockGetMessagesFailures.add(tab.id);
     await manager.closeTab(tab.id);
 
@@ -855,31 +971,38 @@ describe("AgentProcessManager", () => {
   it("passes piSessionId when restarting the agent bridge", async () => {
     const manager = await createManager();
     const tab = await manager.createTab("/project");
-    const sessionsDir = join(tempDir, "agent", "sessions");
-    mkdirSync(sessionsDir, { recursive: true });
-    writeFileSync(
-      join(
-        sessionsDir,
-        "2026-07-09T00-00-00-000Z_019f442d-33f0-75c3-a71e-54e95c3e27fe.jsonl",
-      ),
-      '{"type":"session","version":3,"id":"019f442d-33f0-75c3-a71e-54e95c3e27fe","timestamp":"2026-07-09T00:00:00.000Z","cwd":"/project"}\n',
+    const sessionUuid = DEFAULT_PI_SESSION_ID;
+    writePiSessionFile(
+      tab.id,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: sessionUuid,
+          timestamp: "2026-07-09T00:00:00.000Z",
+          cwd: "/project",
+        }),
+      ],
+      sessionUuid,
     );
+    mockGetStateSessionIds.set(tab.id, sessionUuid);
 
+    // First restart captures the UUID from get_state; second passes it through.
     await manager.restartTabAgent(tab.id);
-    expect(mockInstances.at(-1)?.lastStartOpts?.piSessionId).toBe(
-      "019f442d-33f0-75c3-a71e-54e95c3e27fe",
-    );
+    await manager.restartTabAgent(tab.id);
+    expect(mockInstances.at(-1)?.lastStartOpts?.piSessionId).toBe(sessionUuid);
   });
 
   it("reopens instantly from history cache when newest pi session file is empty", async () => {
-    const sessionUuid = "019f442d-33f0-75c3-a71e-54e95c3e27fe";
+    const sessionUuid = DEFAULT_PI_SESSION_ID;
     const manager = await createManager();
     const tab = await manager.createTab("/project");
     await drainAgent(manager);
     await manager.sendCommand(tab.id, { type: "prompt", message: "hello" });
-    writePiSessionFile(
+    await attachPiSession(
+      manager,
       tab.id,
-      piSessionLines([{ id: "u1", role: "user", content: "hello" }]),
+      [{ id: "u1", role: "user", content: "hello" }],
       sessionUuid,
     );
     await manager.closeTab(tab.id);
@@ -918,6 +1041,11 @@ describe("AgentProcessManager", () => {
     const { git } = await import("../../src/bun/rewind-core.js");
     const { RevertConflictError } = await import("../../src/bun/rewind-manager.js");
     writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test" }));
+    writeFileSync(
+      join(tempDir, ".gitignore"),
+      "node_modules\npackage-lock.json\nbun.lock\nbun.lockb\n",
+    );
+    mkdirSync(join(tempDir, "node_modules"), { recursive: true });
     await git("init -b main", tempDir);
     await git("add -A", tempDir);
     await git("-c user.email=herman@local -c user.name=Herman commit -m init", tempDir);
@@ -925,13 +1053,17 @@ describe("AgentProcessManager", () => {
     const manager = await createManager({ getMode: () => "rookie" });
     const first = await manager.createTab(tempDir);
     const second = await manager.createTab(tempDir);
+    const firstReady = await waitForWorktreeReady(manager, first.id);
+    await waitForWorktreeReady(manager, second.id);
+    await drainAgent(manager);
     await manager.sendCommand(first.id, { type: "prompt", message: "hello" });
     await manager.sendCommand(second.id, { type: "prompt", message: "world" });
 
     const store = (manager as unknown as { store: { tabs: Map<string, { folderPath: string }> } }).store;
     const secondTab = store.tabs.get(second.id);
     if (secondTab) {
-      secondTab.folderPath = first.folderPath;
+      // Force a shared folderPath conflict (stale createTab() return is still the project root).
+      secondTab.folderPath = firstReady.folderPath!;
     }
 
     const firstMessages = manager.getTabs().tabs.find((t) => t.id === first.id)?.messages ?? [];
@@ -940,34 +1072,43 @@ describe("AgentProcessManager", () => {
   });
 
   it("unrevert restores files from the safety checkpoint", async () => {
-    const { execSync } = await import("node:child_process");
     const { readFileSync } = await import("node:fs");
     const { git, createCheckpoint, getRepoRoot } = await import("../../src/bun/rewind-core.js");
     const { rewindManager } = await import("../../src/bun/rewind-manager.js");
 
     writeFileSync(join(tempDir, "a.txt"), "v1\n");
+    writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test" }));
+    writeFileSync(
+      join(tempDir, ".gitignore"),
+      "node_modules\npackage-lock.json\nbun.lock\nbun.lockb\n",
+    );
+    mkdirSync(join(tempDir, "node_modules"), { recursive: true });
     await git("init -b main", tempDir);
     await git("config user.email test@example.com", tempDir);
     await git("config user.name Test", tempDir);
-    await git("add a.txt", tempDir);
+    await git("add -A", tempDir);
     await git("commit -m init", tempDir);
 
     const manager = await createManager({ getMode: () => "rookie" });
     const tab = await manager.createTab(tempDir);
+    const ready = await waitForWorktreeReady(manager, tab.id);
     await drainAgent(manager);
 
+    const sessionUuid = "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e";
     const appDir = process.env.HERMAN_APP_DIR!;
     const piSessionDir = join(appDir, "agent", "sessions");
     mkdirSync(piSessionDir, { recursive: true });
-    writeFileSync(join(piSessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
+    writeFileSync(join(piSessionDir, `2026-07-08T00-00-00-000Z_${sessionUuid}.jsonl`), "");
+    mockGetStateSessionIds.set(tab.id, sessionUuid);
+    await manager.restartTabAgent(tab.id);
 
-    const worktreePath = tab.folderPath;
+    const worktreePath = ready.folderPath!;
     const repoRoot = await getRepoRoot(worktreePath);
-    await rewindManager.init(tab.id, worktreePath);
+    await rewindManager.init(tab.id, worktreePath, sessionUuid);
     await createCheckpoint({
       root: repoRoot,
       id: "cp-before",
-      sessionId: "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e",
+      sessionId: sessionUuid,
       trigger: "turn",
       turnIndex: 0,
     });
@@ -1191,7 +1332,7 @@ describe("AgentProcessManager model selection", () => {
 
     // Give the session a conversation, then close and reopen from history.
     await manager.sendCommand(tab.id, { type: "prompt", message: "hello" });
-    writePiSessionFile(tab.id, piSessionLines([{ id: "u1", role: "user", content: "hello" }]));
+    await attachPiSession(manager, tab.id, [{ id: "u1", role: "user", content: "hello" }]);
     await manager.closeTab(tab.id);
 
     const sessions = manager.getProjectsAndSessions().sessions;

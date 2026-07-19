@@ -2,12 +2,10 @@ import { isAdPlacement } from "@herman/rpc/ads";
 import type { AdCampaign, AdEvent, AdPlacement } from "@herman/rpc/ads";
 import type { ModelMetadata } from "./rpc.js";
 import {
-  tryParseSessionInfoRequestEnvelope,
-  type SessionInfoRequestEnvelope,
-} from "./session-info-protocol.js";
-import {
+  tryParseInstallEnvelope,
   tryParseWizardEnvelope,
   type WizardAskEnvelope,
+  type WizardInstallEnvelope,
 } from "./wizard-protocol.js";
 
 export type AgentCommand =
@@ -198,6 +196,13 @@ export type WizardSessionEvent =
       attempt: number;
       maxRetries: number;
       error?: string;
+    }
+  | {
+      type: "wizard_install_request";
+      wizardSessionId: string;
+      /** The extension_ui_request id the bridge must respond to. */
+      requestId: string;
+      envelope: WizardInstallEnvelope;
     };
 
 /**
@@ -205,6 +210,9 @@ export type WizardSessionEvent =
  * question envelope (sentinel `__herman_wizard__`), return the parsed
  * envelope + request id so the bridge can route it to the React wizard
  * instead of a text editor. Returns undefined for real editor requests.
+ *
+ * Interactive user dialogs ride `ctx.ui.editor`; silent host queries ride
+ * the host bridge HTTP API (see .agents/docs/host-bridge.md).
  */
 export function tryParseWizardRequest(
   event: AgentEvent,
@@ -218,17 +226,16 @@ export function tryParseWizardRequest(
 }
 
 /**
- * If an `extension_ui_request` is an `editor` dialog carrying a session-info
- * request (sentinel `__herman_session_info__`), return the request id so the
- * host can reply silently with live preview/project details.
+ * Same routing as tryParseWizardRequest, but for `herman_request_install`
+ * editor dialogs carrying an install envelope (sentinel `__herman_install__`).
  */
-export function tryParseSessionInfoRequest(
+export function tryParseInstallRequest(
   event: AgentEvent,
-): { requestId: string; envelope: SessionInfoRequestEnvelope } | undefined {
+): { requestId: string; envelope: WizardInstallEnvelope } | undefined {
   if (event.type !== "extension_ui_request") return undefined;
   if (event.method !== "editor") return undefined;
   const prefill = typeof event.prefill === "string" ? event.prefill : undefined;
-  const envelope = tryParseSessionInfoRequestEnvelope(prefill);
+  const envelope = tryParseInstallEnvelope(prefill);
   if (!envelope) return undefined;
   return { requestId: event.id, envelope };
 }

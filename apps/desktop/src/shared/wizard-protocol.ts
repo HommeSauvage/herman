@@ -198,3 +198,61 @@ export type WizardCompleteParams = {
   projectPath: string;
   summary?: string;
 };
+
+// ── Agent-requested tool installs (herman_request_install) ──────────────────
+//
+// Escape hatch for the coding/QA phases: the agent discovers a missing tool
+// that the pre-planning setup step didn't cover (e.g. the cloned repo needs
+// postgres). The request rides the same ctx.ui.editor() round-trip as wizard
+// questions, distinguished by the `__herman_install__` sentinel. Herman shows
+// an approval card; on approval the toolchain engine runs the registry
+// strategy (or the agent-provided installCmd) and the result goes back to the
+// agent as the editor `value`.
+
+export const INSTALL_SENTINEL = "__herman_install__" as const;
+export const INSTALL_PROTOCOL_VERSION = 1;
+
+export type WizardInstallEnvelope = {
+  __herman_install__: true;
+  version: 1;
+  /** Registry tool id when known (e.g. "docker"); free-form otherwise. */
+  toolId: string;
+  label: string;
+  /** Why the agent needs it — shown to the user in the approval card. */
+  reason?: string;
+  /** Detection command (defaults to registry check / "<toolId> --version"). */
+  check?: string;
+  /** Agent-suggested install command (used when no registry strategy exists). */
+  installCmd?: string;
+};
+
+/** The `value` sent back to the agent's editor round-trip. */
+export type WizardInstallResponse = {
+  approved: boolean;
+  installed: boolean;
+  detail?: string;
+};
+
+export function encodeInstallEnvelope(envelope: WizardInstallEnvelope): string {
+  return JSON.stringify(envelope);
+}
+
+/** Detect + parse an install envelope from an `editor` request's prefill. */
+export function tryParseInstallEnvelope(
+  prefill: string | undefined,
+): WizardInstallEnvelope | undefined {
+  if (!prefill) return undefined;
+  const trimmed = prefill.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const obj = parsed as Record<string, unknown>;
+    if (obj.__herman_install__ !== true) return undefined;
+    if (obj.version !== INSTALL_PROTOCOL_VERSION) return undefined;
+    if (typeof obj.toolId !== "string" || typeof obj.label !== "string") return undefined;
+    return obj as unknown as WizardInstallEnvelope;
+  } catch {
+    return undefined;
+  }
+}

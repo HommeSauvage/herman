@@ -398,6 +398,7 @@ describe("preview-store", () => {
 describe("preview-store acceptStatus typing", () => {
   it("accepts a complete snapshot", () => {
     const snap: PreviewServerSnapshot = {
+      scope: "folder:/x",
       folderPath: "/x",
       serverId: "web",
       phase: "ready",
@@ -408,5 +409,108 @@ describe("preview-store acceptStatus typing", () => {
     store.getState().__resetForTests({ folderPath: "/x", generation: 1, activeServerId: "web" });
     store.getState().acceptStatus(snap);
     expect(store.getState().server).toEqual(snap);
+  });
+});
+
+describe("preview-store session setup integration", () => {
+  let store: ReturnType<typeof createStore>;
+
+  beforeEach(() => {
+    store = createStore();
+    getProjectManifest.mockClear();
+    startPreview.mockClear();
+    restartPreview.mockClear();
+  });
+
+  it("never calls startPreview on activate — servers are main-driven", async () => {
+    getProjectManifest.mockImplementationOnce(() =>
+      Promise.resolve({
+        primary: { id: "web", label: "Web", command: "npm run dev" },
+        servers: [{ id: "web", label: "Web", command: "npm run dev", primary: true }],
+      }),
+    );
+
+    store.getState().activate({ folderPath: "/proj-a", tabId: "t1", setupPhase: "ready" });
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(store.getState().manifest.phase).toBe("loaded");
+    expect(startPreview).not.toHaveBeenCalled();
+  });
+
+  it("shows waiting_for_setup while the session setup is pending", () => {
+    store.getState().activate({
+      folderPath: "/proj-a",
+      tabId: "t1",
+      setupPhase: "pending",
+    });
+    expect(selectPreviewStage(store.getState())).toBe("waiting_for_setup");
+
+    // Setup finishing re-activates and moves past the waiting stage.
+    store.getState().activate({
+      folderPath: "/proj-a",
+      tabId: "t1",
+      setupPhase: "ready",
+    });
+    expect(selectPreviewStage(store.getState())).not.toBe("waiting_for_setup");
+  });
+
+  it("matches status events by tab scope and ignores other scopes", () => {
+    store.getState().__resetForTests({
+      folderPath: "/proj-a",
+      generation: 1,
+      tabId: "t1",
+      activeServerId: "web",
+    });
+
+    // Another tab's ready event must not leak into this store.
+    store.getState().acceptStatus({
+      scope: "tab:other-tab",
+      folderPath: "/proj-a",
+      serverId: "web",
+      phase: "ready",
+      url: "http://localhost:9999",
+      port: 9999,
+    });
+    expect(store.getState().server).toBeNull();
+
+    // Our tab's event is accepted.
+    store.getState().acceptStatus({
+      scope: "tab:t1",
+      folderPath: "/proj-a",
+      serverId: "web",
+      phase: "ready",
+      url: "http://localhost:3000",
+      port: 3000,
+    });
+    expect(store.getState().server?.url).toBe("http://localhost:3000");
+  });
+
+  it("passes tabId (not folderPath) when manually restarting", async () => {
+    store.getState().__resetForTests({
+      folderPath: "/proj-a",
+      generation: 1,
+      tabId: "t1",
+      manifest: {
+        phase: "loaded",
+        value: {
+          primary: { id: "web", label: "Web", command: "npm run dev" },
+          servers: [{ id: "web", label: "Web", command: "npm run dev", primary: true }],
+        },
+      },
+    });
+    restartPreview.mockImplementationOnce(() =>
+      Promise.resolve({
+        scope: "tab:t1",
+        folderPath: "/proj-a",
+        serverId: "web",
+        phase: "starting" as const,
+        starting: true,
+      }),
+    );
+
+    await store.getState().restart();
+    expect(restartPreview).toHaveBeenCalledTimes(1);
+    expect(restartPreview.mock.calls[0]?.[0]).toMatchObject({ tabId: "t1" });
+    expect(restartPreview.mock.calls[0]?.[0]).not.toHaveProperty("folderPath");
   });
 });

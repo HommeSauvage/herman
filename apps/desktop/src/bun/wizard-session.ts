@@ -5,16 +5,18 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 import type { AgentEvent, WizardSessionEvent } from "../shared/agent-protocol.js";
-import { tryParseWizardRequest } from "../shared/agent-protocol.js";
+import { tryParseInstallRequest, tryParseWizardRequest } from "../shared/agent-protocol.js";
 import { parseModelRef, normalizeModelId } from "../shared/model-selection.js";
 import { encodeWizardAnswers } from "../shared/wizard-protocol.js";
 import type { DevServer, ResolvedManifest } from "../shared/herman-manifest.js";
 import { normalizeExportUrlAs } from "../shared/herman-manifest.js";
+import { buildSetupGoal, resolveSetupPlan } from "./setup-plan.js";
 import { AgentBridge, type AgentBridgeState } from "./agent-bridge.js";
 import { AgentSpawnError } from "./agent-process.js";
 import { resolveWizardExtensionPath } from "./agent-config-sync.js";
 import { resolveTemplateManifest } from "./template-registry.js";
-import type { WizardAskEnvelope } from "../shared/wizard-protocol.js";
+import { installTools } from "./toolchain.js";
+import type { WizardAskEnvelope, WizardInstallEnvelope, WizardInstallResponse } from "../shared/wizard-protocol.js";
 import {
   clearWizardCheckpoint,
   evaluateWizardCheckpoint,
@@ -90,6 +92,8 @@ export class WizardSession {
   private manifest: ResolvedManifest | undefined;
   /** The editor extension_ui_request id awaiting a wizard answer. */
   private pendingRequestId: string | undefined;
+  /** Pending herman_request_install editor requests (requestId → envelope). */
+  private pendingInstallRequests = new Map<string, WizardInstallEnvelope>();
   /** Set when planning completes (project cloned + plan written). */
   private projectPath: string | undefined;
   private planPath: string | undefined;
@@ -521,7 +525,7 @@ export class WizardSession {
         projectPath,
         planPath,
         this.codingSummary ?? "(no summary)",
-        manifest.frontmatter.dev?.servers,
+        manifest.frontmatter.servers,
       );
       this.phaseGoal = goalBody;
       await bridge.sendCommand({
@@ -636,6 +640,69 @@ export class WizardSession {
     this.bridge.sendExtensionUiResponse(requestId, {
       value: encodeWizardAnswers({ answers, cancelled: false }),
     });
+  }
+
+  /**
+   * Resolve a pending herman_request_install. On approval the toolchain
+   * engine runs the registry strategy (or the agent-provided installCmd) and
+   * the outcome goes back to the agent as the editor value. Progress lines
+   * are forwarded as wizard_progress so the UI shows activity meanwhile.
+   */
+  respondInstall(requestId: string, approved: boolean): void {
+    const envelope = this.pendingInstallRequests.get(requestId);
+    if (!envelope) {
+      logger.warning("Wizard respondInstall for unknown/stale request id", {
+        id: this.id,
+        requestId,
+      });
+      return;
+    }
+    this.pendingInstallRequests.delete(requestId);
+
+    const reply = (response: WizardInstallResponse) => {
+      this.bridge?.sendExtensionUiResponse(requestId, { value: JSON.stringify(response) });
+    };
+
+    if (!approved) {
+      reply({ approved: false, installed: false, detail: "The user declined the install." });
+      return;
+    }
+
+    const progress = (text: string) =>
+      this.emit({ type: "wizard_progress", wizardSessionId: this.id, text });
+    progress(`Installing ${envelope.label}…`);
+
+    const runId = `wizard-install-${Date.now()}`;
+    void installTools(
+      runId,
+      [
+        {
+          toolId: envelope.toolId,
+          label: envelope.label,
+          ...(envelope.installCmd ? { customCommand: envelope.installCmd } : {}),
+        },
+      ],
+      (event) => {
+        if (event.type === "tool-log") progress(event.text);
+        if (event.type === "tool-waiting") progress(event.message);
+      },
+    )
+      .then(({ results }) => {
+        const result = results[0];
+        if (result?.ok) {
+          progress(`${envelope.label} is ready.`);
+          reply({ approved: true, installed: true, detail: `${envelope.label} installed.` });
+        } else {
+          const error = result?.error ?? "Install failed.";
+          progress(`Could not install ${envelope.label}: ${error}`);
+          reply({ approved: true, installed: false, detail: error });
+        }
+      })
+      .catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        progress(`Could not install ${envelope.label}: ${detail}`);
+        reply({ approved: true, installed: false, detail });
+      });
   }
 
   /** Cancel the wizard: cancel any pending request, stop the agent, clean up. */
@@ -815,6 +882,32 @@ export class WizardSession {
         wizardSessionId: this.id,
         requestId: wizardReq.requestId,
         envelope: wizardReq.envelope,
+      });
+      return;
+    }
+
+    // 1b. herman_request_install → editor request carrying an install envelope.
+    const installReq = tryParseInstallRequest(event);
+    if (installReq) {
+      // Installs are a coding/QA escape hatch — planning stays read-only.
+      if (this.phase === "planning") {
+        logger.warning("Rejecting herman_request_install during planning", { id: this.id });
+        const response: WizardInstallResponse = {
+          approved: false,
+          installed: false,
+          detail: "Tool installs are not allowed during the planning phase.",
+        };
+        this.bridge?.sendExtensionUiResponse(installReq.requestId, {
+          value: JSON.stringify(response),
+        });
+        return;
+      }
+      this.pendingInstallRequests.set(installReq.requestId, installReq.envelope);
+      this.emit({
+        type: "wizard_install_request",
+        wizardSessionId: this.id,
+        requestId: installReq.requestId,
+        envelope: installReq.envelope,
       });
       return;
     }
@@ -1243,6 +1336,10 @@ export class WizardSessionManager {
     this.sessions.get(wizardSessionId)?.respond(requestId, answers);
   }
 
+  respondInstall(wizardSessionId: string, requestId: string, approved: boolean): void {
+    this.sessions.get(wizardSessionId)?.respondInstall(requestId, approved);
+  }
+
   async resume(wizardSessionId: string): Promise<void> {
     const session = this.sessions.get(wizardSessionId);
     if (!session) {
@@ -1325,6 +1422,8 @@ export function buildPlanningPrompt(manifest: ResolvedManifest, description: str
 
   return `You are running in HERMAN WIZARD MODE (planning phase) for a non-technical user.
 Do not write chat-style explanations — work autonomously and report progress only through tool calls.
+
+You are a senior developer, with experience to anticipate and ask the right questions to the user to get the project started.
 
 ## Your job
 1. Ask the user what you still need via \`herman_wizard_ask\` (project name is collected on the first call).
@@ -1417,7 +1516,10 @@ export function buildCodingGoal(
 ): string {
   const setupGoal = manifest.frontmatter.setup_goal?.trim() || DEFAULT_SETUP_GOAL;
   const setupSection = manifest.sections.setup?.trim() || "(none)";
-  const exportContract = formatExportUrlContract(manifest.frontmatter.dev?.servers);
+  const exportContract = formatExportUrlContract(manifest.frontmatter.servers);
+  // Generated from the resolved setup plan + env files so first-time setup
+  // of the main tree and every future worktree setup execute the same recipe.
+  const setupRecipe = buildSetupGoal(resolveSetupPlan(manifest.frontmatter));
 
   return `You are in HERMAN WIZARD MODE dealing with a rookie (non-technical) user.
 You are the coder for this project. Work autonomously — no chatty explanations.
@@ -1433,7 +1535,8 @@ Before making changes: read AGENTS.md and README if they exist, study codebase p
 
 Also follow the template setup instructions:
 ${setupSection}
-${exportContract ? `\n${exportContract}\n` : ""}
+${setupRecipe ? `\n${setupRecipe}\n` : ""}${exportContract ? `\n${exportContract}\n` : ""}
+If a command fails because a system tool is missing (e.g. a database server), call herman_request_install ONCE for that tool — the user approves it and Herman installs it. If declined or it fails, use a workaround (e.g. sqlite) and continue; do not block.
 Tick each \`- [ ]\` to \`- [x]\` in the plan as you complete it.
 When done, call herman_complete_wizard with the project path and a short summary of what you did.`;
 }
@@ -1621,7 +1724,7 @@ export function formatExportUrlContract(servers: DevServer[] | undefined): strin
   if (exporting.length === 0) return "";
 
   const lines = [
-    "## Preview URL env contract (herman.yaml `dev.servers[].exportUrlAs`)",
+    "## Preview URL env contract (herman.yaml `servers[].exportUrlAs`)",
     "Herman injects these env keys at preview start with each service's resolved `http://localhost:{port}` URL (ports may differ from the preferred `port` in the manifest when multiple projects run).",
     "Apps that talk to a listed service MUST read one of these env keys — do not hardcode `localhost:<preferredPort>` for inter-service calls. Unify code and env examples to match this contract.",
     "",
@@ -1633,24 +1736,29 @@ export function formatExportUrlContract(servers: DevServer[] | undefined): strin
 }
 
 function formatEnvForPrompt(env: ResolvedManifest["frontmatter"]["env"]): string {
-  if (!env?.vars || env.vars.length === 0) return "## Env vars\n(none declared)";
+  const files = env?.files ?? [];
+  if (files.length === 0) return "## Env vars\n(none declared)";
   const lines = ["## Env vars"];
-  if (env.file) lines.push(`Target file: ${env.file}`);
-  for (const v of env.vars) {
-    const parts = [`- ${v.key}`];
-    if (v.required) parts.push("required");
-    if (v.generate) parts.push(`generate via: \`${v.generate}\``);
-    if (v.file) parts.push(`file: ${v.file}`);
-    if (v.default) parts.push(`default: ${v.default}`);
-    if (v.notes) parts.push(`— ${v.notes}`);
-    lines.push(parts.join(" "));
+  for (const file of files) {
+    lines.push(`Target file: ${file.path}`);
+    for (const [key, v] of Object.entries(file.vars ?? {})) {
+      const parts = [`- ${key}`];
+      if (v.required) parts.push("required");
+      if (v.generate) parts.push(`generate via: \`${v.generate}\``);
+      if (v.value != null) parts.push(`default: ${v.value}`);
+      if (v.notes) parts.push(`— ${v.notes}`);
+      lines.push(parts.join(" "));
+    }
   }
   return lines.join("\n");
 }
 
 function formatRequirementsForPrompt(reqs: ResolvedManifest["frontmatter"]["requirements"]): string {
   if (!reqs || reqs.length === 0) return "## Requirements\n(none declared)";
-  const lines = ["## Requirements"];
+  const lines = [
+    "## Requirements",
+    "Herman checked these BEFORE starting you — required ones are already installed on the user's machine. Do not install them yourself.",
+  ];
   for (const r of reqs) {
     lines.push(`- ${r.label} (id: ${r.id})${r.optional ? " [optional]" : ""}`);
     lines.push(`  check: \`${r.check}\``);

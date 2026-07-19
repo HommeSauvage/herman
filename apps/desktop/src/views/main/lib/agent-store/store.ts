@@ -174,6 +174,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     set((state) => {
       const hydratedTab: Tab = {
         ...tab,
+        setup: tab.setup ?? { phase: "none" },
         nativeAds: tab.nativeAds ?? [],
         contextStats:
           tab.contextStats ?? emptyContextStats(tab.messages, tab.currentModel),
@@ -1131,6 +1132,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         const contextStats = tab.contextStats ?? emptyContextStats(messages, tab.currentModel);
         record[tab.id] = {
           ...tab,
+          setup: tab.setup ?? { phase: "none" },
           messages,
           queuedMessages,
           pendingAttachments: tab.pendingAttachments ?? [],

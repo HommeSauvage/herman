@@ -31,7 +31,7 @@ export type WindowState = {
   openTabIds?: TabId[];
   activeTabId?: TabId;
   lastFolderPath?: string;
-  settingsActiveTab?: "providers" | "models" | "general" | "skills";
+  settingsActiveTab?: "providers" | "models" | "general" | "skills" | "tools";
   /** @deprecated migrated to sessions + openTabIds on read */
   tabs?: PersistedSession[];
   /** @deprecated single-folder path migrated to the first tab on read */
@@ -98,7 +98,23 @@ function migrateTabsToSessions(state: WindowState): WindowState {
 }
 
 function migrateWindowState(state: WindowState): WindowState {
-  return migrateTabsToSessions(migrateLegacyFolderPath(state));
+  return migrateSessionIsolation(migrateTabsToSessions(migrateLegacyFolderPath(state)));
+}
+
+/**
+ * Legacy sessions predate `isolation`: sessions with a worktree were created
+ * isolated; everything else (incl. wizard-adopted first sessions) stays
+ * "direct" forever — reopening never silently migrates direct → worktree.
+ */
+function migrateSessionIsolation(state: WindowState): WindowState {
+  if (!state.sessions) return state;
+  let changed = false;
+  const sessions = state.sessions.map((session) => {
+    if (session.isolation) return session;
+    changed = true;
+    return { ...session, isolation: session.worktree ? ("worktree" as const) : ("direct" as const) };
+  });
+  return changed ? { ...state, sessions } : state;
 }
 
 export async function loadWindowState(): Promise<WindowState> {

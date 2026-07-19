@@ -5,17 +5,23 @@ import type {
   PreviewFleetSnapshot,
   PreviewLogEvent,
   PreviewPhase,
+  PreviewServerLogLine,
   PreviewServerSnapshot,
   PreviewStartResponse,
 } from "../../shared/preview.js";
+import type { PortRegistry, PortReservation } from "./port-registry.js";
 
 export type {
   PreviewFleetSnapshot,
   PreviewLogEvent,
   PreviewPhase,
+  PreviewScope,
+  PreviewServerLogLine,
   PreviewServerSnapshot,
   PreviewStartResponse,
-};
+} from "../../shared/preview.js";
+export { MAX_LOG_LINE_CHARS } from "../../shared/preview.js";
+export type { PortReservation };
 
 export const PREVIEW_READY_TIMEOUT_MS = 20_000;
 export const PREVIEW_READY_POLL_MS = 300;
@@ -46,6 +52,8 @@ export type PreviewProbeResult = {
 };
 
 export type PreviewInstance = {
+  /** Owning scope (`tab:<id>` / `wizard:<id>` / `folder:<path>`). */
+  scope: string;
   folderPath: string;
   serverId: string;
   process: PreviewChildProcess;
@@ -62,15 +70,20 @@ export type PreviewInstance = {
 };
 
 export type PreviewStartRequest = {
+  /** Owning scope. Required — servers are owned per tab (or synthetic folder/wizard scope). */
+  scope: string;
+  /** Working directory for the spawned server. */
   folderPath: string;
   servers?: DevServer[];
-  installCommand?: string;
   serverId?: string;
   command?: string;
   port?: number;
-  /** Exact pre-resolved port; skips findFreePort when set. */
+  /** Exact pre-resolved port; skips port allocation when set. */
   resolvedPort?: number;
+  /** Pre-reserved ports per server id (bootstrap plan phase). Used verbatim. */
+  reservedPorts?: Map<string, PortReservation>;
   exportUrlAs?: string | string[];
+  portEnv?: string | string[];
   all?: boolean;
   readyTimeoutMs?: number;
 };
@@ -87,11 +100,12 @@ export type PreviewManagerDeps = {
   spawnChild: (opts: SpawnChildOpts) => PreviewChildProcess;
   probe: (url: string, signal?: AbortSignal) => Promise<PreviewProbeResult>;
   findFreePort: (startPort: number) => Promise<number>;
-  allocatePorts: (servers: { id: string; port?: number }[]) => Promise<Map<string, number>>;
-  runInstall: (folderPath: string, installCommand: string) => Promise<void>;
-  shouldInstall: (folderPath: string, installCommand: string | undefined) => boolean;
+  /** Optional port registry for hold-and-release reservations + ownership guards. */
+  ports?: PortRegistry;
   emitStatus: (snapshot: PreviewServerSnapshot) => void;
   emitLog: (event: PreviewLogEvent) => void;
+  /** Optional tap for every stdout/stderr line (before error filtering). */
+  emitLine?: (line: PreviewServerLogLine) => void;
   now?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 };
@@ -119,6 +133,7 @@ export function wrapBunSubprocess(proc: Subprocess): PreviewChildProcess {
 
 export function toServerSnapshot(instance: PreviewInstance): PreviewServerSnapshot {
   return {
+    scope: instance.scope,
     folderPath: instance.folderPath,
     serverId: instance.serverId,
     phase: instance.phase,
@@ -137,18 +152,18 @@ export function toStartResponse(
   return { ...snapshot, starting };
 }
 
-export function previewKey(folderPath: string, serverId: string): string {
-  return `${folderPath}::${serverId}`;
+export function previewKey(scope: string, serverId: string): string {
+  return `${scope}::${serverId}`;
 }
 
-export function fleetScopeKey(folderPath: string): string {
-  return `${folderPath}::*`;
+export function fleetScopeKey(scope: string): string {
+  return `${scope}::*`;
 }
 
 export function scopeKeyFor(
-  folderPath: string,
+  scope: string,
   serverId: string | undefined,
   all: boolean,
 ): string {
-  return all ? fleetScopeKey(folderPath) : previewKey(folderPath, serverId ?? "web");
+  return all ? fleetScopeKey(scope) : previewKey(scope, serverId ?? "web");
 }

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -62,82 +62,6 @@ export async function initProjectRepo(projectPath: string): Promise<void> {
   );
 }
 
-/** Detect the default install command for a project based on lockfiles. */
-export function detectInstallCommand(folderPath: string): string {
-  const hasBunLock =
-    existsSync(join(folderPath, "bun.lock")) || existsSync(join(folderPath, "bun.lockb"));
-  return hasBunLock ? "bun install" : "npm install";
-}
-
-/**
- * Run an install command in folderPath with a timeout, draining stdout.
- * Throws on non-zero exit.
- */
-export async function runInstallCommand(folderPath: string, installCommand: string, timeoutMs = 300_000): Promise<void> {
-  logger.info("Running install command", { folderPath, installCommand });
-  const proc = Bun.spawn(["sh", "-c", installCommand], {
-    cwd: folderPath,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: process.env,
-  });
-
-  // Drain stdout asynchronously so the child never blocks on a full pipe.
-  void (async () => {
-    const reader = proc.stdout.getReader();
-    try {
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
-      }
-    } catch {
-      // Ignore read errors.
-    }
-  })();
-
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  let exitCode: number;
-  try {
-    exitCode = await Promise.race([
-      proc.exited,
-      new Promise<number>((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error(`Install timed out after ${timeoutMs / 1000}s: ${installCommand}`)),
-          timeoutMs,
-        );
-      }),
-    ]);
-  } catch (err) {
-    proc.kill();
-    throw err;
-  } finally {
-    if (timeoutId != null) clearTimeout(timeoutId);
-  }
-
-  if (exitCode !== 0) {
-    const stderr = await new Response(proc.stderr).text();
-    throw new Error(`Install command failed (exit ${exitCode}): ${installCommand}\n${stderr.slice(0, 500)}`);
-  }
-
-  logger.info("Install command completed", { folderPath });
-}
-
-export async function ensureNodeModulesInstalled(folderPath: string): Promise<void> {
-  if (existsSync(join(folderPath, "node_modules"))) {
-    return;
-  }
-  const command = detectInstallCommand(folderPath);
-  await runInstallCommand(folderPath, command);
-}
-
-async function copyEnvFiles(sourceDir: string, targetDir: string): Promise<void> {
-  const entries = await readdir(sourceDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.startsWith(".env")) continue;
-    await copyFile(join(sourceDir, entry.name), join(targetDir, entry.name));
-  }
-}
-
 /**
  * Resolve the true project root from a folder path, even when the folder
  * is a git worktree. In a regular repo this returns the repo root. In a
@@ -162,6 +86,19 @@ export async function resolveProjectRoot(folderPath: string): Promise<string> {
   }
 }
 
+export function sessionWorktreesDir(): string {
+  // HERMAN_WORKTREES_DIR is a test seam (like HERMAN_APP_DIR).
+  if (process.env.HERMAN_WORKTREES_DIR) {
+    return process.env.HERMAN_WORKTREES_DIR;
+  }
+  return join(homedir(), "Herman", ".worktrees");
+}
+
+/**
+ * Git-only worktree creation. Workspace provisioning (env files, deps,
+ * migrations) is the session bootstrapper's job — this creates the worktree
+ * and branch, and makes sure the repo ignores the `.herman/` stamp dir.
+ */
 export async function createSessionWorktree(mainFolderPath: string, tabId: TabId): Promise<{
   folderPath: string;
   worktree: SessionWorktree;
@@ -169,11 +106,29 @@ export async function createSessionWorktree(mainFolderPath: string, tabId: TabId
   const repoRoot = await getRepoRoot(mainFolderPath);
   const baseBranch = (await git("rev-parse --abbrev-ref HEAD", repoRoot)) || "main";
   const branch = `herman/session/${escapeRefPart(tabId).slice(0, 24)}`;
-  const folderPath = join(homedir(), "Herman", ".worktrees", tabId);
-  await mkdir(join(homedir(), "Herman", ".worktrees"), { recursive: true });
-  await git(`worktree add "${folderPath}" -b "${branch}" "${baseBranch}"`, repoRoot);
-  await copyEnvFiles(repoRoot, folderPath);
-  await ensureNodeModulesInstalled(folderPath);
+  const folderPath = join(sessionWorktreesDir(), tabId);
+  await mkdir(sessionWorktreesDir(), { recursive: true });
+  await ensureHermanDirExcluded(repoRoot);
+
+  if (existsSync(folderPath)) {
+    // Reattach: a previous run created the worktree but crashed before the
+    // session was persisted — adopt it instead of failing on "already exists".
+    logger.info("Reattaching to existing session worktree", { tabId, folderPath });
+    return {
+      folderPath,
+      worktree: { branch, baseBranch, mainFolderPath: repoRoot },
+    };
+  }
+
+  const branchExists = await git(`show-ref --verify --quiet refs/heads/${branch}`, repoRoot)
+    .then(() => true)
+    .catch(() => false);
+  if (branchExists) {
+    // Re-attach after an interrupted session: the branch already exists.
+    await git(`worktree add "${folderPath}" "${branch}"`, repoRoot);
+  } else {
+    await git(`worktree add "${folderPath}" -b "${branch}" "${baseBranch}"`, repoRoot);
+  }
   return {
     folderPath,
     worktree: {
@@ -182,6 +137,29 @@ export async function createSessionWorktree(mainFolderPath: string, tabId: TabId
       mainFolderPath: repoRoot,
     },
   };
+}
+
+/**
+ * Append `.herman/` to the repo's `.git/info/exclude` once (per-repo, no
+ * project-file pollution) so the workspace stamp dir never shows as a change.
+ */
+async function ensureHermanDirExcluded(repoRoot: string): Promise<void> {
+  try {
+    const excludePath = join(repoRoot, ".git", "info", "exclude");
+    let existing = "";
+    try {
+      existing = await readFile(excludePath, "utf-8");
+    } catch {
+      existing = "";
+    }
+    if (existing.split("\n").some((line) => line.trim() === ".herman/")) return;
+    await appendFile(excludePath, `${existing.endsWith("\n") || existing === "" ? "" : "\n"}.herman/\n`, "utf-8");
+  } catch (error) {
+    logger.debug("Failed to add .herman/ to git exclude", {
+      repoRoot,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export async function ensureSessionWorktree(tab: Pick<Tab, "id" | "worktree" | "folderPath">): Promise<string> {
@@ -265,18 +243,36 @@ export function buildSessionSyncPrompt(opts: {
   ].join("\n");
 }
 
-export async function ensureGitAndDependencies(projectPath: string): Promise<void> {
-  await initProjectRepo(projectPath);
-  await ensureNodeModulesInstalled(projectPath);
-}
+/**
+ * Maps pi-session cwds to owning projects. pi JSONL headers record the
+ * worktree path as cwd; the owning project is resolved through the persisted
+ * sessions' `worktree.mainFolderPath`.
+ */
+export class WorktreeIndex {
+  private readonly mainRootByTabId = new Map<string, string>();
 
-export async function ensureWorktreeDependencies(folderPath: string): Promise<void> {
-  const nodeModules = join(folderPath, "node_modules");
-  if (!existsSync(nodeModules)) {
-    await ensureNodeModulesInstalled(folderPath);
-    return;
+  constructor(sessions: Iterable<{ id: string; worktree?: SessionWorktree }>) {
+    for (const session of sessions) {
+      if (session.worktree) {
+        this.mainRootByTabId.set(session.id, session.worktree.mainFolderPath);
+      }
+    }
   }
-  const info = await stat(nodeModules);
-  if (info.isDirectory()) return;
-  await ensureNodeModulesInstalled(folderPath);
+
+  /** Extract the tab id from a `…/.worktrees/<tabId>` path. */
+  static worktreeTabId(cwd: string): string | undefined {
+    const match = cwd.replace(/\\/g, "/").match(/\/\.worktrees\/([^/]+)\/?$/);
+    return match?.[1];
+  }
+
+  static isWorktreePath(cwd: string): boolean {
+    return WorktreeIndex.worktreeTabId(cwd) != null || cwd.replace(/\\/g, "/").includes("/.worktrees/");
+  }
+
+  /** The project root that owns this cwd, when it is a known session worktree. */
+  projectRootFor(cwd: string): string | undefined {
+    const tabId = WorktreeIndex.worktreeTabId(cwd);
+    if (!tabId) return undefined;
+    return this.mainRootByTabId.get(tabId);
+  }
 }

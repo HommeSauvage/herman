@@ -11,6 +11,7 @@ import {
   PREVIEW_CONSOLE_PRELOAD,
   parsePreviewHostMessage,
 } from "../lib/preview-webview-bridge.js";
+import type { PreviewConsoleEntry } from "@herman/rpc/host-bridge";
 
 const PREVIEW_NAV_RULES = [
   "^*",
@@ -19,13 +20,20 @@ const PREVIEW_NAV_RULES = [
   "*://[::1]:*/*",
 ] as const;
 
+// Masks are holes punched through the native webview so DOM overlays can
+// show (and be clicked) through it. Target `[data-sonner-toast]` rather than
+// `[data-sonner-toaster]`: sonner's <ol> only exists while toasts are shown
+// and all <li> toasts are position:absolute, so the toaster's own rect
+// collapses to height 0 while the toast <li>s have the real visible boxes.
 const PREVIEW_MASKS =
-  "[data-herman-overlay],[data-slot='dialog-overlay'],[data-slot='dialog-content'],[data-sonner-toaster]";
+  "[data-herman-overlay],[data-slot='dialog-overlay'],[data-slot='dialog-content'],[data-sonner-toast]";
 
 export type PreviewClientError = {
   message: string;
   stack?: string;
 };
+
+export type PreviewConsoleEntryCallback = (entry: PreviewConsoleEntry) => void;
 
 export type PreviewWebviewHandle = {
   goBack: () => void;
@@ -46,6 +54,7 @@ type PreviewWebviewProps = {
    *  frame — needed while a split divider is actively being dragged. */
   continuousSync?: boolean;
   onClientError?: (error: PreviewClientError) => void;
+  onConsoleEntry?: PreviewConsoleEntryCallback;
   onNavigate?: (url: string) => void;
   className?: string;
   style?: CSSProperties;
@@ -72,6 +81,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       passthrough = false,
       continuousSync = false,
       onClientError,
+      onConsoleEntry,
       onNavigate,
       className,
       style,
@@ -83,8 +93,13 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     // before passive effect cleanups run in some React versions, so we keep a
     // dedicated ref that is never nulled to guarantee the native overlay is hidden.
     const cleanupElRef = useRef<ElectrobunWebviewElement | null>(null);
+    // Set once the component unmounts — every imperative call into the native
+    // webview no-ops afterwards so we never race the BrowserView removal
+    // (which logs "BrowserView not found or has no ptr" warnings).
+    const disposedRef = useRef(false);
     const iframeRef = useRef<HTMLIFrameElement | null>(null);
     const onClientErrorRef = useRef(onClientError);
+    const onConsoleEntryRef = useRef(onConsoleEntry);
     const onNavigateRef = useRef(onNavigate);
     const detachHostMessageRef = useRef<(() => void) | undefined>(undefined);
     const detachNavigateRef = useRef<(() => void) | undefined>(undefined);
@@ -94,6 +109,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     useEffect(() => {
       onClientErrorRef.current = onClientError;
     }, [onClientError]);
+
+    useEffect(() => {
+      onConsoleEntryRef.current = onConsoleEntry;
+    }, [onConsoleEntry]);
 
     useEffect(() => {
       onNavigateRef.current = onNavigate;
@@ -106,7 +125,17 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         const listener = (event: CustomEvent) => {
           const parsed = parsePreviewHostMessage(event.detail);
           if (!parsed) return;
-          onClientErrorRef.current?.({ message: parsed.message, stack: parsed.stack });
+          const entry: PreviewConsoleEntry = {
+            level: parsed.level,
+            message: parsed.message,
+            stack: parsed.stack,
+            url: parsed.url ?? "",
+            ts: parsed.ts ?? Date.now(),
+          };
+          onConsoleEntryRef.current?.(entry);
+          if (parsed.level === "error") {
+            onClientErrorRef.current?.({ message: parsed.message, stack: parsed.stack });
+          }
         };
 
         el.on("host-message", listener);
@@ -162,6 +191,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       ref,
       () => ({
         goBack: () => {
+          if (disposedRef.current) return;
           if (useNative) {
             elementRef.current?.goBack();
             return;
@@ -169,6 +199,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           // iframe fallback: no history API access
         },
         loadURL: (nextUrl: string) => {
+          if (disposedRef.current) return;
           if (useNative) {
             elementRef.current?.loadURL(nextUrl);
             return;
@@ -178,12 +209,14 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           }
         },
         canGoBack: async () => {
+          if (disposedRef.current) return false;
           if (!useNative || typeof elementRef.current?.canGoBack !== "function") {
             return false;
           }
           return elementRef.current.canGoBack();
         },
         reload: () => {
+          if (disposedRef.current) return;
           if (useNative) {
             elementRef.current?.reload();
             return;
@@ -201,14 +234,17 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       [useNative],
     );
 
-    // On unmount, hide the native BrowserView and navigate to about:blank
-    // before the DOM element is removed.  This prevents the native overlay
-    // from lingering as an orphaned view after the anchor element is gone.
+    // On unmount, hide the native BrowserView before the DOM element is
+    // removed.  This prevents the native overlay from lingering as an
+    // orphaned view after the anchor element is gone.
     //
     // Uses cleanupElRef (never nulled) instead of elementRef because React
     // may call the callback ref with null before passive effect cleanups.
+    // No loadURL("about:blank") here — navigating after disconnect races the
+    // native view removal and logs "BrowserView not found" warnings.
     useEffect(() => {
       return () => {
+        disposedRef.current = true;
         detachHostMessageRef.current?.();
         detachNavigateRef.current?.();
         if (useNative) {
@@ -216,13 +252,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           if (el) {
             // Hide the native overlay immediately so it doesn't flash stale
             // content while the async webviewTagRemove message is in flight.
-            el.toggleHidden(true);
-            // Navigate away from the preview page to release resources (e.g.
-            // WebSocket connections, timers) held by the guest page.
             try {
-              el.loadURL?.("about:blank");
+              el.toggleHidden(true);
             } catch {
-              // Best-effort; the native view may already be torn down.
+              // The native view may already be torn down.
             }
           }
         }
@@ -232,12 +265,12 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     // Hidden / passthrough are independent toggles the native webview exposes;
     // keep them in sync with props without needing an imperative parent ref.
     useEffect(() => {
-      if (!useNative) return;
+      if (!useNative || disposedRef.current) return;
       elementRef.current?.toggleHidden(hidden);
     }, [useNative, hidden]);
 
     useEffect(() => {
-      if (!useNative) return;
+      if (!useNative || disposedRef.current) return;
       elementRef.current?.togglePassthrough(passthrough);
     }, [useNative, passthrough]);
 
@@ -246,6 +279,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     useEffect(() => {
       if (reloadRevision === prevReloadRevisionRef.current) return;
       prevReloadRevisionRef.current = reloadRevision;
+      if (disposedRef.current) return;
       if (useNative) {
         elementRef.current?.reload();
       }
@@ -255,7 +289,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     // Keep the native overlay's bounds glued to the host element's box —
     // covers device-mode changes, split-pane resizes, and window resizes.
     useEffect(() => {
-      if (!useNative) return;
+      if (!useNative || disposedRef.current) return;
       const el = elementRef.current;
       if (!el) return;
 
@@ -263,6 +297,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
 
       if (typeof ResizeObserver === "undefined") return;
       const observer = new ResizeObserver(() => {
+        if (disposedRef.current) return;
         el.syncDimensions();
       });
       observer.observe(el);
@@ -272,9 +307,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     // While a split divider is being actively dragged, layout can change every
     // frame faster than ResizeObserver callbacks land — run a RAF loop instead.
     useEffect(() => {
-      if (!useNative || !continuousSync) return;
+      if (!useNative || !continuousSync || disposedRef.current) return;
       let raf = 0;
       const tick = () => {
+        if (disposedRef.current) return;
         elementRef.current?.syncDimensions(true);
         raf = requestAnimationFrame(tick);
       };

@@ -13,14 +13,28 @@ import {
 } from "../../src/bun/worktree.js";
 
 const createdDirs: string[] = [];
+const createdWorktrees: Array<{ folderPath: string; worktree: { branch: string; baseBranch: string; mainFolderPath: string } }> = [];
 
 function makeProject(name: string): string {
   const dir = createTestTempDir(`herman-${name}-`);
   createdDirs.push(dir);
+  // Ignore install artifacts so createSessionWorktree's npm install does not
+  // count as session changes.
+  writeFileSync(
+    join(dir, ".gitignore"),
+    "node_modules\npackage-lock.json\nbun.lock\nbun.lockb\n.env\n.env.*\n.DS_Store\n",
+  );
   return dir;
 }
 
-afterEach(() => {
+function uniqueTabId(label: string): string {
+  return `tab-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+afterEach(async () => {
+  for (const entry of createdWorktrees.splice(0, createdWorktrees.length)) {
+    await removeSessionWorktree(entry);
+  }
   for (const dir of createdDirs.splice(0, createdDirs.length)) {
     removeTestTempDir(dir);
   }
@@ -43,14 +57,18 @@ describe("worktree helpers", () => {
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
 
-    const created = await createSessionWorktree(project, "tab-test-1");
+    const created = await createSessionWorktree(project, uniqueTabId("test-1"));
+    createdWorktrees.push(created);
     expect(existsSync(created.folderPath)).toBe(true);
-    expect(existsSync(join(created.folderPath, ".env"))).toBe(true);
+    // createSessionWorktree is git-only — env provisioning is the setup
+    // runner's job (session-bootstrap), so no .env copy happens here.
+    expect(existsSync(join(created.folderPath, ".env"))).toBe(false);
 
     await removeSessionWorktree({
       folderPath: created.folderPath,
       worktree: created.worktree,
     });
+    createdWorktrees.pop();
   });
 
   it("counts uncommitted changes in the draft copy", async () => {
@@ -60,8 +78,8 @@ describe("worktree helpers", () => {
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
 
-    const tabId = "tab-uncommitted";
-    const created = await createSessionWorktree(project, tabId);
+    const created = await createSessionWorktree(project, uniqueTabId("uncommitted"));
+    createdWorktrees.push(created);
     writeFileSync(join(created.folderPath, "index.txt"), "updated\n");
 
     const changes = await getSessionChanges({
@@ -79,8 +97,8 @@ describe("worktree helpers", () => {
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
 
-    const tabId = "tab-triple-dot";
-    const created = await createSessionWorktree(project, tabId);
+    const created = await createSessionWorktree(project, uniqueTabId("triple-dot"));
+    createdWorktrees.push(created);
 
     writeFileSync(join(project, "other.txt"), "main-only\n");
     await git("add other.txt", project);
@@ -101,8 +119,8 @@ describe("worktree helpers", () => {
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
 
-    const tabId = "tab-merged";
-    const created = await createSessionWorktree(project, tabId);
+    const created = await createSessionWorktree(project, uniqueTabId("merged"));
+    createdWorktrees.push(created);
     writeFileSync(join(created.folderPath, "index.txt"), "updated\n");
     await git("add index.txt", created.folderPath);
     await git('-c user.email=herman@local -c user.name=Herman commit -m "Session changes"', created.folderPath);
@@ -121,5 +139,6 @@ describe("worktree helpers", () => {
       folderPath: created.folderPath,
       worktree: created.worktree,
     });
+    createdWorktrees.pop();
   });
 });

@@ -13,7 +13,8 @@ import {
   isAgentEndCurrent,
   syncMessageCounter,
 } from "../shared/apply-agent-event.js";
-import type { AgentStatus, ContextStats, Message, ModelMetadata, SessionWorktree, Tab, TabId, TabMessagesHydrated, TabMessageHydrationStatus } from "../shared/rpc.js";
+import type { AgentStatus, ContextStats, Message, ModelMetadata, OutgoingMessages, SessionIsolation, Tab, TabId, TabMessagesHydrated, TabMessageHydrationStatus } from "../shared/rpc.js";
+import type { PreviewServerLogLine } from "../shared/preview.js";
 import {
   modelApplyFingerprint,
   normalizeModelId,
@@ -27,30 +28,30 @@ import {
   hasUserOrAssistantMessage,
   truncateTitle,
 } from "../shared/tab-utils.js";
-import { AgentBridge, type AgentBridgeState } from "./agent-bridge.js";
+import { AgentBridge } from "./agent-bridge.js";
 import { AgentRuntime } from "./agent-runtime.js";
 import { deleteComposerDraft, loadComposerDraft, saveComposerDraft } from "./composer-drafts.js";
 import {
   extractMessagesFromAgentPayload,
 } from "./pi-messages.js";
 import { contextStatsFromContextReport, readPiSessionModel as readPiSessionModelFromFile } from "./session-snapshot.js";
-import { getDevServerStatus, stopDevServer } from "./preview-server.js";
+import { stopPreviewsForScope, tabScope } from "./preview-server.js";
+import { previewPortRegistry } from "./preview/port-registry.js";
+import { ensurePreviewStarted } from "./preview/index.js";
 import { rewindManager, getUserMessageIds, readPiSessionId, RevertConflictError } from "./rewind-manager.js";
-import { resolveSessionInfoHostReply } from "./session-info-host.js";
 import { deleteTabHistory, saveTabHistory } from "./tab-history.js";
 import { loadInstantHydration } from "./tab-message-hydration.js";
 import { resolvePiSessionFile, deletePiSessionFile } from "./pi-session.js";
+import { SessionBootstrapper, resolveIsolationPolicy } from "./session-bootstrap/bootstrapper.js";
 import {
   buildSessionSyncPrompt,
-  createSessionWorktree,
-  ensureSessionWorktree,
   getSessionChanges,
   removeSessionWorktree,
   resolveProjectRoot,
+  WorktreeIndex,
 } from "./worktree.js";
 import { TabSessionStore } from "./tab-session-store.js";
 import { loadWindowState, saveWindowState, type PersistedSession } from "./window-state.js";
-import { isGitRepo } from "./rewind-core.js";
 
 const logger = getLogger(["herman-desktop", "agent-process-manager"]);
 
@@ -86,19 +87,23 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Sender shape derived from OutgoingMessages — dropped payload fields are
+ *  a compile error here, not a silent runtime loss (see Bug A in the sessions
+ *  refactor plan). */
+type OutgoingSender = {
+  [K in keyof OutgoingMessages]: (payload: OutgoingMessages[K]) => void;
+};
+
 export type WebviewSender = {
-  send: {
-    agentEvent: (payload: { tabId: TabId; event: AgentEvent }) => void;
-    agentStatusChanged: (payload: {
-      tabId: TabId;
-      state: AgentBridgeState;
-      stderr?: string;
-    }) => void;
-    tabFolderChanged: (payload: { tabId: TabId; folderPath?: string; projectRoot?: string; worktree?: SessionWorktree; worktreeStatus?: "pending" | "ready" | "error"; error?: string }) => void;
-    sessionsChanged: (payload: { sessions: PersistedSession[] }) => void;
-    tabMessagesHydrated: (payload: TabMessagesHydrated) => void;
-    tabModelChanged: (payload: { tabId: TabId; currentModel?: string }) => void;
-  };
+  send: Pick<
+    OutgoingSender,
+    | "agentEvent"
+    | "agentStatusChanged"
+    | "sessionStateChanged"
+    | "sessionsChanged"
+    | "tabMessagesHydrated"
+    | "tabModelChanged"
+  >;
 };
 
 export type AgentProcessManagerOptions = {
@@ -113,6 +118,10 @@ export type AgentProcessManagerOptions = {
   onExplicitModelSelection?: (modelId: string) => void;
   /** Called with every agent models_sync so the shared catalog can merge custom providers. */
   onAgentModelsSync?: (models: string[], metadata?: Record<string, ModelMetadata>) => void;
+  /** Called after a tab is fully closed (preview context cleanup, etc.). */
+  onTabClosed?: (tabId: TabId) => void;
+  /** Setup/server log lines (setup steps, preview servers) for the preview-context ring. */
+  emitServerLine?: (line: PreviewServerLogLine) => void;
 };
 
 export class AgentProcessManager {
@@ -129,11 +138,15 @@ export class AgentProcessManager {
   private getNewTabModel?: () => string | undefined;
   private onExplicitModelSelection?: (modelId: string) => void;
   private onAgentModelsSync?: (models: string[], metadata?: Record<string, ModelMetadata>) => void;
+  private onTabClosed?: (tabId: TabId) => void;
+  private emitServerLine?: (line: PreviewServerLogLine) => void;
   private serverUrl: string;
   /** set_model retry budget per tab, scoped by (desired model, registry snapshot). */
   private modelApplyAttempts = new Map<TabId, { fingerprint: string; attempts: number }>();
   /** Last model each agent confirmed via models_sync (or a successful set_model). */
   private agentConfirmedModels = new Map<TabId, string>();
+  /** Single owner of the tab → ready pipeline (worktree, setup, agent, preview). */
+  private readonly bootstrapper: SessionBootstrapper;
 
   constructor(options: AgentProcessManagerOptions) {
     this.webviewRpc = options.webviewRpc;
@@ -144,7 +157,33 @@ export class AgentProcessManager {
     this.getNewTabModel = options.getNewTabModel;
     this.onExplicitModelSelection = options.onExplicitModelSelection;
     this.onAgentModelsSync = options.onAgentModelsSync;
+    this.onTabClosed = options.onTabClosed;
+    this.emitServerLine = options.emitServerLine;
     this.agentRuntime = new AgentRuntime((tabId) => this.ensureAgentForTab(tabId));
+    this.bootstrapper = new SessionBootstrapper({
+      getTab: (tabId) => this.store.tabs.get(tabId),
+      patchTab: (tabId, patch) => {
+        const tab = this.store.tabs.get(tabId);
+        if (!tab) return;
+        this.store.tabs.set(tabId, this.patchTab(tab, patch));
+      },
+      getPersisted: (tabId) => this.store.sessions.get(tabId),
+      patchPersisted: (tabId, patch) => {
+        const session = this.store.sessions.get(tabId);
+        if (session) {
+          this.store.sessions.set(tabId, { ...session, ...patch });
+        }
+      },
+      isTabOpen: (tabId) => this.store.openTabIds.includes(tabId),
+      getMode: () => this.getMode(),
+      scheduleAgent: (tabId) => this.agentRuntime.schedule(tabId),
+      emitState: (payload) => this.webviewRpc.send.sessionStateChanged(payload),
+      emitServerLine: (line) => this.emitServerLine?.(line),
+      persist: () => this.persist(),
+      portRegistry: previewPortRegistry,
+      ensurePreviewStarted: (scope, folderPath, opts) =>
+        ensurePreviewStarted(scope, folderPath, opts),
+    });
   }
 
   private restoreDeferred = createDeferred<void>();
@@ -210,6 +249,7 @@ export class AgentProcessManager {
       }
 
       const agentTabIds: TabId[] = [];
+      const repairTabIds: TabId[] = [];
       for (const tabId of openTabIds) {
         const persisted = this.store.sessions.get(tabId);
         if (!persisted) continue;
@@ -219,6 +259,13 @@ export class AgentProcessManager {
         syncMessageCounter([tab.messages]);
         this.store.tabs.set(tabId, tab);
         if (!tab.folderPath) continue;
+        const isolation = persisted.isolation ?? (persisted.worktree ? "worktree" : "direct");
+        if (isolation === "worktree") {
+          // Repair mode: the bootstrapper re-creates a missing worktree,
+          // resumes any interrupted setup, then starts agent + preview.
+          repairTabIds.push(tabId);
+          continue;
+        }
         if (existsSync(tab.folderPath)) {
           agentTabIds.push(tabId);
           continue;
@@ -239,6 +286,9 @@ export class AgentProcessManager {
       }
 
       this.agentRuntime.scheduleMany(agentTabIds);
+      for (const tabId of repairTabIds) {
+        void this.bootstrapper.bootstrap(tabId, { kind: "repair" });
+      }
 
       if (this.store.activeTabId && !this.store.tabs.has(this.store.activeTabId)) {
         this.store.activeTabId = this.store.openTabIds[0];
@@ -283,35 +333,57 @@ export class AgentProcessManager {
         tab.title = getProjectName(projectRoot);
       }
     }
-    const needsWorktree = !!(mode === "rookie" && projectRoot && (await isGitRepo(projectRoot)));
-    if (needsWorktree) {
-      // Return the tab immediately with the project root as a temporary folder.
-      // The worktree is created in the background so the UI feels instant.
+    // The one isolation policy (rookie + git → worktree). The worktree and
+    // workspace setup happen in the background via the bootstrapper.
+    const isolation = projectRoot ? await resolveIsolationPolicy(mode, projectRoot) : "direct";
+    if (isolation === "worktree") {
+      // Return the tab immediately with the project root as a temporary
+      // folder so the UI feels instant; the real workspace follows.
       tab.folderPath = projectRoot;
-      tab.worktreeStatus = "pending";
+      tab.setup = { phase: "pending", label: "Preparing your session…" };
     }
 
-    await this.registerAndOpenTab(tab, this.toPersistedSession(tab), projectRoot, needsWorktree);
-    logger.debug("Created tab", { tabId: tab.id, folderPath: tab.folderPath, projectRoot, needsWorktree });
+    await this.registerAndOpenTab(tab, this.toPersistedSession(tab, isolation), projectRoot);
+    this.bootstrapForTab(tab.id, "create");
+    logger.debug("Created tab", { tabId: tab.id, folderPath: tab.folderPath, projectRoot, isolation });
     return tab;
   }
 
   /**
    * Open a finished wizard project as a real tab with a **fresh** pi session.
-   * Coding and QA already ran on the main project tree; open that path directly
-   * (no session worktree) so uncommitted wizard changes remain visible.
-   * Do not resume wizard history or send a post-handoff `/goal`.
+   * The wizard's `setupProjectRepo()` already committed everything, so the
+   * first session goes through the same bootstrap pipeline as any rookie tab
+   * (worktree + full setup + agent + preview) — no special no-worktree path.
+   *
+   * When the repo setup failed (no git repo), the session falls back to
+   * direct isolation per the policy table and the failure is surfaced in the
+   * tab's setup state.
    */
-  async adoptWizardSession(projectPath: string, wizardSessionId: string): Promise<Tab> {
-    const projectRoot = await resolveProjectRoot(projectPath);
-    const tab = this.makeTab(projectRoot, undefined, this.newTabModel());
-    tab.projectRoot = projectRoot;
-    tab.folderPath = projectRoot;
-    tab.projectColor = getProjectColor(projectRoot);
-    tab.title = getProjectName(projectRoot);
-    // Intentionally no createSessionWorktree: wizard coding/QA wrote into the
-    // main clone; a fresh worktree from HEAD would drop those changes.
-    await this.registerAndOpenTab(tab, this.toPersistedSession(tab), projectRoot, false);
+  async adoptWizardSession(
+    projectPath: string,
+    wizardSessionId: string,
+    opts?: { repoSetupError?: string },
+  ): Promise<Tab> {
+    const tab = await this.createTab(projectPath);
+    if (opts?.repoSetupError) {
+      const repoSetupError = opts.repoSetupError;
+      // After the bootstrap completes (direct fallback → phase "none"),
+      // surface why this session could not be isolated.
+      void this.bootstrapper.bootstrap(tab.id, { kind: "create" }).then(() => {
+        const current = this.store.tabs.get(tab.id);
+        if (!current || current.setup.phase !== "none") return;
+        const updated = this.patchTab(current, {
+          setup: {
+            phase: "error",
+            step: "provision",
+            error: `The project's git repository could not be set up, so this session is not isolated: ${repoSetupError}`,
+            retryable: false,
+          },
+        });
+        this.store.tabs.set(tab.id, updated);
+        this.emitSessionState(tab.id);
+      });
+    }
     logger.info("Opened wizard project as fresh tab", {
       tabId: tab.id,
       projectPath,
@@ -346,25 +418,13 @@ export class AgentProcessManager {
     const composerValue = await loadComposerDraft(sessionId);
     const now = Date.now();
     const instant = await loadInstantHydration(sessionId, persisted);
-    let tab = { ...this.materializeTabFromHydration(persisted, instant, composerValue), updatedAt: now };
-    const mode = this.getMode();
+    const tab = { ...this.materializeTabFromHydration(persisted, instant, composerValue), updatedAt: now };
+    // The persisted isolation policy is final — reopening never upgrades
+    // direct → worktree (no silent migration).
+    const isolation = persisted.isolation ?? (persisted.worktree ? "worktree" : "direct");
 
-    // Determine whether we need a background worktree creation.
-    let needsWorktree = false;
-    if (mode === "rookie" && tab.folderPath && (await isGitRepo(tab.projectRoot))) {
-      if (!tab.worktree) {
-        needsWorktree = true;
-        tab.folderPath = tab.projectRoot;
-        tab.worktreeStatus = "pending";
-      } else {
-        // Worktree already exists (or folder is still on disk) — fast path.
-        tab.folderPath = await ensureSessionWorktree(tab);
-      }
-    } else if (tab.worktree) {
-      tab.folderPath = await ensureSessionWorktree(tab);
-    }
-
-    await this.registerAndOpenTab(tab, { ...persisted, updatedAt: now }, tab.projectRoot, needsWorktree);
+    await this.registerAndOpenTab(tab, { ...persisted, isolation, updatedAt: now }, tab.projectRoot);
+    this.bootstrapForTab(sessionId, "open");
     return this.store.tabs.get(sessionId);
   }
 
@@ -383,15 +443,16 @@ export class AgentProcessManager {
     tab.title = getProjectName(projectRoot);
     const mode = this.getMode();
 
-    const needsWorktree = mode === "rookie" && (await isGitRepo(projectRoot));
-    if (needsWorktree) {
+    const isolation = await resolveIsolationPolicy(mode, projectRoot);
+    if (isolation === "worktree") {
       tab.folderPath = projectRoot;
-      tab.worktreeStatus = "pending";
+      tab.setup = { phase: "pending", label: "Preparing your session…" };
     }
 
-    const persisted = { ...this.toPersistedSession(tab), piSessionId, updatedAt: Date.now() };
-    await this.registerAndOpenTab(tab, persisted, projectRoot, needsWorktree);
-    logger.info("Opened pi session as tab", { tabId: tab.id, folderPath, projectRoot, piSessionId, needsWorktree });
+    const persisted = { ...this.toPersistedSession(tab, isolation), piSessionId, updatedAt: Date.now() };
+    await this.registerAndOpenTab(tab, persisted, projectRoot);
+    this.bootstrapForTab(tab.id, "create");
+    logger.info("Opened pi session as tab", { tabId: tab.id, folderPath, projectRoot, piSessionId, isolation });
     return tab;
   }
 
@@ -436,27 +497,24 @@ export class AgentProcessManager {
     }
     rewindManager.dispose(tabId);
     this.store.tabs.delete(tabId);
-    if (tab?.folderPath) {
-      const stillUsed = this.store.openTabIds.some((id) => this.store.tabs.get(id)?.folderPath === tab.folderPath);
-      if (!stillUsed) {
-        // Defer preview server shutdown so the renderer receives tabClosed
-        // and unmounts the webview (hiding the native overlay) before the
-        // server is killed.  Otherwise the webview flashes an error page.
-        const folderPath = tab.folderPath;
-        void stopDevServer(folderPath).catch((err) =>
-          logger.warning("Failed to stop preview server during tab close", {
-            folderPath,
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        );
-      }
-    }
+    // Defer preview server shutdown so the renderer receives tabClosed
+    // and unmounts the webview (hiding the native overlay) before the
+    // server is killed.  Otherwise the webview flashes an error page.
+    // Preview ownership is per-tab — no folder-sharing checks needed.
+    void stopPreviewsForScope(tabScope(tabId)).catch((err) =>
+      logger.warning("Failed to stop preview servers during tab close", {
+        tabId,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    void this.bootstrapper.dispose(tabId).catch(() => undefined);
 
     if (this.store.activeTabId === tabId) {
       this.store.activeTabId = this.store.openTabIds[openIndex - 1] ?? this.store.openTabIds[openIndex] ?? undefined;
     }
 
     await this.persist();
+    this.onTabClosed?.(tabId);
     return this.store.activeTabId;
   }
 
@@ -541,13 +599,45 @@ export class AgentProcessManager {
   private async applyFolderToTab(tabId: TabId, path: string) {
     const tab = this.store.tabs.get(tabId)!;
     const projectRoot = await resolveProjectRoot(path);
+    const mode = this.getMode();
+    const isolation = await resolveIsolationPolicy(mode, projectRoot);
+
+    // Rookie + git project: the tab becomes a fresh isolated session on the
+    // new project — worktree + full setup via the bootstrap pipeline.
+    if (isolation === "worktree") {
+      await stopPreviewsForScope(tabScope(tabId)).catch(() => undefined);
+      await this.bootstrapper.dispose(tabId).catch(() => undefined);
+      const bridge = this.bridges.get(tabId);
+      if (bridge) {
+        await bridge.stop();
+        this.bridges.delete(tabId);
+      }
+      const updated = this.patchTab(tab, {
+        folderPath: projectRoot,
+        projectRoot,
+        projectColor: getProjectColor(projectRoot),
+        worktree: undefined,
+        setup: { phase: "pending", label: "Preparing your session…" },
+      });
+      this.store.tabs.set(tabId, updated);
+      this.store.sessions.set(tabId, this.toPersistedSession(updated, "worktree"));
+      if (projectRoot && !this.store.projects.includes(projectRoot)) {
+        this.store.projects.push(projectRoot);
+      }
+      await this.persist();
+      this.bootstrapForTab(tabId, "create");
+      return;
+    }
+
     const updated = this.patchTab(tab, {
       folderPath: path,
       projectRoot,
       projectColor: getProjectColor(projectRoot),
+      worktree: undefined,
+      setup: { phase: "none" },
     });
     this.store.tabs.set(tabId, updated);
-    this.store.sessions.set(tabId, this.toPersistedSession(updated));
+    this.store.sessions.set(tabId, this.toPersistedSession(updated, "direct"));
 
     if (projectRoot && !this.store.projects.includes(projectRoot)) {
       this.store.projects.push(projectRoot);
@@ -560,7 +650,7 @@ export class AgentProcessManager {
       this.agentRuntime.schedule(tabId);
     }
 
-    this.webviewRpc.send.tabFolderChanged({ tabId, folderPath: path, projectRoot });
+    this.emitSessionState(tabId);
     await this.persist();
   }
 
@@ -748,6 +838,7 @@ export class AgentProcessManager {
       // The restarted agent re-applies the tab's model via its first models_sync.
       this.resetModelStateForFreshAgent(tabId);
       await bridge.restart(tab.folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
+      await this.capturePiSessionId(tabId);
     } else {
       await this.startBridge(tabId, tab.folderPath);
     }
@@ -776,7 +867,7 @@ export class AgentProcessManager {
     const message = tab.messages[messageIndex];
     if (!message) return { messageCount: 0 };
 
-    await rewindManager.reload(tabId);
+    await rewindManager.reload(tabId, this.resolvePiSessionId(tabId));
     const userMessageIds = getUserMessageIds(tab.messages);
     const preview = await rewindManager.previewRevert(tabId, message.id, userMessageIds);
     return {
@@ -802,8 +893,8 @@ export class AgentProcessManager {
 
     this.assertNoSharedFolderConflict(tabId);
 
-    // Reload checkpoints (pi-rewind in the agent process may have created new ones).
-    await rewindManager.reload(tabId);
+    // Reload checkpoints (herman-rewind may have created new ones).
+    await rewindManager.reload(tabId, this.resolvePiSessionId(tabId));
 
     // Restore files to the state before this message's changes.
     const userMessageIds = getUserMessageIds(tab.messages);
@@ -960,22 +1051,19 @@ export class AgentProcessManager {
     await this.store.persist();
   }
 
-  private toPersistedSession(tab: Tab): PersistedSession {
-    return this.store.toPersistedSession(tab);
+  private toPersistedSession(tab: Tab, isolation?: SessionIsolation): PersistedSession {
+    return this.store.toPersistedSession(tab, isolation);
   }
 
   private async startBridge(tabId: TabId, folderPath?: string) {
     // Initialize git-based rewind for file-level undo support.
     if (folderPath) {
-      void rewindManager.init(tabId, folderPath);
+      void rewindManager.init(tabId, folderPath, this.resolvePiSessionId(tabId));
     }
 
     const bridge = new AgentBridge(
       tabId,
       (id, event) => {
-        // Silent host RPC: herman_get_session_info via editor sentinel.
-        // Reply before forwarding so no editor UI appears and the tool cannot hang.
-        if (this.tryRespondSessionInfo(id, event, bridge)) return;
         this.webviewRpc.send.agentEvent({ tabId: id, event });
       },
       (id, state, stderr) => this.webviewRpc.send.agentStatusChanged({ tabId: id, state, stderr }),
@@ -1156,57 +1244,13 @@ export class AgentProcessManager {
       thinkingMessages: [],
       availableModels: [],
       connectionState: "idle",
+      setup: { phase: "none" },
       createdAt: now,
       updatedAt: now,
       composerValue: "",
       queuedMessages: [],
       ...(currentModel ? { currentModel } : {}),
     };
-  }
-
-  /**
-   * Intercept `herman_get_session_info` editor RPC: reply silently with live
-   * preview/project/worktree details and suppress the event from the renderer.
-   * Returns true when the event was handled.
-   */
-  private tryRespondSessionInfo(
-    tabId: TabId,
-    event: AgentEvent,
-    bridge: AgentBridge,
-  ): boolean {
-    const tab = this.store.tabs.get(tabId);
-
-    const folderPath = tab?.folderPath ?? "";
-    const preview = folderPath
-      ? getDevServerStatus(folderPath)
-      : {
-          folderPath: "",
-          phase: "stopped" as const,
-          servers: [],
-        };
-
-    const reply = resolveSessionInfoHostReply(
-      event,
-      {
-        folderPath: tab?.folderPath,
-        projectRoot: tab?.projectRoot,
-        worktree: tab?.worktree,
-        mode: this.getMode(),
-      },
-      preview,
-    );
-    if (!reply) return false;
-
-    logger.debug("Responding to herman_get_session_info", {
-      tabId,
-      requestId: reply.requestId,
-      folderPath: tab?.folderPath,
-      previewPhase: preview.phase,
-      serverCount: preview.servers.length,
-    });
-
-    bridge.sendExtensionUiResponse(reply.requestId, { value: reply.value });
-    return true;
   }
 
   private handleAgentEvent(tabId: TabId, event: AgentEvent) {
@@ -1481,18 +1525,15 @@ export class AgentProcessManager {
   }
 
   /**
-   * Register a tab in the store, set it as active, optionally schedule the
-   * agent, persist, and kick off background worktree creation.
-   *
-   * This is the shared tail of createTab / openSession / openPiSession /
-   * adoptWizardSession so the tab opens instantly while worktree setup
-   * happens in the background.
+   * Register a tab in the store, set it as active, and persist.
+   * The shared tail of createTab / openSession / openPiSession /
+   * adoptWizardSession — the bootstrapper takes it from there (worktree,
+   * setup, agent, preview).
    */
   private async registerAndOpenTab(
     tab: Tab,
     persisted: PersistedSession,
     projectRoot: string,
-    needsWorktree: boolean,
   ): Promise<Tab> {
     this.store.sessions.set(tab.id, persisted);
     this.store.tabs.set(tab.id, tab);
@@ -1503,89 +1544,60 @@ export class AgentProcessManager {
       this.store.projects.push(projectRoot);
     }
 
-    // Only schedule the agent immediately for non-worktree tabs.
-    // Worktree tabs start the agent after the worktree is ready.
-    if (!needsWorktree && tab.folderPath) {
-      this.agentRuntime.schedule(tab.id);
-    }
     await this.persist();
-
-    // Background: create the session worktree, then update the tab and start the agent.
-    if (needsWorktree) {
-      void this.finalizeTabWorktree(tab.id, projectRoot);
-    }
-
     return tab;
   }
 
-  /**
-   * Background task: create the session worktree, update the tab, and start
-   * the agent once the isolated folder is ready.  Called fire-and-forget from
-   * createTab / openSession / openPiSession so the tab opens instantly.
-   */
-  private async finalizeTabWorktree(tabId: TabId, projectRoot: string): Promise<void> {
-    try {
-      const created = await createSessionWorktree(projectRoot, tabId);
-      const tab = this.store.tabs.get(tabId);
-      // Tab may have been closed while the worktree was being created.
-      if (!tab || !this.store.openTabIds.includes(tabId)) {
-        // Clean up the worktree we just created since nobody needs it.
-        void removeSessionWorktree({ folderPath: created.folderPath, worktree: created.worktree }).catch(() => {});
-        return;
-      }
-
-      // patchTab updates the sessions store internally, so we only need to
-      // update the tabs map and notify the renderer.
-      const updated = this.patchTab(tab, {
-        folderPath: created.folderPath,
-        worktree: created.worktree,
-        worktreeStatus: "ready",
-      });
-      this.store.tabs.set(tabId, updated);
-
-      this.webviewRpc.send.tabFolderChanged({
+  /** Kick off the bootstrap pipeline (fire-and-forget; errors land on Tab.setup). */
+  private bootstrapForTab(tabId: TabId, kind: "create" | "open" | "repair" | "retry"): void {
+    void this.bootstrapper.bootstrap(tabId, { kind }).catch((error) => {
+      logger.error("Session bootstrap failed", {
         tabId,
-        folderPath: created.folderPath,
-        projectRoot,
-        worktree: created.worktree,
-        worktreeStatus: "ready",
+        kind,
+        error: error instanceof Error ? error.message : String(error),
       });
+    });
+  }
 
-      // Now that the real worktree folder exists, start the agent.
-      this.agentRuntime.schedule(tabId);
-      await this.persist();
+  /** Re-run the workspace setup pipeline after a setup failure. */
+  async retrySessionSetup(tabId: TabId): Promise<{ ok: boolean; error?: string }> {
+    return this.bootstrapper.retry(tabId);
+  }
 
-      logger.info("Session worktree ready", { tabId, folderPath: created.folderPath });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error("Failed to create session worktree", { tabId, error: message });
-      const tab = this.store.tabs.get(tabId);
-      // Only update the tab if it still exists and is still open.
-      if (tab && this.store.openTabIds.includes(tabId)) {
-        const updated = this.patchTab(tab, {
-          worktreeStatus: "error",
-          connectionError: `Failed to create session workspace: ${message}`,
-        });
-        this.store.tabs.set(tabId, updated);
+  /** Persist the per-session "user stopped the preview manually" flag. */
+  async setPreviewManuallyStopped(tabId: TabId, stopped: boolean): Promise<void> {
+    const session = this.store.sessions.get(tabId);
+    if (!session || session.previewManuallyStopped === stopped) return;
+    this.store.sessions.set(tabId, { ...session, previewManuallyStopped: stopped });
+    await this.persist();
+  }
 
-        // Notify the renderer so it can show the error state.
-        this.webviewRpc.send.tabFolderChanged({
-          tabId,
-          worktreeStatus: "error",
-          error: message,
-        });
-        await this.persist();
-      }
-    }
+  /** Worktree → owning-project mapping for pi session listing (D5). */
+  getWorktreeIndex(): WorktreeIndex {
+    return new WorktreeIndex(this.store.sessions.values());
+  }
+
+  /** Push the tab's full setup/folder state to the renderer. */
+  private emitSessionState(tabId: TabId): void {
+    const tab = this.store.tabs.get(tabId);
+    if (!tab) return;
+    this.webviewRpc.send.sessionStateChanged({
+      tabId,
+      setup: tab.setup,
+      folderPath: tab.folderPath,
+      projectRoot: tab.projectRoot,
+      ...(tab.worktree ? { worktree: tab.worktree } : {}),
+    });
   }
 
   private async ensureAgentForTab(tabId: TabId): Promise<void> {
     const tab = this.store.tabs.get(tabId);
     if (!tab?.folderPath) return;
 
-    // Don't start the agent while the worktree is still being created.
-    // finalizeTabWorktree will schedule it once the folder is ready.
-    if (tab.worktreeStatus === "pending") return;
+    // Don't start the agent while workspace setup is still running.
+    // The bootstrapper schedules the agent once setup completes (or fails
+    // retryably — the agent is the best fixer and shares the workspace).
+    if (tab.setup.phase === "pending") return;
 
     if (!this.bridges.has(tabId)) {
       await this.startBridge(tabId, tab.folderPath);

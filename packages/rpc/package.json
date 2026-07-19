@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./messages": "./src/messages.ts",
     "./ads": "./src/ads.ts",
-    "./agent": "./src/agent.ts"
+    "./agent": "./src/agent.ts",
+    "./host-bridge": "./src/host-bridge.ts"
   },
   "scripts": {
     "test": "bun test test",

@@ -20,7 +20,7 @@ import { TabBar } from "./tab-bar.js";
 import { TabSwitcher } from "./tab-switcher.js";
 
 export function RookieShell() {
-  const { view, activeTabId, tabMessageCount, activeTabFolder, activeTabProjectRoot, activeTabWorktree, onboardingVisible } = useAgentStore(
+  const { view, activeTabId, tabMessageCount, activeTabFolder, activeTabProjectRoot, activeTabWorktree, activeTabSetup, onboardingVisible } = useAgentStore(
     useShallow((s) => ({
       view: s.ui.view,
       activeTabId: s.activeTabId,
@@ -28,6 +28,7 @@ export function RookieShell() {
       activeTabFolder: s.activeTabId ? s.tabs[s.activeTabId]?.folderPath : undefined,
       activeTabProjectRoot: s.activeTabId ? s.tabs[s.activeTabId]?.projectRoot : undefined,
       activeTabWorktree: s.activeTabId ? s.tabs[s.activeTabId]?.worktree : undefined,
+      activeTabSetup: s.activeTabId ? s.tabs[s.activeTabId]?.setup : undefined,
       onboardingVisible: s.onboardingVisible,
     })),
   );
@@ -235,6 +236,7 @@ export function RookieShell() {
                     projectRoot={activeTabProjectRoot}
                     tabId={activeTabId}
                     isWorktree={Boolean(activeTabWorktree)}
+                    setup={activeTabSetup}
                     onPublish={handleOpenPublish}
                     splitDragging={isDragging}
                     publishOpen={publishOpen}

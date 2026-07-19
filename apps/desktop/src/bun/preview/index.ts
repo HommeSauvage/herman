@@ -1,16 +1,13 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-
 import type { DevServer } from "../../shared/herman-manifest.js";
 import type {
   PreviewFleetSnapshot,
   PreviewLogEvent,
+  PreviewServerLogLine,
   PreviewServerSnapshot,
 } from "../../shared/preview.js";
-import { runInstallCommand } from "../worktree.js";
+import { PortRegistry, previewPortRegistry } from "./port-registry.js";
 import { PreviewManager } from "./preview-manager.js";
 import {
-  allocatePorts as allocatePortsImpl,
   buildExportEnv as buildExportEnvImpl,
   displayUrlForPort,
   findFreePort as findFreePortImpl,
@@ -21,6 +18,7 @@ import { httpProbe, waitForReady as waitForReadyImpl } from "./preview-readiness
 import {
   PREVIEW_READY_POLL_MS,
   PREVIEW_READY_TIMEOUT_MS,
+  type PortReservation,
   type PreviewStartRequest,
   type PreviewStartResponse,
 } from "./types.js";
@@ -30,54 +28,42 @@ export {
   PREVIEW_READY_TIMEOUT_MS,
   probeUrlForPortImpl as probeUrlForPort,
   findFreePortImpl as findFreePort,
-  allocatePortsImpl as allocatePorts,
   buildExportEnvImpl as buildExportEnv,
   displayUrlForPort,
+  PortRegistry,
+  previewPortRegistry,
 };
 
-export type { PreviewStartResponse, PreviewStartRequest };
+export { tabScope, folderScope, wizardScope } from "../../shared/preview.js";
+export type { PreviewStartResponse, PreviewStartRequest, PortReservation };
 
 export type EnsurePreviewOpts = {
   servers?: DevServer[];
-  installCommand?: string;
   serverId?: string;
   command?: string;
   port?: number;
-  exportUrlAs?: string | string[];
-  all?: boolean;
-  readyTimeoutMs?: number;
-};
-
-export type StartDevServerOpts = {
-  serverId?: string;
-  label?: string;
-  command?: string;
-  port?: number;
+  /** Exact pre-resolved port; skips port allocation when set. */
   resolvedPort?: number;
-  extraEnv?: Record<string, string>;
+  /** Pre-reserved ports per server id (bootstrap plan phase). Used verbatim. */
+  reservedPorts?: Map<string, PortReservation>;
   exportUrlAs?: string | string[];
-  primary?: boolean;
-  installCommand?: string;
+  portEnv?: string | string[];
+  all?: boolean;
   readyTimeoutMs?: number;
 };
 
 let statusHandler: ((snapshot: PreviewServerSnapshot) => void) | undefined;
 let logHandler: ((event: PreviewLogEvent) => void) | undefined;
-
-function shouldInstall(folderPath: string, installCommand: string | undefined): boolean {
-  if (!installCommand) return false;
-  return !existsSync(join(folderPath, "node_modules"));
-}
+let lineHandler: ((line: PreviewServerLogLine) => void) | undefined;
 
 const manager = new PreviewManager({
   spawnChild: spawnPreviewChild,
   probe: httpProbe,
   findFreePort: findFreePortImpl,
-  allocatePorts: allocatePortsImpl,
-  runInstall: runInstallCommand,
-  shouldInstall,
+  ports: previewPortRegistry,
   emitStatus: (snapshot) => statusHandler?.(snapshot),
   emitLog: (event) => logHandler?.(event),
+  emitLine: (line) => lineHandler?.(line),
 });
 
 export function setPreviewStatusHandler(
@@ -90,78 +76,46 @@ export function setPreviewLogHandler(handler: (event: PreviewLogEvent) => void):
   logHandler = handler;
 }
 
-/** @deprecated Prefer ensurePreviewStarted — kept for tests. Awaits spawn (not readiness). */
-export async function startDevServer(
-  folderPath: string,
-  opts?: StartDevServerOpts,
-): Promise<PreviewStartResponse> {
-  const serverId = opts?.serverId ?? "web";
-  const result = await manager.ensureStarted({
-    folderPath,
-    serverId,
-    command: opts?.command,
-    port: opts?.port,
-    resolvedPort: opts?.resolvedPort,
-    exportUrlAs: opts?.exportUrlAs,
-    installCommand: opts?.installCommand,
-    readyTimeoutMs: opts?.readyTimeoutMs,
-    all: false,
-  });
-  await manager.awaitStartFlight(folderPath, serverId, false);
-  const status = manager.getStatus(folderPath, serverId);
-  const snap = status.servers[0];
-  if (snap) {
-    return { ...snap, starting: snap.phase === "starting" || snap.phase === "installing" };
-  }
-  return result;
+export function setPreviewLineHandler(handler: (line: PreviewServerLogLine) => void): void {
+  lineHandler = handler;
 }
 
-/** @deprecated Prefer ensurePreviewStarted — kept for tests. Awaits spawn (not readiness). */
-export async function startAllDevServers(
-  folderPath: string,
-  servers: DevServer[],
-  installCommand?: string,
-  readyTimeoutMs?: number,
-): Promise<PreviewStartResponse> {
-  const result = await manager.ensureStarted({
-    folderPath,
-    servers,
-    installCommand,
-    readyTimeoutMs,
-    all: true,
-  });
-  await manager.awaitStartFlight(folderPath, undefined, true);
-  const status = manager.getStatus(folderPath);
-  const snap =
-    status.servers.find((s) => s.serverId === status.primaryServerId) ?? status.servers[0];
-  if (snap) {
-    return { ...snap, starting: snap.phase === "starting" || snap.phase === "installing" };
-  }
-  return result;
-}
-
+/**
+ * Start (or resume) the preview server(s) for a scope. Scope is the owning
+ * tab (`tab:<id>`) or a synthetic `wizard:<id>` / `folder:<path>` scope.
+ */
 export async function ensurePreviewStarted(
+  scope: string,
   folderPath: string,
   opts: EnsurePreviewOpts = {},
 ): Promise<PreviewStartResponse> {
   return manager.ensureStarted({
+    scope,
     folderPath,
     ...opts,
   });
 }
 
 export async function restartPreview(
+  scope: string,
   folderPath: string,
   opts: EnsurePreviewOpts = {},
 ): Promise<PreviewStartResponse> {
   return manager.restart({
+    scope,
     folderPath,
     ...opts,
   });
 }
 
-export async function stopDevServer(folderPath: string, serverId?: string): Promise<void> {
-  await manager.stop(folderPath, serverId);
+/** Stop one server or the whole fleet owned by a scope. */
+export async function stopPreviewsForScope(scope: string, serverId?: string): Promise<void> {
+  await manager.stop(scope, serverId);
+}
+
+/** Stop every preview instance running in a folder, regardless of scope. */
+export async function stopAllPreviewsForProject(folderPath: string): Promise<void> {
+  await manager.stopFolder(folderPath);
 }
 
 export async function stopAllDevServers(): Promise<void> {
@@ -169,10 +123,10 @@ export async function stopAllDevServers(): Promise<void> {
 }
 
 export function getDevServerStatus(
-  folderPath: string,
+  scope: string,
   serverId?: string,
 ): PreviewFleetSnapshot {
-  return manager.getStatus(folderPath, serverId);
+  return manager.getStatus(scope, serverId);
 }
 
 export async function waitForReady(

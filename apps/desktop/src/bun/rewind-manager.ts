@@ -108,7 +108,7 @@ export class RewindManager {
   // -----------------------------------------------------------------------
 
   /** Initialize rewind for a tab. Returns true if git is available. */
-  async init(tabId: TabId, folderPath: string): Promise<boolean> {
+  async init(tabId: TabId, folderPath: string, piSessionId?: string): Promise<boolean> {
     try {
       const gitAvailable = await isGitRepo(folderPath);
       if (!gitAvailable) {
@@ -119,10 +119,9 @@ export class RewindManager {
       const { getRepoRoot } = await import("./rewind-core.js");
       const repoRoot = await getRepoRoot(folderPath);
 
-      // Read pi's session UUID from disk so we can scope checkpoints.
-      // At init time the agent process may not have started yet — we
-      // retry on every reload() until the session file appears.
-      const sessionId = readPiSessionId();
+      // Prefer the tab's persisted pi session UUID so checkpoints stay scoped
+      // after newest-file discovery was removed. Retry on reload() until set.
+      const sessionId = readPiSessionId(piSessionId) ?? piSessionId;
 
       const all = sessionId ? await loadAllCheckpoints(repoRoot, sessionId) : [];
       const { checkpoints, byTurn } = this.indexCheckpoints(all);
@@ -161,20 +160,17 @@ export class RewindManager {
    * Reload checkpoints from git refs scoped to this tab's pi session.
    * Must be awaited before find / diff.
    *
-   * Re-reads the session UUID from disk on every call.  This handles:
+   * Re-resolves the session UUID from the persisted id (when provided) on
+   * every call. This handles:
    * 1. Initial startup race (agent hasn't started yet on first call).
    * 2. Agent restarts (e.g. after a crash) which produce a new session.
-   *
-   * Once the UUID is known it rarely changes; the readdirSync overhead
-   * on a tiny session directory is negligible.
    */
-  async reload(tabId: TabId): Promise<void> {
+  async reload(tabId: TabId, piSessionId?: string): Promise<void> {
     const state = this.states.get(tabId);
     if (!state?.gitAvailable) return;
 
-    // Re-read session UUID every time — handles agent restarts and the
-    // initial race where the agent hasn't started yet.
-    const latestUuid = readPiSessionId();
+    // Prefer an explicit persisted id; fall back to the previously known UUID.
+    const latestUuid = readPiSessionId(piSessionId) ?? piSessionId ?? state.sessionId;
     if (latestUuid && latestUuid !== state.sessionId) {
       state.sessionId = latestUuid;
       logger.debug("Rewind session UUID updated", { tabId, sessionId: latestUuid });

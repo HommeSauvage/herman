@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://herman.build/schema/herman-frontmatter.v2.json",
+  "title": "Herman HERMAN.md frontmatter v2",
+  "description": "YAML frontmatter schema for HERMAN.md template manifests. The Markdown body (## Setup, ## Questions, ## Guidance) is intentionally schema-free.",
+  "type": "object",
+  "required": ["version"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 2,
+      "description": "Frontmatter schema version."
+    },
+    "extends": {
+      "type": "string",
+      "description": "Id of another curated Herman manifest to inherit from. Ordered arrays (setup, env.files, servers) are replaced wholesale by the child when re-declared."
+    },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "suitable_for": { "type": "string" },
+    "icon": { "type": "string" },
+    "snapshot": { "type": "string", "format": "uri" },
+    "category": { "type": "string" },
+    "setup_goal": {
+      "type": "string",
+      "description": "Goal passed to the wizard coding session (pi-goal). A sensible default is used when omitted."
+    },
+    "source": {
+      "type": "object",
+      "required": ["repo"],
+      "additionalProperties": false,
+      "properties": {
+        "repo": { "type": "string" },
+        "ref": { "type": "string" }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "check"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "check": { "type": "string", "description": "Shell command; non-zero exit = missing." },
+          "install": { "type": "string", "description": "Help URL for installing manually." },
+          "why": { "type": "string", "description": "Plain-language reason shown to non-technical users." },
+          "install_cmd": { "type": "string", "description": "Template-author override for the install command." },
+          "optional": { "type": "boolean", "description": "When true, missing is a warning instead of a block." }
+        }
+      }
+    },
+    "env": {
+      "type": "object",
+      "required": ["files"],
+      "additionalProperties": false,
+      "description": "Environment files, provisioned in declared order before setup steps run.",
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "description": "Env file path relative to the workspace root." },
+              "from_main": {
+                "type": "boolean",
+                "default": true,
+                "description": "Copy from the main project when present."
+              },
+              "from_example": {
+                "type": "string",
+                "description": "Fallback: copy from this file inside the workspace."
+              },
+              "merge": {
+                "type": "string",
+                "enum": ["missing_only", "force"],
+                "default": "missing_only",
+                "description": "missing_only fills only absent vars; force overwrites."
+              },
+              "rewrite_paths": {
+                "type": "boolean",
+                "default": true,
+                "description": "Rewrite absolute main-root paths to workspace paths."
+              },
+              "vars": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "value": {
+                      "type": "string",
+                      "description": "Literal value; ${HERMAN_*} interpolated at provisioning time."
+                    },
+                    "session": {
+                      "type": "string",
+                      "enum": ["primary_port", "primary_url", "workspace", "main", "branch", "tab_id"],
+                      "description": "Built-in per-session binding (ports reserved before setup runs)."
+                    },
+                    "generate": {
+                      "type": "string",
+                      "description": "Shell command whose stdout becomes the value; runs AFTER setup steps."
+                    },
+                    "required": {
+                      "type": "boolean",
+                      "description": "Wizard: ask the user for this value."
+                    },
+                    "notes": {
+                      "type": "string",
+                      "description": "Rookie-facing notes: why needed / how to get the key."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "setup": {
+      "type": "array",
+      "description": "Ordered, idempotent tasks for a FRESH workspace.",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "run"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "run": { "type": "string", "description": "Shell command, run via `sh -c` in the workspace." },
+          "skip_if": { "type": "string", "description": "Workspace-relative path exists → skip." },
+          "skip_if_env": { "type": "string", "description": "Env var non-empty in `env_file` (default: first env file) → skip." },
+          "env_file": { "type": "string" },
+          "optional": { "type": "boolean", "description": "Failure = warning, not blocker." },
+          "timeout": { "type": "number", "description": "Seconds (default 300, hard cap 900)." }
+        }
+      }
+    },
+    "servers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "command"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "command": { "type": "string", "description": "{port} / {url} substituted at spawn." },
+          "port": { "type": "number", "description": "Preferred port; the actual reserved port is injected via portEnv." },
+          "primary": { "type": "boolean", "description": "Drives the preview pane when true. Exactly one should be primary." },
+          "exportUrlAs": {
+            "oneOf": [
+              { "type": "string", "minLength": 1 },
+              { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+            ],
+            "description": "Env var name(s) set on every Herman-spawned server to this server's resolved URL."
+          },
+          "portEnv": {
+            "oneOf": [
+              { "type": "string", "minLength": 1 },
+              { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+            ],
+            "description": "Env var name(s) set on this server's spawn environment to its resolved port (e.g. SERVER_PORT)."
+          }
+        }
+      }
+    }
+  }
+}

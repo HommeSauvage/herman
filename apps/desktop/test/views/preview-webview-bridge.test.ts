@@ -49,10 +49,19 @@ describe("parsePreviewHostMessage", () => {
     ).toBeNull();
   });
 
-  it("rejects a non-error level", () => {
+  it("accepts all five console levels", () => {
     expect(
       parsePreviewHostMessage({ type: "preview-console", level: "warn", message: "x" }),
-    ).toBeNull();
+    ).not.toBeNull();
+    expect(
+      parsePreviewHostMessage({ type: "preview-console", level: "info", message: "x" }),
+    ).not.toBeNull();
+    expect(
+      parsePreviewHostMessage({ type: "preview-console", level: "log", message: "x" }),
+    ).not.toBeNull();
+    expect(
+      parsePreviewHostMessage({ type: "preview-console", level: "debug", message: "x" }),
+    ).not.toBeNull();
     expect(
       parsePreviewHostMessage({ type: "preview-console", level: undefined, message: "x" }),
     ).toBeNull();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { PortRegistry } from "../../../src/bun/preview/port-registry.js";
 import { PreviewManager } from "../../../src/bun/preview/preview-manager.js";
 import { waitForReady } from "../../../src/bun/preview/preview-readiness.js";
 import type {
@@ -10,6 +11,7 @@ import type {
   SpawnChildOpts,
 } from "../../../src/bun/preview/types.js";
 import type { PreviewLogEvent } from "../../../src/shared/preview.js";
+import { tabScope } from "../../../src/shared/preview.js";
 import type { DevServer } from "../../../src/shared/herman-manifest.js";
 
 function createFakeChild(opts?: {
@@ -58,12 +60,10 @@ function createDeps(overrides?: Partial<PreviewManagerDeps>): {
   statuses: PreviewServerSnapshot[];
   logs: PreviewLogEvent[];
   spawns: SpawnChildOpts[];
-  installs: string[];
 } {
   const statuses: PreviewServerSnapshot[] = [];
   const logs: PreviewLogEvent[] = [];
   const spawns: SpawnChildOpts[] = [];
-  const installs: string[] = [];
   let nextPort = 5000;
 
   const deps: PreviewManagerDeps = {
@@ -72,18 +72,7 @@ function createDeps(overrides?: Partial<PreviewManagerDeps>): {
       return createFakeChild();
     },
     probe: async () => ({ ok: false } satisfies PreviewProbeResult),
-    findFreePort: async () => nextPort++,
-    allocatePorts: async (servers) => {
-      const map = new Map<string, number>();
-      for (const s of servers) {
-        map.set(s.id, nextPort++);
-      }
-      return map;
-    },
-    runInstall: async (_folder, cmd) => {
-      installs.push(cmd);
-    },
-    shouldInstall: (_folder, cmd) => Boolean(cmd),
+    findFreePort: async (start) => Math.max(start, nextPort++),
     emitStatus: (s) => statuses.push(s),
     emitLog: (e) => logs.push(e),
     now: () => Date.now(),
@@ -107,7 +96,7 @@ function createDeps(overrides?: Partial<PreviewManagerDeps>): {
     ...overrides,
   };
 
-  return { deps, statuses, logs, spawns, installs };
+  return { deps, statuses, logs, spawns };
 }
 
 describe("PreviewManager", () => {
@@ -120,13 +109,14 @@ describe("PreviewManager", () => {
       },
     });
     const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-1");
 
     const [a, b] = await Promise.all([
-      manager.ensureStarted({ folderPath: "/proj", serverId: "web", command: "echo hi" }),
-      manager.ensureStarted({ folderPath: "/proj", serverId: "web", command: "echo hi" }),
+      manager.ensureStarted({ scope, folderPath: "/proj", serverId: "web", command: "echo hi" }),
+      manager.ensureStarted({ scope, folderPath: "/proj", serverId: "web", command: "echo hi" }),
     ]);
 
-    await manager.awaitStartFlight("/proj", "web", false);
+    await manager.awaitStartFlight(scope, "web", false);
     expect(spawns.length).toBe(1);
     expect(a.starting || a.phase === "ready").toBe(true);
     expect(b.starting || b.phase === "ready").toBe(true);
@@ -137,9 +127,9 @@ describe("PreviewManager", () => {
     let probeOk = false;
     const { deps, spawns } = createDeps({
       probe: async () => (probeOk ? { ok: true, status: 200 } : { ok: false }),
-      shouldInstall: () => false,
     });
     const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-fleet");
     const servers: DevServer[] = [
       { id: "api", label: "API", command: "api", port: 3010 },
       { id: "web", label: "Web", command: "web", port: 3000, primary: true },
@@ -148,12 +138,13 @@ describe("PreviewManager", () => {
     // Start only web first.
     probeOk = true;
     await manager.ensureStarted({
+      scope,
       folderPath: "/fleet",
       serverId: "web",
       command: "web",
       all: false,
     });
-    await manager.awaitStartFlight("/fleet", "web", false);
+    await manager.awaitStartFlight(scope, "web", false);
     // Wait for ready settle.
     await new Promise((r) => setTimeout(r, 30));
 
@@ -162,67 +153,61 @@ describe("PreviewManager", () => {
 
     // Fleet ensure should start the missing api sibling.
     await manager.ensureStarted({
+      scope,
       folderPath: "/fleet",
       servers,
       all: true,
     });
-    await manager.awaitStartFlight("/fleet", undefined, true);
+    await manager.awaitStartFlight(scope, undefined, true);
 
     expect(spawns.length).toBeGreaterThan(before);
     expect(spawns.some((s) => s.command === "api")).toBe(true);
     await manager.stopAll();
   });
 
-  it("stop during install prevents later spawn", async () => {
-    let resolveInstall!: () => void;
-    const installGate = new Promise<void>((resolve) => {
-      resolveInstall = resolve;
-    });
-    const { deps, spawns, installs } = createDeps({
-      shouldInstall: () => true,
-      runInstall: async () => {
-        installs.push("npm install");
-        await installGate;
-      },
+  it("stop during an in-flight start emits no failed afterwards", async () => {
+    const { deps, statuses, spawns } = createDeps({
+      probe: async () => ({ ok: false }),
     });
     const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-stop");
 
-    const startPromise = manager.ensureStarted({
+    await manager.ensureStarted({
+      scope,
       folderPath: "/proj",
       serverId: "web",
       command: "echo hi",
-      installCommand: "npm install",
     });
-    await startPromise;
+    // Let the spawn happen; the flight stays inside the early-exit window.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(spawns.length).toBe(1);
+    await manager.stop(scope);
+    await manager.awaitStartFlight(scope, "web", false);
+    await new Promise((r) => setTimeout(r, 30));
 
-    // Give the flight time to enter install.
-    await new Promise((r) => setTimeout(r, 10));
-    await manager.stop("/proj");
-    resolveInstall();
-    await manager.awaitStartFlight("/proj", "web", false);
-
-    expect(spawns.length).toBe(0);
+    expect(statuses.some((s) => s.phase === "failed")).toBe(false);
+    expect(statuses.some((s) => s.phase === "stopped")).toBe(true);
     await manager.stopAll();
   });
 
   it("restart(all) replaces the whole fleet", async () => {
     const { deps, spawns } = createDeps({
       probe: async () => ({ ok: true, status: 200 }),
-      shouldInstall: () => false,
     });
     const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-restart");
     const servers: DevServer[] = [
       { id: "api", label: "API", command: "api" },
       { id: "web", label: "Web", command: "web", primary: true },
     ];
 
-    await manager.ensureStarted({ folderPath: "/fleet", servers, all: true });
-    await manager.awaitStartFlight("/fleet", undefined, true);
+    await manager.ensureStarted({ scope, folderPath: "/fleet", servers, all: true });
+    await manager.awaitStartFlight(scope, undefined, true);
     const firstCount = spawns.length;
     expect(firstCount).toBe(2);
 
-    await manager.restart({ folderPath: "/fleet", servers, all: true });
-    await manager.awaitStartFlight("/fleet", undefined, true);
+    await manager.restart({ scope, folderPath: "/fleet", servers, all: true });
+    await manager.awaitStartFlight(scope, undefined, true);
     expect(spawns.length).toBe(firstCount + 2);
     await manager.stopAll();
   });
@@ -230,36 +215,172 @@ describe("PreviewManager", () => {
   it("passes command intact to spawnChild (quoted args)", async () => {
     const { deps, spawns } = createDeps({
       probe: async () => ({ ok: true, status: 200 }),
-      shouldInstall: () => false,
     });
     const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-cmd");
     const command = `bun script.ts --label "hello world"`;
     await manager.ensureStarted({
+      scope,
       folderPath: "/proj",
       serverId: "web",
       command,
       resolvedPort: 5555,
     });
-    await manager.awaitStartFlight("/proj", "web", false);
+    await manager.awaitStartFlight(scope, "web", false);
     expect(spawns[0]?.command).toBe(command);
+    await manager.stopAll();
+  });
+
+  it("substitutes {port} and {url} in commands", async () => {
+    const { deps, spawns } = createDeps({
+      probe: async () => ({ ok: true, status: 200 }),
+    });
+    const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-tpl");
+    await manager.ensureStarted({
+      scope,
+      folderPath: "/proj",
+      serverId: "web",
+      command: "serve --port {port} --public {url}",
+      resolvedPort: 5999,
+    });
+    await manager.awaitStartFlight(scope, "web", false);
+    expect(spawns[0]?.command).toBe("serve --port 5999 --public http://localhost:5999");
+    await manager.stopAll();
+  });
+
+  it("injects portEnv and exportUrlAs into the spawn environment", async () => {
+    const { deps, spawns } = createDeps({
+      probe: async () => ({ ok: true, status: 200 }),
+    });
+    const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-laravel");
+    // The Laravel case: artisan serve reads SERVER_PORT.
+    const servers: DevServer[] = [
+      {
+        id: "web",
+        label: "Website",
+        command: "composer run dev",
+        port: 8000,
+        portEnv: ["SERVER_PORT"],
+        primary: true,
+      },
+    ];
+    await manager.ensureStarted({
+      scope,
+      folderPath: "/proj",
+      servers,
+      all: true,
+      reservedPorts: new Map([["web", { port: 8123, release: async () => {} }]]),
+    });
+    await manager.awaitStartFlight(scope, undefined, true);
+    expect(spawns.length).toBe(1);
+    expect(spawns[0]?.port).toBe(8123);
+    expect(spawns[0]?.env.SERVER_PORT).toBe("8123");
+    await manager.stopAll();
+  });
+
+  it("releases the reservation hold right before spawning", async () => {
+    const order: string[] = [];
+    const { deps } = createDeps({
+      spawnChild: (opts) => {
+        order.push(`spawn:${opts.port}`);
+        return createFakeChild();
+      },
+      probe: async () => ({ ok: true, status: 200 }),
+    });
+    const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-hold");
+    await manager.ensureStarted({
+      scope,
+      folderPath: "/proj",
+      serverId: "web",
+      command: "echo",
+      reservedPorts: new Map([
+        ["web", { port: 8200, release: async () => { order.push("release"); } }],
+      ]),
+    });
+    await manager.awaitStartFlight(scope, "web", false);
+    expect(order).toEqual(["release", "spawn:8200"]);
+    await manager.stopAll();
+  });
+
+  it("respawns once on the next port when the child dies instantly with EADDRINUSE", async () => {
+    let spawnCount = 0;
+    const { deps, spawns, statuses } = createDeps({
+      spawnChild: (opts) => {
+        spawnCount += 1;
+        spawns.push(opts);
+        if (spawnCount === 1) {
+          return createFakeChild({
+            exitAfterMs: 5,
+            exitCode: 1,
+            stderrLines: ["Error: listen EADDRINUSE: address already in use"],
+          });
+        }
+        return createFakeChild();
+      },
+      probe: async () => ({ ok: true, status: 200 }),
+      findFreePort: async (start) => start,
+    });
+    const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-addrinuse");
+    await manager.ensureStarted({
+      scope,
+      folderPath: "/proj",
+      serverId: "web",
+      command: "echo",
+      resolvedPort: 8300,
+    });
+    await manager.awaitStartFlight(scope, "web", false);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(spawns.length).toBe(2);
+    expect(spawns[0]?.port).toBe(8300);
+    expect(spawns[1]?.port).toBe(8301);
+    expect(statuses.some((s) => s.phase === "failed" && /EADDRINUSE/.test(s.error ?? ""))).toBe(false);
+    await manager.stopAll();
+  });
+
+  it("keys fleets by tab: two tabs on the same folder are isolated", async () => {
+    const { deps, spawns } = createDeps({
+      probe: async () => ({ ok: true, status: 200 }),
+    });
+    const manager = new PreviewManager(deps);
+    const scopeA = tabScope("tab-a");
+    const scopeB = tabScope("tab-b");
+
+    await manager.ensureStarted({ scope: scopeA, folderPath: "/shared", serverId: "web", command: "echo" });
+    await manager.ensureStarted({ scope: scopeB, folderPath: "/shared", serverId: "web", command: "echo" });
+    await manager.awaitStartFlight(scopeA, "web", false);
+    await manager.awaitStartFlight(scopeB, "web", false);
+    expect(spawns.length).toBe(2);
+
+    // Stopping one tab's fleet leaves the other untouched.
+    await manager.stop(scopeA);
+    const statusA = manager.getStatus(scopeA);
+    const statusB = manager.getStatus(scopeB);
+    expect(statusA.servers.length).toBe(0);
+    expect(statusB.servers.length).toBe(1);
     await manager.stopAll();
   });
 
   it("does not emit failed on intentional stop", async () => {
     const { deps, statuses } = createDeps({
       probe: async () => ({ ok: true, status: 200 }),
-      shouldInstall: () => false,
     });
     const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-intentional");
     await manager.ensureStarted({
+      scope,
       folderPath: "/proj",
       serverId: "web",
       command: "echo",
       resolvedPort: 5556,
     });
-    await manager.awaitStartFlight("/proj", "web", false);
+    await manager.awaitStartFlight(scope, "web", false);
     await new Promise((r) => setTimeout(r, 20));
-    await manager.stop("/proj");
+    await manager.stop(scope);
     expect(statuses.some((s) => s.phase === "failed")).toBe(false);
     expect(statuses.some((s) => s.phase === "stopped")).toBe(true);
   });
@@ -269,20 +390,48 @@ describe("PreviewManager", () => {
     const { deps, statuses } = createDeps({
       spawnChild: () => child,
       probe: async () => ({ ok: false }),
-      shouldInstall: () => false,
     });
     const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-boom");
     await manager.ensureStarted({
+      scope,
       folderPath: "/proj",
       serverId: "web",
       command: "echo",
       resolvedPort: 5557,
       readyTimeoutMs: 5_000,
     });
-    await manager.awaitStartFlight("/proj", "web", false);
+    await manager.awaitStartFlight(scope, "web", false);
     child.triggerExit(1);
     await new Promise((r) => setTimeout(r, 30));
     expect(statuses.some((s) => s.phase === "failed" && s.error?.includes("boom"))).toBe(true);
+    await manager.stopAll();
+  });
+
+  it("fails readiness when the probed port is owned by another scope", async () => {
+    const ports = new PortRegistry();
+    // Pre-register ownership of the port to a different scope.
+    const reservation = await ports.reserve(5590, tabScope("tab-other"));
+    const { deps, statuses } = createDeps({
+      probe: async () => ({ ok: true, status: 200 }),
+      ports,
+    });
+    const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-clash");
+    await manager.ensureStarted({
+      scope,
+      folderPath: "/proj",
+      serverId: "web",
+      command: "echo",
+      resolvedPort: 5590,
+    });
+    await manager.awaitStartFlight(scope, "web", false);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(
+      statuses.some((s) => s.phase === "failed" && /owned by another/.test(s.error ?? "")),
+    ).toBe(true);
+    await reservation.release();
+    await ports.freeOwner(tabScope("tab-other"));
     await manager.stopAll();
   });
 
@@ -329,29 +478,31 @@ describe("PreviewManager", () => {
         return createFakeChild();
       },
       probe: async () => ({ ok: true, status: 200 }),
-      shouldInstall: () => false,
       findFreePort: async (start) => {
         events.push(`findFreePort:${start}`);
         return start;
       },
     });
     const manager = new PreviewManager(deps);
+    const scope = tabScope("tab-restart-port");
 
     await manager.ensureStarted({
+      scope,
       folderPath: "/proj",
       serverId: "web",
       command: "echo",
       port: 3000,
     });
-    await manager.awaitStartFlight("/proj", "web", false);
+    await manager.awaitStartFlight(scope, "web", false);
 
     await manager.restart({
+      scope,
       folderPath: "/proj",
       serverId: "web",
       command: "echo",
       port: 3000,
     });
-    await manager.awaitStartFlight("/proj", "web", false);
+    await manager.awaitStartFlight(scope, "web", false);
 
     const killIdx = events.indexOf("kill");
     const exitedIdx = events.indexOf("exited");

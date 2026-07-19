@@ -714,6 +714,47 @@ describe("updateTab", () => {
   });
 });
 
+describe("sessionStateChanged application", () => {
+  it("applies the setup state machine wholesale from main-process events", () => {
+    const id = useAgentStore.getState().createTab("/project");
+    // Fresh tabs start with no setup (direct isolation).
+    expect(useAgentStore.getState().tabs[id].setup).toEqual({ phase: "none" });
+
+    // Main process pushes pending → ready transitions (the app.tsx handler
+    // reduces them via updateTab — same call as sessionStateChanged).
+    useAgentStore.getState().updateTab(id, {
+      setup: {
+        phase: "pending",
+        step: "php-deps",
+        label: "Installing PHP dependencies",
+        steps: [
+          { id: "herman:env-base", label: "Preparing environment files", status: "done" },
+          { id: "php-deps", label: "Installing PHP dependencies", status: "running" },
+        ],
+      },
+    });
+    const pending = useAgentStore.getState().tabs[id].setup;
+    expect(pending.phase).toBe("pending");
+    if (pending.phase === "pending") {
+      expect(pending.steps).toHaveLength(2);
+      expect(pending.label).toBe("Installing PHP dependencies");
+    }
+
+    useAgentStore.getState().updateTab(id, { setup: { phase: "ready" } });
+    expect(useAgentStore.getState().tabs[id].setup.phase).toBe("ready");
+
+    useAgentStore.getState().updateTab(id, {
+      setup: { phase: "error", step: "database", error: "migrate failed", retryable: true },
+    });
+    const failed = useAgentStore.getState().tabs[id].setup;
+    expect(failed.phase).toBe("error");
+    if (failed.phase === "error") {
+      expect(failed.retryable).toBe(true);
+      expect(failed.error).toBe("migrate failed");
+    }
+  });
+});
+
 describe("queued messages", () => {
   it("queues a follow-up message", () => {
     const id = useAgentStore.getState().createTab("/project");

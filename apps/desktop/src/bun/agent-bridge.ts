@@ -10,6 +10,7 @@ import type { TabId } from "../shared/rpc.js";
 import { agentDir, hermanDir } from "./app-paths.js";
 import { awaitAgentConfigSynced, resolveWizardExtensionPath } from "./agent-config-sync.js";
 import { AgentProcess } from "./agent-process.js";
+import { getActiveHostBridge } from "./host-bridge/server.js";
 import { deletePiSessionFile, resolvePiSessionResumeArg } from "./pi-session.js";
 
 const logger = getLogger(["herman-desktop", "agent-bridge"]);
@@ -69,6 +70,12 @@ export class AgentBridge {
       HERMAN_TAB_ID: this.tabId,
       ...(opts?.mode ? { HERMAN_MODE: opts.mode } : {}),
     };
+
+    const hostBridge = getActiveHostBridge();
+    if (hostBridge) {
+      env.HERMAN_HOST_BRIDGE_URL = hostBridge.url;
+      env.HERMAN_HOST_BRIDGE_TOKEN = hostBridge.token;
+    }
 
     if (hermanEnabled) {
       env.HERMAN_SERVER_URL = config.serverUrl;

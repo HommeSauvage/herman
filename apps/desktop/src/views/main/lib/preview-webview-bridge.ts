@@ -85,9 +85,12 @@ export function serializeConsoleArg(value: unknown): string {
 }
 
 /** Preload script injected into the preview webview to forward console
- *  errors, uncaught exceptions, and unhandled rejections to the host. */
+ *  messages, uncaught exceptions, and unhandled rejections to the host. */
 export const PREVIEW_CONSOLE_PRELOAD = `
 (function () {
+  if (window.__hermanConsoleTap) return;
+  window.__hermanConsoleTap = true;
+
   function send(payload) {
     try {
       if (typeof window.__electrobunSendToHost === "function") {
@@ -96,24 +99,35 @@ export const PREVIEW_CONSOLE_PRELOAD = `
     } catch (_) {}
   }
   var serializeArg = ${serializeConsoleArg.toString()};
-  var origError = console.error.bind(console);
-  console.error = function () {
-    var args = Array.prototype.slice.call(arguments);
-    origError.apply(console, args);
-    send({
-      type: "preview-console",
-      level: "error",
-      message: args.map(serializeArg).join(" "),
-    });
-  };
+
+  var levels = ["error", "warn", "info", "log", "debug"];
+  for (var li = 0; li < levels.length; li++) {
+    (function (level, orig) {
+      console[level] = function () {
+        var args = Array.prototype.slice.call(arguments);
+        orig.apply(console, args);
+        send({
+          type: "preview-console",
+          level: level,
+          message: args.map(serializeArg).join(" "),
+          url: location.href,
+          ts: Date.now(),
+        });
+      };
+    })(levels[li], console[levels[li]].bind(console));
+  }
+
   window.addEventListener("error", function (e) {
     send({
       type: "preview-console",
       level: "error",
       message: e.message || "Script error",
       stack: e.error && e.error.stack ? e.error.stack : undefined,
+      url: location.href,
+      ts: Date.now(),
     });
   });
+
   window.addEventListener("unhandledrejection", function (e) {
     var reason = e.reason;
     var stack = reason instanceof Error ? reason.stack : undefined;
@@ -122,6 +136,8 @@ export const PREVIEW_CONSOLE_PRELOAD = `
       level: "error",
       message: serializeArg(reason),
       stack: stack,
+      url: location.href,
+      ts: Date.now(),
     });
   });
 })();
@@ -129,9 +145,11 @@ export const PREVIEW_CONSOLE_PRELOAD = `
 
 export type PreviewHostMessage = {
   type: "preview-console";
-  level: "error";
+  level: "error" | "warn" | "info" | "log" | "debug";
   message: string;
   stack?: string;
+  url?: string;
+  ts?: number;
 };
 
 /**
@@ -144,17 +162,22 @@ export function parsePreviewHostMessage(input: unknown): PreviewHostMessage | nu
   const detail = input as Record<string, unknown>;
 
   if (detail.type !== "preview-console") return null;
-  if (detail.level !== "error") return null;
+  const level = detail.level;
+  if (level !== "error" && level !== "warn" && level !== "info" && level !== "log" && level !== "debug") return null;
   if (typeof detail.message !== "string") return null;
   if (detail.message.trim().length === 0) return null;
 
   const message = detail.message.slice(0, MAX_MESSAGE_CHARS);
   const stack = typeof detail.stack === "string" ? detail.stack.slice(0, MAX_MESSAGE_CHARS) : undefined;
+  const url = typeof detail.url === "string" ? detail.url : undefined;
+  const ts = typeof detail.ts === "number" ? detail.ts : undefined;
 
   return {
     type: "preview-console",
-    level: "error",
+    level,
     message,
     ...(stack !== undefined ? { stack } : {}),
+    ...(url !== undefined ? { url } : {}),
+    ...(ts !== undefined ? { ts } : {}),
   };
 }

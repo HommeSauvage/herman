@@ -1,5 +1,5 @@
 ---
-version: 1
+version: 2
 extends: base
 name: Landing Page
 description: A single, beautiful page that tells people about your business, product, or idea. Think of it like a digital flyer or business card that lives online.

@@ -11,9 +11,9 @@ export async function sendPrompt(tabId: TabId, text: string, options?: { keepCom
   const store = useAgentStore.getState();
   const tab = store.tabs[tabId];
 
-  // If the session worktree is still being created, queue the message instead
+  // If the session workspace is still being set up, queue the message instead
   // of trying to send it to an agent that hasn't started yet.
-  if (tab?.worktreeStatus === "pending") {
+  if (tab?.setup.phase === "pending") {
     store.queueMessage(tabId, text);
     if (!options?.keepComposer) {
       store.setComposerValue(tabId, "");

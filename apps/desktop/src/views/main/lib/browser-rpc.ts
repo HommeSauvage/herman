@@ -46,7 +46,7 @@ function createBrowserRpc(): DesktopRpc {
     tabMessagesHydrated: [],
     tabClosed: [],
     tabActivated: [],
-    tabFolderChanged: [],
+    sessionStateChanged: [],
     projectsChanged: [],
     sessionsChanged: [],
     projectOpened: [],
@@ -59,6 +59,7 @@ function createBrowserRpc(): DesktopRpc {
     previewLog: [],
     updateStatus: [],
     wizardEvent: [],
+    toolchainEvent: [],
     modelCatalogChanged: [],
     tabModelChanged: [],
     settingsChanged: [],
@@ -258,6 +259,10 @@ function createBrowserRpc(): DesktopRpc {
         throw new Error("Unavailable in browser mock");
       },
       checkTemplateRequirements: async () => ({ results: [] }),
+      checkProjectRequirements: async () => ({ results: [] }),
+      getToolchainStatus: async () => ({ tools: [], required: [] }),
+      installTools: async () => ({ accepted: false, reason: "Unavailable in browser mock" }),
+      respondWizardInstall: async () => {},
       startWizardSession: async () => ({ wizardSessionId: "mock-wizard" }),
       setWizardModel: async () => {},
       resumeWizardSession: async () => {},
@@ -270,8 +275,10 @@ function createBrowserRpc(): DesktopRpc {
       getSessionChanges: async () => ({ isWorktree: false, changedFiles: 0, canApply: false }),
       applySession: async () => ({ status: "error" as const, error: "Unavailable in browser mock" }),
       discardSession: async () => {},
-      startPreview: async ({ folderPath }: { folderPath: string }) => ({
-        folderPath,
+      retrySessionSetup: async () => ({ ok: true }),
+      startPreview: async ({ tabId, folderPath }: { tabId?: TabId; folderPath?: string }) => ({
+        scope: tabId ? `tab:${tabId}` : `folder:${folderPath ?? ""}`,
+        folderPath: folderPath ?? "",
         serverId: "web",
         phase: "ready" as const,
         url: `http://localhost:4321`,
@@ -279,21 +286,24 @@ function createBrowserRpc(): DesktopRpc {
         starting: false,
       }),
       stopPreview: async () => {},
-      restartPreview: async ({ folderPath }: { folderPath: string }) => ({
-        folderPath,
+      restartPreview: async ({ tabId, folderPath }: { tabId?: TabId; folderPath?: string }) => ({
+        scope: tabId ? `tab:${tabId}` : `folder:${folderPath ?? ""}`,
+        folderPath: folderPath ?? "",
         serverId: "web",
         phase: "ready" as const,
         url: `http://localhost:4321`,
         port: 4321,
         starting: false,
       }),
-      getPreviewStatus: async ({ folderPath }: { folderPath: string }) => ({
-        folderPath,
+      getPreviewStatus: async ({ tabId, folderPath }: { tabId?: TabId; folderPath?: string }) => ({
+        scope: tabId ? `tab:${tabId}` : `folder:${folderPath ?? ""}`,
+        folderPath: folderPath ?? "",
         phase: "stopped" as const,
         servers: [],
       }),
       getProjectManifest: async () => undefined,
       getSkills: async () => ({ skills: [] }),
+      getPromptTemplates: async () => ({ templates: [] }),
       installSkill: async ({ name }: { name: string; content: string }) => ({
         path: `/tmp/herman/skills/${name}/SKILL.md`,
       }),
@@ -331,6 +341,8 @@ function createBrowserRpc(): DesktopRpc {
       downloadUpdate: () => {},
       applyUpdate: () => {},
       openProject: () => {},
+      previewConsoleBatch: () => {},
+      previewNavigated: () => {},
     },
   };
 }
@@ -362,6 +374,7 @@ function createTab(folderPath = ""): Tab {
     thinkingMessages: [],
     availableModels: [],
     connectionState: "idle",
+    setup: { phase: "none" },
     createdAt: now,
     updatedAt: now,
     composerValue: "",

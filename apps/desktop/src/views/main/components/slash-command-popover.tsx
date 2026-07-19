@@ -1,5 +1,5 @@
 import { cn } from "@herman/ui/lib/utils";
-import { ArrowRight, Wand2, Zap } from "lucide-react";
+import { ArrowRight, FileText, Wand2, Zap } from "lucide-react";
 
 import type { SlashCommandItem } from "../hooks/use-slash-command.js";
 
@@ -7,6 +7,7 @@ export type SlashCommandPopoverProps = {
   open: boolean;
   commands: SlashCommandItem[];
   skills: SlashCommandItem[];
+  templates: SlashCommandItem[];
   activeSectionIndex: number;
   activeItemIndex: number;
   onSelect: (item: SlashCommandItem) => void;
@@ -25,6 +26,7 @@ function SlashCommandRow({
   onHover: () => void;
 }) {
   const isCommand = item.type === "command";
+  const isTemplate = item.type === "prompt-template";
 
   return (
     <button
@@ -41,6 +43,8 @@ function SlashCommandRow({
     >
       {isCommand ? (
         <Zap size={14} className="text-signal shrink-0" />
+      ) : isTemplate ? (
+        <FileText size={14} className="text-faint shrink-0" />
       ) : (
         <Wand2 size={14} className="text-faint shrink-0" />
       )}
@@ -71,6 +75,7 @@ export function SlashCommandPopover({
   open,
   commands,
   skills,
+  templates,
   activeSectionIndex,
   activeItemIndex,
   onSelect,
@@ -80,7 +85,8 @@ export function SlashCommandPopover({
 
   const hasCommands = commands.length > 0;
   const hasSkills = skills.length > 0;
-  const isEmpty = !hasCommands && !hasSkills;
+  const hasTemplates = templates.length > 0;
+  const isEmpty = !hasCommands && !hasSkills && !hasTemplates;
 
   return (
     <div
@@ -89,7 +95,7 @@ export function SlashCommandPopover({
     >
       {isEmpty && (
         <div className="text-dim px-3 py-4 text-center text-xs">
-          No matching commands or skills.
+          No matching commands, skills, or templates.
         </div>
       )}
 
@@ -108,7 +114,7 @@ export function SlashCommandPopover({
         </>
       )}
 
-      {hasCommands && hasSkills && (
+      {hasCommands && (hasSkills || hasTemplates) && (
         <div className="border-t border-white/[0.06] mx-1 my-1" />
       )}
 
@@ -122,6 +128,25 @@ export function SlashCommandPopover({
               isActive={activeSectionIndex === 1 && activeItemIndex === index}
               onSelect={() => onSelect(item)}
               onHover={() => onHover(1, index)}
+            />
+          ))}
+        </>
+      )}
+
+      {hasSkills && hasTemplates && (
+        <div className="border-t border-white/[0.06] mx-1 my-1" />
+      )}
+
+      {hasTemplates && (
+        <>
+          <SectionHeader label="Prompt Templates" />
+          {templates.map((item, index) => (
+            <SlashCommandRow
+              key={item.id}
+              item={item}
+              isActive={activeSectionIndex === 2 && activeItemIndex === index}
+              onSelect={() => onSelect(item)}
+              onHover={() => onHover(2, index)}
             />
           ))}
         </>

@@ -10,6 +10,7 @@ import {
   Check,
   AlertCircle,
   Cpu,
+  Download,
   PartyPopper,
 } from "lucide-react";
 import { getLogger } from "@logtape/logtape";
@@ -26,6 +27,7 @@ import {
 
 import type { WizardSessionEvent } from "../../../shared/agent-protocol.js";
 import type { GalleryTemplate } from "../../../shared/herman-manifest.js";
+import { getToolEntry } from "../../../shared/tool-registry.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import type { WizardStep, WizardPhaseId } from "../lib/agent-store/types.js";
@@ -35,6 +37,7 @@ import { ModelSelector } from "./model-selector.js";
 import { WizardDocsView } from "./wizard-docs-view.js";
 import { WizardQuestions } from "./wizard-questions.js";
 import { WizardLoading } from "./wizard-loading.js";
+import { WizardToolSetup } from "./wizard-tool-setup.js";
 import { ProgressLog } from "./progress-log.js";
 
 const logger = getLogger(["herman-desktop", "view", "onboarding-wizard"]);
@@ -97,9 +100,12 @@ const ICON_MAP: Record<string, React.ElementType> = {
 function TemplateListItem({
   template,
   selected,
+  missingCount,
 }: {
   template: GalleryTemplate;
   selected: boolean;
+  /** Number of required tools missing on this machine (undefined = unknown). */
+  missingCount?: number;
 }) {
   const IconComp = (template.icon ? ICON_MAP[template.icon] : undefined) ?? Sparkles;
   return (
@@ -117,8 +123,13 @@ function TemplateListItem({
           )}
         />
         <div className="flex flex-1 flex-col items-start gap-0.5 text-left">
-          <span className={cn("text-sm font-medium", selected ? "text-text" : "text-body")}>
+          <span className={cn("flex items-center gap-2 text-sm font-medium", selected ? "text-text" : "text-body")}>
             {template.name}
+            {missingCount !== undefined && missingCount > 0 && (
+              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-normal text-amber-300">
+                Needs setup
+              </span>
+            )}
           </span>
           <span className="text-dim text-sm leading-relaxed">{template.description}</span>
         </div>
@@ -146,6 +157,9 @@ export function OnboardingWizard({
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [docsOpen, setDocsOpen] = useState(false);
+  /** Required-tools-missing count per template id (for gallery badges). */
+  const [missingByTemplate, setMissingByTemplate] = useState<Record<string, number>>({});
+  const [installBusy, setInstallBusy] = useState(false);
 
   const {
     step,
@@ -155,6 +169,7 @@ export function OnboardingWizard({
     progressLines,
     envelope,
     pendingRequestId,
+    installRequest,
     projectPath,
     wizardError,
     retryAttempt,
@@ -171,6 +186,7 @@ export function OnboardingWizard({
       progressLines: s.wizard.progressLines,
       envelope: s.wizard.envelope,
       pendingRequestId: s.wizard.pendingRequestId,
+      installRequest: s.wizard.installRequest ?? null,
       projectPath: s.wizard.projectPath,
       wizardError: s.wizard.wizardError,
       retryAttempt: s.wizard.retryAttempt,
@@ -279,6 +295,16 @@ export function OnboardingWizard({
       .then((t) => {
         setTemplates(t);
         setIsLoadingTemplates(false);
+        // Background requirement checks → "Needs setup" badges on cards.
+        for (const template of t) {
+          void desktopRpc.request
+            .checkTemplateRequirements({ templateId: template.id })
+            .then(({ results }) => {
+              const missing = results.filter((r) => !r.ok && !r.optional).length;
+              setMissingByTemplate((prev) => ({ ...prev, [template.id]: missing }));
+            })
+            .catch(() => undefined);
+        }
       })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -323,6 +349,12 @@ export function OnboardingWizard({
             envelope: event.envelope,
             step: "questions",
             recoveryMode: false,
+          });
+          break;
+        }
+        case "wizard_install_request": {
+          useAgentStore.getState().patchWizard({
+            installRequest: { requestId: event.requestId, envelope: event.envelope },
           });
           break;
         }
@@ -379,18 +411,11 @@ export function OnboardingWizard({
     };
   }, [handleWizardEvent]);
 
-  const handleDescribeContinue = useCallback(async () => {
+  // Actually launches the planning agent. Called by the setup step once the
+  // machine satisfies the template's requirements.
+  const startWizardSessionNow = useCallback(async () => {
     if (!selectedTemplate || !description.trim()) return;
-    patchWizard({
-      wizardError: null,
-      retryAttempt: 0,
-      progressLines: [],
-      envelope: null,
-      projectPath: null,
-      sessionId: undefined,
-      step: "working",
-      recoveryMode: false,
-    });
+    patchWizard({ step: "working" });
     const modelId = useAgentStore.getState().wizard.currentModel;
     try {
       const { wizardSessionId: id } = await desktopRpc.request.startWizardSession({
@@ -409,6 +434,41 @@ export function OnboardingWizard({
       patchWizard({ wizardError: msg, step: "error" });
     }
   }, [selectedTemplate, description, patchWizard, setWizardSessionId]);
+
+  // Describe → Continue: reset state and route through the deterministic
+  // tool-setup step before any agent starts.
+  const handleDescribeContinue = useCallback(() => {
+    if (!selectedTemplate || !description.trim()) return;
+    patchWizard({
+      wizardError: null,
+      retryAttempt: 0,
+      progressLines: [],
+      envelope: null,
+      installRequest: null,
+      projectPath: null,
+      sessionId: undefined,
+      step: "setup",
+      recoveryMode: false,
+    });
+  }, [selectedTemplate, description, patchWizard]);
+
+  const handleInstallRespond = useCallback(
+    (approved: boolean) => {
+      if (!wizardSessionId || !installRequest) return;
+      const { requestId } = installRequest;
+      patchWizard({ installRequest: null });
+      if (approved) setInstallBusy(true);
+      void desktopRpc.request
+        .respondWizardInstall({ wizardSessionId, requestId, approved })
+        .catch((err) => {
+          logger.warning("respondWizardInstall failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        })
+        .finally(() => setInstallBusy(false));
+    },
+    [wizardSessionId, installRequest, patchWizard],
+  );
 
   const handleAnswersSubmit = useCallback(
     (answers: { id: string; value: string; values?: string[] }[]) => {
@@ -555,6 +615,12 @@ export function OnboardingWizard({
             subtitle="The more detail you share, the better we can set things up."
           />
         )}
+        {step === "setup" && (
+          <StepHeader
+            title="Getting your computer ready"
+            subtitle="This template needs a few free tools. One click and you're set."
+          />
+        )}
         {step === "working" && (
           <StepHeader
             title={PHASE_HEADERS[phase].title}
@@ -616,6 +682,7 @@ export function OnboardingWizard({
                       key={t.id}
                       template={t}
                       selected={selectedTemplate?.id === t.id}
+                      missingCount={missingByTemplate[t.id]}
                     />
                   ))}
                 </Accordion>
@@ -661,6 +728,14 @@ export function OnboardingWizard({
                 </SignalButton>
               </ContentWidth>
             </motion.div>
+          )}
+
+          {step === "setup" && selectedTemplate && (
+            <WizardToolSetup
+              key={selectedTemplate.id}
+              templateId={selectedTemplate.id}
+              onReady={startWizardSessionNow}
+            />
           )}
 
           {step === "working" && (
@@ -829,6 +904,56 @@ export function OnboardingWizard({
           )}
         </AnimatePresence>
       </div>
+
+      {/* Agent-requested install approval (herman_request_install) */}
+      <AnimatePresence>
+        {installRequest && (
+          <motion.div
+            key="install-request"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 16 }}
+            className="absolute inset-x-0 bottom-0 z-20 flex justify-center px-6 pb-6"
+          >
+            <div className="bg-ridge w-full max-w-md rounded-2xl border border-white/[0.1] p-4 shadow-2xl">
+              <div className="flex items-start gap-3">
+                <div className="bg-signal/10 text-signal flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">
+                  <Download size={16} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-text text-sm font-semibold">
+                    Install {installRequest.envelope.label}?
+                  </div>
+                  <p className="text-dim mt-0.5 text-xs leading-relaxed">
+                    {installRequest.envelope.reason ??
+                      getToolEntry(installRequest.envelope.toolId)?.why ??
+                      "The agent needs this tool to continue building your project."}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <SignalButton
+                  size="sm"
+                  className="flex-1"
+                  disabled={installBusy}
+                  onClick={() => handleInstallRespond(true)}
+                >
+                  {installBusy ? <Loader2 size={12} className="animate-spin" /> : null}
+                  Approve & install
+                </SignalButton>
+                <button
+                  type="button"
+                  disabled={installBusy}
+                  onClick={() => handleInstallRespond(false)}
+                  className="text-dim hover:text-text rounded-xl border border-mist bg-white/[0.02] px-3 py-1.5 text-xs transition hover:bg-fog"
+                >
+                  Not now
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {step === "templates" && (
         <div className="shrink-0 pb-6 text-center">

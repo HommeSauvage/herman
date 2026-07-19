@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
 
 import type { SkillSearchResult } from "../shared/rpc.js";
 import { skillsDir } from "./app-paths.js";
+import { parseFrontmatter, type Frontmatter } from "./frontmatter.js";
 
 const logger = getLogger(["herman-desktop", "skills"]);
 
@@ -26,41 +27,6 @@ export type SkillInfo = {
   /** Whether the skill is currently disabled (excluded from agent prompts). */
   disabled?: boolean;
 };
-
-type Frontmatter = {
-  name?: string;
-  description?: string;
-  [key: string]: unknown;
-};
-
-function parseFrontmatter(rawContent: string): {
-  frontmatter: Frontmatter;
-  body: string;
-} {
-  const normalized = rawContent.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  if (!normalized.startsWith("---")) {
-    return { frontmatter: {}, body: normalized };
-  }
-  const endIndex = normalized.indexOf("\n---", 3);
-  if (endIndex === -1) {
-    return { frontmatter: {}, body: normalized };
-  }
-  const yamlString = normalized.slice(4, endIndex);
-  const body = normalized.slice(endIndex + 4).trim();
-  // Simple YAML parser for name and description only
-  const frontmatter: Frontmatter = {};
-  for (const line of yamlString.split("\n")) {
-    const match = line.match(/^(\w[\w-]*):\s*(.*)$/);
-    if (match) {
-      const key = match[1];
-      const value = match[2].trim();
-      // Remove surrounding quotes
-      const cleanValue = value.replace(/^['"](.*)['"]$/, "$1");
-      frontmatter[key] = cleanValue;
-    }
-  }
-  return { frontmatter, body };
-}
 
 function loadSkillFromFile(filePath: string, source: SkillInfo["source"]): SkillInfo | null {
   try {

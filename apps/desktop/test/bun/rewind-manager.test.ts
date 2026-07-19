@@ -12,6 +12,8 @@ import {
 import { createCheckpoint } from "../../src/bun/rewind-core.js";
 import { rewindManager } from "../../src/bun/rewind-manager.js";
 
+const SESSION_UUID = "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e";
+
 describe("rewindManager", () => {
   let appDir: string;
   let repoRoot: string;
@@ -39,16 +41,15 @@ describe("rewindManager", () => {
   });
 
   it("scopes checkpoints to the tab's pi session", async () => {
-    // Write a session file so RewindManager can discover the tab's UUID.
     const sessionDir = join(appDir, "agent", "sessions");
     mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(join(sessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
+    writeFileSync(join(sessionDir, `2026-07-08T00-00-00-000Z_${SESSION_UUID}.jsonl`), "");
 
     // Create a checkpoint belonging to the tab's session.
     await createCheckpoint({
       root: repoRoot,
       id: "cp-a",
-      sessionId: "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e",
+      sessionId: SESSION_UUID,
       trigger: "turn",
       turnIndex: 0,
     });
@@ -63,15 +64,15 @@ describe("rewindManager", () => {
       turnIndex: 0,
     });
 
-    await rewindManager.init(tabId, repoRoot);
+    await rewindManager.init(tabId, repoRoot, SESSION_UUID);
 
     const state = (rewindManager as unknown as { states: Map<string, { sessionId?: string; checkpoints: unknown[] }> }).states.get(tabId);
     expect(state).toBeDefined();
-    expect(state!.sessionId).toBe("019f3f64-46f5-7f30-82f1-c78e8d4a2e2e");
+    expect(state!.sessionId).toBe(SESSION_UUID);
     expect(state!.checkpoints).toHaveLength(1);
   });
 
-  it("does not load checkpoints when the session file is missing", async () => {
+  it("does not load checkpoints when no piSessionId is provided", async () => {
     await createCheckpoint({
       root: repoRoot,
       id: "cp-other",
@@ -91,18 +92,18 @@ describe("rewindManager", () => {
   it("returns a safety checkpoint id from restoreToCheckpoint", async () => {
     const sessionDir = join(appDir, "agent", "sessions");
     mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(join(sessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
+    writeFileSync(join(sessionDir, `2026-07-08T00-00-00-000Z_${SESSION_UUID}.jsonl`), "");
 
     await createCheckpoint({
       root: repoRoot,
       id: "cp-target",
-      sessionId: "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e",
+      sessionId: SESSION_UUID,
       trigger: "turn",
       turnIndex: 0,
     });
 
-    await rewindManager.init(tabId, repoRoot);
-    await rewindManager.reload(tabId);
+    await rewindManager.init(tabId, repoRoot, SESSION_UUID);
+    await rewindManager.reload(tabId, SESSION_UUID);
 
     const target = (rewindManager as unknown as { states: Map<string, { checkpoints: import("../../src/bun/rewind-core.js").CheckpointData[] }> }).states
       .get(tabId)?.checkpoints[0];
@@ -117,18 +118,18 @@ describe("rewindManager", () => {
     const { readFileSync } = await import("node:fs");
     const sessionDir = join(appDir, "agent", "sessions");
     mkdirSync(sessionDir, { recursive: true });
-    writeFileSync(join(sessionDir, "2026-07-08T00-00-00-000Z_019f3f64-46f5-7f30-82f1-c78e8d4a2e2e.jsonl"), "");
+    writeFileSync(join(sessionDir, `2026-07-08T00-00-00-000Z_${SESSION_UUID}.jsonl`), "");
 
     await createCheckpoint({
       root: repoRoot,
       id: "cp-v1",
-      sessionId: "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e",
+      sessionId: SESSION_UUID,
       trigger: "turn",
       turnIndex: 0,
     });
 
-    await rewindManager.init(tabId, repoRoot);
-    await rewindManager.reload(tabId);
+    await rewindManager.init(tabId, repoRoot, SESSION_UUID);
+    await rewindManager.reload(tabId, SESSION_UUID);
     const target = (rewindManager as unknown as { states: Map<string, { checkpoints: import("../../src/bun/rewind-core.js").CheckpointData[] }> }).states
       .get(tabId)?.checkpoints[0];
     expect(target).toBeDefined();

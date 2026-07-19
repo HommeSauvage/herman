@@ -247,26 +247,26 @@ export function Composer() {
     }
   }, [tabId, handleQueueFlush]);
 
-  // ---- Flush queued messages when worktree becomes ready ------------
+  // ---- Flush queued messages when the workspace becomes ready ----------
 
-  const worktreeStatus = useAgentStore((s) =>
-    s.activeTabId ? s.tabs[s.activeTabId]?.worktreeStatus : undefined,
+  const setupPhase = useAgentStore((s) =>
+    s.activeTabId ? s.tabs[s.activeTabId]?.setup.phase : undefined,
   );
 
-  const prevWorktreeStatus = useRef(worktreeStatus);
+  const prevSetupPhase = useRef(setupPhase);
   useEffect(() => {
-    const wasPending = prevWorktreeStatus.current === "pending";
-    const isReady = worktreeStatus === undefined || worktreeStatus === "ready";
-    prevWorktreeStatus.current = worktreeStatus;
+    const wasPending = prevSetupPhase.current === "pending";
+    const isReady = setupPhase === "ready";
+    prevSetupPhase.current = setupPhase;
 
     if (wasPending && isReady && tabId) {
-      // The worktree just became ready — flush any queued messages.
+      // The workspace just became ready — flush any queued messages.
       const tab = useAgentStore.getState().tabs[tabId];
       if (tab?.queuedMessages?.length && !isTabWorking(tab)) {
         handleQueueFlush(tabId);
       }
     }
-  }, [worktreeStatus, tabId, handleQueueFlush]);
+  }, [setupPhase, tabId, handleQueueFlush]);
 
   // ---- Keyboard handler -----------------------------------------------
 
@@ -395,6 +395,7 @@ export function Composer() {
             open={slash.open}
             commands={slash.commands}
             skills={slash.skills}
+            templates={slash.templates}
             activeSectionIndex={slash.activeSectionIndex}
             activeItemIndex={slash.activeItemIndex}
             onSelect={(item) => {

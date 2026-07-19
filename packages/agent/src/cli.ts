@@ -24,6 +24,7 @@ import contextReporterExtension from "@herman/pi-context-reporter";
 
 import { config } from "./env.js";
 import hermanExtension from "./extensions/herman-extension.js";
+import previewContextExtension from "./extensions/preview-context-extension.js";
 import { configureLogging } from "./logging.js";
 
 const logger = getLogger(["herman-agent", "cli"]);
@@ -54,7 +55,10 @@ try {
     // The Herman extensions should be loaded as inline factories. 
     // Other bundled extensions are auto-discovered from the agent settings,
     // Which pi will install when it starts.
-    extensionFactories: [hermanExtension, contextReporterExtension],
+    // hermanExtension replaces the system prompt in before_agent_start.
+    // previewContextExtension must register after so its before_agent_start
+    // appends the preview state block on top.
+    extensionFactories: [hermanExtension, contextReporterExtension, previewContextExtension],
   });
   logger.info("Agent shutdown cleanly");
 } catch (error) {

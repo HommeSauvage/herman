@@ -49,7 +49,7 @@ const rpc = Electroview.defineRPC<HermanDesktopRPC>({
       tabMessagesHydrated: messageHandler("tabMessagesHydrated"),
       tabClosed: messageHandler("tabClosed"),
       tabActivated: messageHandler("tabActivated"),
-      tabFolderChanged: messageHandler("tabFolderChanged"),
+      sessionStateChanged: messageHandler("sessionStateChanged"),
       projectsChanged: messageHandler("projectsChanged"),
       sessionsChanged: messageHandler("sessionsChanged"),
       projectOpened: messageHandler("projectOpened"),

@@ -33,16 +33,14 @@ function sharedSessionsDir(): string {
 }
 
 describe("resolvePiSessionResumeArg", () => {
-  it("returns the newest session file when no piSessionId is provided", () => {
+  it("returns undefined when no piSessionId is provided", () => {
     const agentDir = join(tempDir, "agent");
     const sessionsDir = join(agentDir, "sessions");
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(join(sessionsDir, "2026-07-08T00-00-00-000Z_old.jsonl"), "{}");
     writeFileSync(join(sessionsDir, "2026-07-09T00-00-00-000Z_new.jsonl"), "{}");
 
-    expect(resolvePiSessionResumeArg(agentDir)).toBe(
-      join(sessionsDir, "2026-07-09T00-00-00-000Z_new.jsonl"),
-    );
+    expect(resolvePiSessionResumeArg(agentDir)).toBeUndefined();
   });
 
   it("prefers a file matching the persisted piSessionId", () => {
@@ -68,6 +66,14 @@ describe("resolvePiSessionFile", () => {
     expect(resolvePiSessionFile("abc-123")).toBe(older);
     expect(readPiSessionFilePath("abc-123")).toBe(older);
   });
+
+  it("returns undefined when no piSessionId is provided", () => {
+    const sessionsDir = sharedSessionsDir();
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "2026-07-09T00-00-00-000Z_new.jsonl"), "{}");
+
+    expect(resolvePiSessionFile()).toBeUndefined();
+  });
 });
 
 describe("readPiSessionFilePath", () => {
@@ -76,15 +82,25 @@ describe("readPiSessionFilePath", () => {
     expect(hasPiSessionFile()).toBe(false);
   });
 
-  it("returns the newest session file", () => {
+  it("returns undefined without an explicit piSessionId even when files exist", () => {
     const sessionsDir = sharedSessionsDir();
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(join(sessionsDir, "2026-07-08T00-00-00-000Z_old.jsonl"), "{}");
-    const newest = join(sessionsDir, "2026-07-09T00-00-00-000Z_new.jsonl");
-    writeFileSync(newest, "{}");
+    writeFileSync(join(sessionsDir, "2026-07-09T00-00-00-000Z_new.jsonl"), "{}");
 
-    expect(readPiSessionFilePath()).toBe(newest);
-    expect(hasPiSessionFile()).toBe(true);
+    expect(readPiSessionFilePath()).toBeUndefined();
+    expect(hasPiSessionFile()).toBe(false);
+  });
+
+  it("returns the matching session file when piSessionId is provided", () => {
+    const sessionsDir = sharedSessionsDir();
+    mkdirSync(sessionsDir, { recursive: true });
+    const target = join(sessionsDir, "2026-07-09T00-00-00-000Z_new.jsonl");
+    writeFileSync(join(sessionsDir, "2026-07-08T00-00-00-000Z_old.jsonl"), "{}");
+    writeFileSync(target, "{}");
+
+    expect(readPiSessionFilePath("new")).toBe(target);
+    expect(hasPiSessionFile("new")).toBe(true);
   });
 });
 

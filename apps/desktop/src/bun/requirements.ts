@@ -32,6 +32,8 @@ export async function checkRequirements(
         ok,
         optional: Boolean(req.optional),
         ...(req.install ? { install: req.install } : {}),
+        ...(req.why ? { why: req.why } : {}),
+        ...(req.install_cmd ? { installCmd: req.install_cmd } : {}),
         detail: ok ? stdout.trim().slice(0, 200) : (stderr || stdout).trim().slice(0, 200),
       });
     } catch (error) {
@@ -45,6 +47,8 @@ export async function checkRequirements(
         ok: false,
         optional: Boolean(req.optional),
         ...(req.install ? { install: req.install } : {}),
+        ...(req.why ? { why: req.why } : {}),
+        ...(req.install_cmd ? { installCmd: req.install_cmd } : {}),
         detail: error instanceof Error ? error.message : String(error),
       });
     }

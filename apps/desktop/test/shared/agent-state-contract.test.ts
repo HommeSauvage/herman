@@ -115,7 +115,7 @@ async function createManager() {
       send: {
         agentEvent: () => {},
         agentStatusChanged: () => {},
-        tabFolderChanged: () => {},
+        sessionStateChanged: () => {},
         sessionsChanged: () => {},
         tabMessagesHydrated: () => {},
       },

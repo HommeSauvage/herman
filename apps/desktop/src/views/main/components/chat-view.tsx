@@ -8,6 +8,7 @@ import { useAgentStore } from "../lib/agent-store.js";
 import { useIsHermanProvider } from "../lib/model-utils.js";
 import { EmptyState, HydrationPendingState } from "./empty-state.js";
 import { ErrorBanner } from "./error-banner.js";
+import { ProjectToolsBanner } from "./project-tools-banner.js";
 import { MessageList } from "./message-list.js";
 import { ProgressBar } from "./progress-bar.js";
 import { RevertDock } from "./revert-dock.js";
@@ -78,6 +79,7 @@ export function ChatView() {
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden">
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <ProgressBar />
+        <ProjectToolsBanner />
         {isHermanProvider && (
           <div className="bg-surface/30 border-b border-white/[0.06] px-5 py-2.5">
             <ThinkingBanner />

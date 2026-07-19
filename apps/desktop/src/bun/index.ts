@@ -36,19 +36,29 @@ import { clearAllTabHistory } from "./tab-history.js";
 import {
   ensurePreviewStarted,
   restartPreview as restartPreviewServers,
-  stopDevServer,
+  stopPreviewsForScope,
+  stopAllPreviewsForProject,
   getDevServerStatus,
   stopAllDevServers,
   setPreviewStatusHandler,
   setPreviewLogHandler,
+  setPreviewLineHandler,
+  tabScope,
+  folderScope,
 } from "./preview-server.js";
+import { PreviewContextService } from "./preview-context/service.js";
+import { startHostBridgeServer } from "./host-bridge/server.js";
+import { previewContextRoutes } from "./host-bridge/routes/preview-context.js";
+import { collectOrphanWorktrees } from "./session-bootstrap/worktree-gc.js";
+
 import { readProjectManifest, setupProjectRepo } from "./project-manifest.js";
 import { listProjectDocs } from "./rookie-docs.js";
 import { checkRequirements } from "./requirements.js";
+import { getToolchainStatus, installTools } from "./toolchain.js";
 import { getGalleryTemplates as loadGalleryTemplates, resolveTemplateManifest } from "./template-registry.js";
 import { WizardSessionManager } from "./wizard-session.js";
 import { listAllSkills, installSkill, removeSkill, searchSkills, installSkillFromCommand, setSkillEnabled as toggleSkill } from "./skills.js";
-import { detectInstallCommand, getSessionChanges, removeSessionWorktree } from "./worktree.js";
+import { getSessionChanges, removeSessionWorktree, WorktreeIndex } from "./worktree.js";
 import {
   loadWindowState,
   saveWindowState,
@@ -374,7 +384,10 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         return agentProcessManager.getProjectsAndSessions();
       },
       getProjectSessions: async ({ folderPath }) => {
-        const sessions = await listPiSessionsForProject(folderPath);
+        const sessions = await listPiSessionsForProject(
+          folderPath,
+          agentProcessManager.getWorktreeIndex(),
+        );
         return { sessions };
       },
       getAllPiSessions: async () => {
@@ -649,6 +662,36 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         const results = await checkRequirements(manifest.frontmatter.requirements);
         return { results };
       },
+      checkProjectRequirements: async ({ folderPath }) => {
+        const manifest = await readProjectManifest(folderPath);
+        const results = await checkRequirements(manifest?.requirements);
+        return { results };
+      },
+      getToolchainStatus: async () => {
+        return getToolchainStatus();
+      },
+      installTools: async ({ runId, items }) => {
+        if (!runId || !Array.isArray(items) || items.length === 0) {
+          return { accepted: false, reason: "runId and a non-empty items list are required" };
+        }
+        logger.info("Install run requested", {
+          runId,
+          tools: items.map((i) => i.toolId).join(", "),
+        });
+        // Fire-and-forget: completion arrives via the all-done toolchainEvent.
+        void installTools(runId, items, (event) => {
+          webviewRpc.send.toolchainEvent({ event });
+        }).catch((error) => {
+          logger.error("Install run crashed", {
+            runId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+        return { accepted: true };
+      },
+      respondWizardInstall: async ({ wizardSessionId, requestId, approved }) => {
+        wizardSessionManager.respondInstall(wizardSessionId, requestId, approved);
+      },
       startWizardSession: async ({ templateId, description, modelId }) => {
         const wizardSessionId = await wizardSessionManager.start(templateId, description, modelId);
         return { wizardSessionId };
@@ -681,15 +724,17 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         // repository is fresh" and ensures the worktree (created by createTab in
         // rookie mode) includes the manifest.
         const manifest = wizard?.getResolvedManifest();
+        let repoSetupError: string | undefined;
         if (manifest && projectPath) {
           try {
             await setupProjectRepo(projectPath, manifest);
           } catch (error) {
             // The project is still usable even if repo setup failed.
             // Log and continue — the user should not be blocked from opening.
+            repoSetupError = error instanceof Error ? error.message : String(error);
             logger.warning("setupProjectRepo failed during wizard handoff", {
               projectPath,
-              error: error instanceof Error ? error.message : String(error),
+              error: repoSetupError,
             });
           }
         }
@@ -698,9 +743,20 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         await wizard?.detach();
         wizardSessionManager.remove(wizardSessionId);
 
-        // Open the finished project directly (no session worktree) so the
-        // wizard's uncommitted changes remain visible.
-        const tab = await agentProcessManager.adoptWizardSession(projectPath, wizardSessionId);
+        // Stop any preview servers the wizard QA phase left running on the
+        // main project so they can't hold ports the first session needs.
+        await stopAllPreviewsForProject(projectPath).catch((error) =>
+          logger.debug("Failed to stop wizard previews at handoff", {
+            projectPath,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+
+        // The first session goes through the same bootstrap pipeline as any
+        // rookie tab (worktree + full setup + agent + preview).
+        const tab = await agentProcessManager.adoptWizardSession(projectPath, wizardSessionId, {
+          ...(repoSetupError ? { repoSetupError } : {}),
+        });
         webviewRpc.send.tabCreated({ tab });
         webviewRpc.send.tabActivated({ tabId: tab.id });
         notifyProjectsChanged();
@@ -734,8 +790,8 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         const tab = agentProcessManager.getTab(tabId);
         if (!tab || !tab.worktree) return;
         await removeSessionWorktree(tab);
-        // closeTab defers stopDevServer so the renderer unmounts the webview
-        // before the preview server is killed — no explicit stopDevServer needed.
+        // closeTab defers preview shutdown so the renderer unmounts the webview
+        // before the preview server is killed — no explicit stop needed.
         const newActiveId = await agentProcessManager.closeTab(tabId);
         webviewRpc.send.tabClosed({ tabId });
         if (newActiveId) {
@@ -743,17 +799,21 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         }
         notifySessionsChanged();
       },
-      startPreview: async ({ folderPath, serverId, devCommand, devPort, all }) => {
-        const manifest = await readProjectManifest(folderPath);
-        const installCommand =
-          all || (!devCommand && !serverId)
-            ? (manifest?.install ?? detectInstallCommand(folderPath))
-            : undefined;
+      retrySessionSetup: async ({ tabId }) => {
+        logger.info("Retrying session setup", { tabId });
+        return agentProcessManager.retrySessionSetup(tabId);
+      },
+      startPreview: async ({ tabId, folderPath, serverId, devCommand, devPort, all }) => {
+        const resolved = resolvePreviewScope(tabId, folderPath);
+        const manifest = await readProjectManifest(resolved.folderPath, resolved.projectRoot);
+        if (tabId) {
+          // A manual start clears the per-session auto-start opt-out.
+          await agentProcessManager.setPreviewManuallyStopped(tabId, false);
+        }
         if (all || (!devCommand && !serverId)) {
           if (manifest?.servers?.length) {
-            return ensurePreviewStarted(folderPath, {
+            return ensurePreviewStarted(resolved.scope, resolved.folderPath, {
               servers: manifest.servers,
-              installCommand,
               all: true,
             });
           }
@@ -761,28 +821,32 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         const server = serverId
           ? manifest?.servers?.find((s) => s.id === serverId)
           : (manifest?.primary ?? manifest?.servers?.[0]);
-        return ensurePreviewStarted(folderPath, {
+        return ensurePreviewStarted(resolved.scope, resolved.folderPath, {
           serverId: server?.id ?? serverId ?? "web",
           command: devCommand ?? server?.command,
           port: devPort ?? server?.port,
           exportUrlAs: server?.exportUrlAs,
-          installCommand,
+          portEnv: server?.portEnv,
         });
       },
-      stopPreview: async ({ folderPath, serverId }) => {
-        await stopDevServer(folderPath, serverId);
+      stopPreview: async ({ tabId, folderPath, serverId }) => {
+        const resolved = resolvePreviewScope(tabId, folderPath);
+        if (tabId) {
+          // Auto-start stays off until the next manual start.
+          await agentProcessManager.setPreviewManuallyStopped(tabId, true);
+        }
+        await stopPreviewsForScope(resolved.scope, serverId);
       },
-      restartPreview: async ({ folderPath, serverId, devCommand, devPort, all }) => {
-        const manifest = await readProjectManifest(folderPath);
-        const installCommand =
-          all || (!devCommand && !serverId)
-            ? (manifest?.install ?? detectInstallCommand(folderPath))
-            : undefined;
+      restartPreview: async ({ tabId, folderPath, serverId, devCommand, devPort, all }) => {
+        const resolved = resolvePreviewScope(tabId, folderPath);
+        const manifest = await readProjectManifest(resolved.folderPath, resolved.projectRoot);
+        if (tabId) {
+          await agentProcessManager.setPreviewManuallyStopped(tabId, false);
+        }
         if (all || (!devCommand && !serverId)) {
           if (manifest?.servers?.length) {
-            return restartPreviewServers(folderPath, {
+            return restartPreviewServers(resolved.scope, resolved.folderPath, {
               servers: manifest.servers,
-              installCommand,
               all: true,
             });
           }
@@ -790,17 +854,18 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         const server = serverId
           ? manifest?.servers?.find((s) => s.id === serverId)
           : (manifest?.primary ?? manifest?.servers?.[0]);
-        return restartPreviewServers(folderPath, {
+        return restartPreviewServers(resolved.scope, resolved.folderPath, {
           serverId: server?.id ?? serverId ?? "web",
           command: devCommand ?? server?.command,
           port: devPort ?? server?.port,
           exportUrlAs: server?.exportUrlAs,
-          installCommand,
+          portEnv: server?.portEnv,
           all: false,
         });
       },
-      getPreviewStatus: async ({ folderPath, serverId }) => {
-        return getDevServerStatus(folderPath, serverId);
+      getPreviewStatus: async ({ tabId, folderPath, serverId }) => {
+        const resolved = resolvePreviewScope(tabId, folderPath);
+        return getDevServerStatus(resolved.scope, serverId);
       },
       getProjectManifest: async ({ folderPath, projectRoot }) => {
         return readProjectManifest(folderPath, projectRoot);
@@ -810,6 +875,11 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         const settings = await loadSettings();
         const skills = listAllSkills(projectDir, settings.disabledSkills);
         return { skills };
+      },
+      getPromptTemplates: async ({ projectDir }) => {
+        const { listAllPromptTemplates } = await import("./prompt-templates.js");
+        const templates = listAllPromptTemplates(projectDir);
+        return { templates };
       },
       installSkill: async ({ name, content }) => {
         return installSkill(name, content);
@@ -872,6 +942,13 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       openProject: () => {
         logger.info("Open project requested from renderer");
         void openProjectFolder();
+      },
+      previewConsoleBatch: ({ tabId, folderPath, entries, dropped }) => {
+        previewContext.handleConsoleBatch(tabId, folderPath, entries);
+        if (dropped > 0) previewContext.addRendererDropped(tabId, dropped);
+      },
+      previewNavigated: ({ tabId, folderPath, url }) => {
+        previewContext.handleNavigation(tabId, folderPath, url);
       },
     },
   },
@@ -949,6 +1026,12 @@ const agentProcessManager = new AgentProcessManager({
   onAgentModelsSync: (models, metadata) => {
     modelCatalog.ingestAgentModels(models, metadata);
   },
+  onTabClosed: (tabId) => {
+    previewContext.clearTab(tabId);
+  },
+  emitServerLine: (line) => {
+    previewContext.handleServerLine(line);
+  },
   webviewRpc: {
     send: {
       agentEvent: (payload) => {
@@ -972,7 +1055,7 @@ const agentProcessManager = new AgentProcessManager({
           logger.warning("Agent reported unauthorized; signing out", { tabId });
           void doSignOut();
         }
-        webviewRpc.send.agentEvent({ tabId, event });
+        webviewRpc.send.agentEvent(payload);
       },
       agentStatusChanged: (payload) => {
         const { tabId, state, stderr } = payload;
@@ -981,12 +1064,15 @@ const agentProcessManager = new AgentProcessManager({
         } else {
           logger.debug("Agent status changed", { tabId, state });
         }
-        webviewRpc.send.agentStatusChanged({ tabId, state, stderr });
+        webviewRpc.send.agentStatusChanged(payload);
       },
-      tabFolderChanged: (payload) => {
-        const { tabId, folderPath, projectRoot } = payload;
-        logger.trace("Tab folder changed", { tabId, folderPath, projectRoot });
-        webviewRpc.send.tabFolderChanged({ tabId, folderPath, projectRoot });
+      sessionStateChanged: (payload) => {
+        logger.trace("Session state changed", {
+          tabId: payload.tabId,
+          phase: payload.setup.phase,
+          folderPath: payload.folderPath,
+        });
+        webviewRpc.send.sessionStateChanged(payload);
       },
       sessionsChanged: (payload) => {
         webviewRpc.send.sessionsChanged(payload);
@@ -1099,6 +1185,32 @@ function notifySessionsChanged() {
 function notifyProjectOpened(folderPath: string, projectRoot: string) {
   const { projects } = agentProcessManager.getProjectsAndSessions();
   webviewRpc.send.projectOpened({ folderPath, projectRoot, projects });
+}
+
+/**
+ * Resolve the owning preview scope for an RPC call: the session's tab scope
+ * when a tabId is given (preferred), otherwise a synthetic folder scope for
+ * tab-less callers (e.g. the wizard).
+ */
+function resolvePreviewScope(
+  tabId: TabId | undefined,
+  folderPath: string | undefined,
+): { scope: string; folderPath: string; projectRoot?: string } {
+  if (tabId) {
+    const tab = agentProcessManager.getTab(tabId);
+    if (!tab) {
+      throw new Error(`Tab not found: ${tabId}`);
+    }
+    return {
+      scope: tabScope(tabId),
+      folderPath: tab.folderPath,
+      ...(tab.projectRoot ? { projectRoot: tab.projectRoot } : {}),
+    };
+  }
+  if (folderPath) {
+    return { scope: folderScope(folderPath), folderPath };
+  }
+  throw new Error("startPreview/stopPreview requires a tabId or folderPath");
 }
 
 async function openProjectFolder() {
@@ -1337,8 +1449,27 @@ async function restoreApp() {
       webviewRpc.send.tabActivated({ tabId: activeTabId });
     }
     for (const tab of tabs) {
-      webviewRpc.send.tabFolderChanged({ tabId: tab.id, folderPath: tab.folderPath, projectRoot: tab.projectRoot });
+      webviewRpc.send.sessionStateChanged({
+        tabId: tab.id,
+        setup: tab.setup,
+        folderPath: tab.folderPath,
+        projectRoot: tab.projectRoot,
+        ...(tab.worktree ? { worktree: tab.worktree } : {}),
+      });
     }
+
+    // Background worktree/branch GC — never blocks startup, errors are
+    // warnings inside the collector.
+    const { sessions: gcSessions, projects: gcProjects } =
+      agentProcessManager.getProjectsAndSessions();
+    void collectOrphanWorktrees({
+      knownTabIds: new Set(gcSessions.map((s) => s.id)),
+      knownProjectRoots: gcProjects,
+    }).catch((error) =>
+      logger.warning("Worktree GC failed", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.error("Failed to restore app state", { error: message });
@@ -1368,6 +1499,7 @@ async function handleMenuAction(action?: string) {
     case "quit": {
       await agentProcessManager.closeAll();
       await stopAllDevServers();
+      void hostBridge.stop();
       // Safety net: remove any BrowserViews the renderer couldn't clean up.
       agentProcessManager.removeOrphanedPreviewViews();
       process.exit();
@@ -1536,5 +1668,24 @@ function wireNavigationRules(mainWindow: BrowserWindow, allowedOrigin?: string) 
     },
   );
 }
+
+// ── Host bridge + preview context (before any agent spawns) ──
+const previewContext = new PreviewContextService({
+  getTab: (tabId) => {
+    const tab = agentProcessManager.getTab(tabId);
+    if (!tab) return undefined;
+    return {
+      folderPath: tab.folderPath,
+      projectRoot: tab.projectRoot,
+      worktree: tab.worktree,
+    };
+  },
+  getMode,
+  getFleetStatus: (scope) => getDevServerStatus(scope),
+});
+setPreviewLineHandler((line) => previewContext.handleServerLine(line));
+
+// Must be ready before restoreApp() spawns any agent subprocess.
+const hostBridge = await startHostBridgeServer(previewContextRoutes(previewContext));
 
 restoreApp();

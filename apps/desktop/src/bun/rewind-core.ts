@@ -423,11 +423,11 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
 
     const commitEnv = {
       ...process.env,
-      GIT_AUTHOR_NAME: "pi-rewind",
+      GIT_AUTHOR_NAME: "herman-rewind",
       GIT_AUTHOR_EMAIL: "rewind@pi",
       GIT_AUTHOR_DATE: iso,
-      GIT_COMMITTER_NAME: "pi-rewind",
-      GIT_COMMITTER_EMAIL: "rewind@pi",
+      GIT_COMMITTER_NAME: "herman-rewind",
+      GIT_COMMITTER_EMAIL: "rewind@herman",
       GIT_COMMITTER_DATE: iso,
     };
 

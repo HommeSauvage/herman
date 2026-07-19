@@ -24,7 +24,7 @@ function makeManifest(
   return {
     id: "blog",
     frontmatter: {
-      version: 1,
+      version: 2,
       name: "Blog",
       description: "A personal blog",
       source: { repo: "https://github.com/example/blog.git", ref: "main" },
@@ -122,22 +122,20 @@ describe("buildCodingGoal", () => {
     const goal = buildCodingGoal(
       makeManifest({
         frontmatter: {
-          dev: {
-            servers: [
-              {
-                id: "api",
-                label: "API",
-                command: "bun run dev:api",
-                exportUrlAs: "API_SERVER",
-              },
-              {
-                id: "web",
-                label: "Web",
-                command: "bun run dev:web",
-                primary: true,
-              },
-            ],
-          },
+          servers: [
+            {
+              id: "api",
+              label: "API",
+              command: "bun run dev:api",
+              exportUrlAs: "API_SERVER",
+            },
+            {
+              id: "web",
+              label: "Web",
+              command: "bun run dev:web",
+              primary: true,
+            },
+          ],
         },
       }),
       "/tmp/x",
@@ -145,6 +143,33 @@ describe("buildCodingGoal", () => {
     );
     expect(goal).toContain("Preview URL env contract");
     expect(goal).toContain("API_SERVER");
+  });
+
+  it("includes the generated workspace setup recipe from the resolved plan", () => {
+    const goal = buildCodingGoal(
+      makeManifest({
+        frontmatter: {
+          env: {
+            files: [
+              {
+                path: ".env",
+                from_example: ".env.example",
+                vars: { APP_KEY: { generate: "php artisan key:generate --show" } },
+              },
+            ],
+          },
+          setup: [
+            { id: "deps", label: "Installing dependencies", run: "composer install" },
+          ],
+        },
+      }),
+      "/tmp/x",
+      "/tmp/x/HERMAN_PLAN.md",
+    );
+    expect(goal).toContain("Workspace setup recipe");
+    expect(goal).toContain("composer install");
+    expect(goal).toContain(".env.example");
+    expect(goal).toContain("APP_KEY");
   });
 });
 

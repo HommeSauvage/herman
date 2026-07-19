@@ -1,4 +1,4 @@
-import type { Tab, TabId } from "../shared/rpc.js";
+import type { SessionIsolation, Tab, TabId } from "../shared/rpc.js";
 import { getProjectColor } from "../shared/tab-utils.js";
 import { finalizeStreamingMessages } from "../shared/apply-agent-event.js";
 import { readPiSessionId } from "./rewind-manager.js";
@@ -41,8 +41,9 @@ export class TabSessionStore {
     return [...this.openTabIds];
   }
 
-  toPersistedSession(tab: Tab): PersistedSession {
-    const persistedId = this.sessions.get(tab.id)?.piSessionId;
+  toPersistedSession(tab: Tab, isolation?: SessionIsolation): PersistedSession {
+    const previous = this.sessions.get(tab.id);
+    const persistedId = previous?.piSessionId;
     return {
       id: tab.id,
       title: tab.title,
@@ -51,6 +52,14 @@ export class TabSessionStore {
       projectColor: tab.projectColor,
       piSessionId: readPiSessionId(persistedId) ?? persistedId,
       worktree: tab.worktree,
+      // Isolation is fixed at creation: explicit on first persist, preserved
+      // from the store afterwards (a pending worktree tab has no worktree
+      // object yet, so tab state alone can't be the source of truth).
+      isolation:
+        isolation ?? previous?.isolation ?? (tab.worktree ? "worktree" : "direct"),
+      setupCompletedAt: previous?.setupCompletedAt,
+      setupPlanHash: previous?.setupPlanHash,
+      previewManuallyStopped: previous?.previewManuallyStopped,
       createdAt: tab.createdAt,
       updatedAt: tab.updatedAt,
       revertMessageId: tab.revertMessageId,
@@ -69,10 +78,17 @@ export class TabSessionStore {
     messages: Tab["messages"],
     composerValue = "",
   ): Tab {
+    const isolation = persisted.isolation ?? (persisted.worktree ? "worktree" : "direct");
     return {
       ...persisted,
       projectRoot: persisted.projectRoot ?? persisted.folderPath,
       projectColor: getProjectColor(persisted.projectRoot ?? persisted.folderPath),
+      // Restored worktree sessions start in the pending state until the
+      // bootstrapper's repair run verifies the workspace and marks it ready.
+      setup:
+        isolation === "worktree"
+          ? { phase: "pending", label: "Checking your workspace…" }
+          : { phase: "none" },
       messages: finalizeStreamingMessages(messages),
       isThinking: false,
       showThinking: false,

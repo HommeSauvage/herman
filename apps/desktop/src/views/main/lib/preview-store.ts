@@ -3,7 +3,8 @@ import { create } from "zustand";
 
 import type { DevServer, ProjectManifestView } from "../../../shared/herman-manifest.js";
 import type { PreviewLogEvent, PreviewServerSnapshot } from "../../../shared/preview.js";
-import type { DesktopRpc } from "../../../shared/rpc.js";
+import { folderScope, tabScope } from "../../../shared/preview.js";
+import type { DesktopRpc, SessionSetupState } from "../../../shared/rpc.js";
 import type { PreviewRuntimeError } from "../components/preview-error-banner.js";
 import { useAgentStore } from "./agent-store.js";
 import { desktopRpc as realDesktopRpc } from "./desktop-rpc.js";
@@ -64,6 +65,8 @@ type PreviewStoreState = {
   projectRoot: string;
   tabId: string | undefined;
   isWorktree: boolean;
+  /** The session's setup phase — previews wait for "ready". */
+  setupPhase: SessionSetupState["phase"] | undefined;
   generation: number;
   manifest: ManifestState;
   server: PreviewServerSnapshot | null;
@@ -86,11 +89,12 @@ type PreviewActivateContext = {
   projectRoot?: string;
   tabId?: string;
   isWorktree?: boolean;
+  setupPhase?: SessionSetupState["phase"];
 };
 
 type PreviewStoreActions = {
   activate: (ctx: PreviewActivateContext) => void;
-  loadAndStart: (generation: number) => Promise<void>;
+  loadManifest: (generation: number) => Promise<void>;
   acceptStatus: (snapshot: PreviewServerSnapshot) => void;
   acceptLog: (event: PreviewLogEvent) => void;
   acceptClientError: (err: { message: string; stack?: string }) => void;
@@ -121,6 +125,7 @@ const initialState = (): PreviewStoreState => ({
   projectRoot: "",
   tabId: undefined,
   isWorktree: false,
+  setupPhase: undefined,
   generation: 0,
   manifest: { phase: "idle", value: null },
   server: null,
@@ -149,6 +154,25 @@ function isCurrent(
   return true;
 }
 
+/** The preview scope this store instance renders: the tab's own scope when
+ *  a tab is active, otherwise the folder scope (tab-less callers). */
+function expectedScope(state: PreviewStoreState): string {
+  if (state.tabId) return tabScope(state.tabId);
+  return state.folderPath ? folderScope(state.folderPath) : "";
+}
+
+function matchesScope(
+  state: PreviewStoreState,
+  scope: string,
+  folderPath: string,
+): boolean {
+  const expected = expectedScope(state);
+  if (expected && scope === expected) return true;
+  // Folder-scoped events are a fallback for stores without a tab.
+  if (!state.tabId && state.folderPath && folderPath === state.folderPath) return true;
+  return false;
+}
+
 export type PreviewStore = PreviewStoreState & PreviewStoreActions;
 
 export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
@@ -162,15 +186,17 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
       const projectRoot = ctx.projectRoot ?? "";
       const tabId = ctx.tabId;
       const isWorktree = Boolean(ctx.isWorktree);
+      const setupPhase = ctx.setupPhase;
       const sameIdentity =
         state.folderPath === folderPath &&
         state.projectRoot === projectRoot &&
         state.tabId === tabId &&
-        state.isWorktree === isWorktree;
+        state.isWorktree === isWorktree &&
+        state.setupPhase === setupPhase;
       const generation = sameIdentity ? state.generation : state.generation + 1;
       if (sameIdentity) {
         if (folderPath && folderPath.length >= 3 && state.manifest.phase === "idle") {
-          void get().loadAndStart(generation);
+          void get().loadManifest(generation);
         }
         if (tabId && isWorktree) {
           void get().refreshDraft();
@@ -185,6 +211,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         projectRoot,
         tabId,
         isWorktree,
+        setupPhase,
         deviceMode: get().deviceMode, // preserve across folders
         manifest:
           folderPath && folderPath.length >= 3
@@ -199,14 +226,17 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
       });
 
       if (folderPath && folderPath.length >= 3) {
-        void get().loadAndStart(generation);
+        void get().loadManifest(generation);
       }
       if (tabId && isWorktree) {
         void get().refreshDraft();
       }
     },
 
-    loadAndStart: async (generation) => {
+    // Loads the project manifest only. Servers are started by the main
+    // process once the session is ready — the renderer never triggers
+    // setup side effects; it only renders state and subscribes to events.
+    loadManifest: async (generation) => {
       const { folderPath, projectRoot, manifest } = get();
       if (!folderPath || folderPath.length < 3) return;
 
@@ -215,7 +245,6 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
           phase: "loading",
           value: manifest.phase === "loaded" && manifest.value ? manifest.value : null,
         },
-        operation: "start",
       });
 
       try {
@@ -244,42 +273,6 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
           manifest: { phase: "loaded", value: m },
           activeServerId,
         });
-
-        const result = await desktopRpc.request.startPreview({
-          folderPath,
-          all: true,
-          ...(m.primary
-            ? {
-                serverId: m.primary.id,
-                devCommand: m.primary.command,
-                devPort: m.primary.port,
-              }
-            : {}),
-        });
-
-        if (!isCurrent(get(), generation, folderPath)) return;
-
-        // Event snapshots are authoritative; only apply if we don't already
-        // have a newer ready/failed from push events.
-        const current = get().server;
-        if (current && (current.phase === "ready" || current.phase === "failed")) {
-          if (get().operation === "start") set({ operation: "none" });
-          return;
-        }
-
-        set({
-          server: {
-            folderPath: result.folderPath,
-            serverId: result.serverId,
-            phase: result.phase,
-            url: result.url,
-            port: result.port,
-            error: result.error,
-          },
-          activeServerId: result.serverId ?? activeServerId,
-          operation: result.starting ? "start" : "none",
-          ...(result.url ? { currentUrl: result.url, canGoBack: false } : {}),
-        });
       } catch (err) {
         if (!isCurrent(get(), generation, folderPath)) return;
         const message = err instanceof Error ? err.message : "Failed to load project manifest";
@@ -292,7 +285,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
 
     acceptStatus: (snapshot) => {
       const state = get();
-      if (!state.folderPath || snapshot.folderPath !== state.folderPath) return;
+      if (!matchesScope(state, snapshot.scope, snapshot.folderPath)) return;
 
       // Fleet sibling errors: record as runtime log-style failures when not active.
       if (
@@ -372,10 +365,10 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
 
     acceptLog: (event) => {
       const state = get();
-      if (!state.folderPath || event.folderPath !== state.folderPath) {
-        logger.debug("Ignoring preview log — folder path mismatch", {
-          storeFolderPath: state.folderPath || "(empty)",
-          eventFolderPath: event.folderPath,
+      if (!matchesScope(state, event.scope, event.folderPath)) {
+        logger.debug("Ignoring preview log — scope mismatch", {
+          storeScope: expectedScope(state) || "(empty)",
+          eventScope: event.scope,
         });
         return;
       }
@@ -419,7 +412,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
 
     restart: async () => {
       const state = get();
-      const { folderPath, generation, manifest } = state;
+      const { folderPath, tabId, generation, manifest } = state;
       if (manifest.phase !== "loaded" || !manifest.value) return;
 
       set({
@@ -427,6 +420,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         server: state.server
           ? { ...state.server, phase: "starting", error: undefined }
           : {
+              scope: expectedScope(state),
               folderPath,
               serverId: state.activeServerId ?? "web",
               phase: "starting",
@@ -438,7 +432,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
       try {
         const m = manifest.value;
         const result = await desktopRpc.request.restartPreview({
-          folderPath,
+          ...(tabId ? { tabId } : { folderPath }),
           all: true,
           ...(m.primary
             ? {
@@ -453,6 +447,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         if (current && (current.phase === "ready" || current.phase === "failed")) return;
         set({
           server: {
+            scope: result.scope,
             folderPath: result.folderPath,
             serverId: result.serverId,
             phase: result.phase,
@@ -471,6 +466,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         set({
           operation: "none",
           server: {
+            scope: expectedScope(state),
             folderPath,
             serverId: state.activeServerId ?? "web",
             phase: "failed",
@@ -482,7 +478,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
 
     switchServer: async (server) => {
       const state = get();
-      const { folderPath, generation } = state;
+      const { folderPath, tabId, generation } = state;
       set({
         activeServerId: server.id,
         operation: "switch",
@@ -491,6 +487,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         currentUrl: null,
         canGoBack: false,
         server: {
+          scope: expectedScope(state),
           folderPath,
           serverId: server.id,
           phase: "starting",
@@ -499,7 +496,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
 
       try {
         const result = await desktopRpc.request.startPreview({
-          folderPath,
+          ...(tabId ? { tabId } : { folderPath }),
           serverId: server.id,
           devCommand: server.command,
           devPort: server.port,
@@ -510,6 +507,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         if (current && current.serverId === server.id && current.phase === "ready") return;
         set({
           server: {
+            scope: result.scope,
             folderPath: result.folderPath,
             serverId: result.serverId,
             phase: result.phase,
@@ -526,6 +524,7 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         set({
           operation: "none",
           server: {
+            scope: expectedScope(state),
             folderPath,
             serverId: server.id,
             phase: "failed",
@@ -628,6 +627,7 @@ export const usePreviewStore = createPreviewStore();
 export type PreviewStage =
   | "manifest_loading"
   | "manifest_failed"
+  | "waiting_for_setup"
   | "server_starting"
   | "server_failed"
   | "ready"
@@ -636,6 +636,9 @@ export type PreviewStage =
 
 export function selectPreviewStage(state: PreviewStoreState): PreviewStage {
   if (!state.folderPath) return "no_manifest";
+  // The session's workspace is still being set up — never start (or show)
+  // a server against the temporary main-tree folder.
+  if (state.setupPhase === "pending") return "waiting_for_setup";
   if (state.manifest.phase === "loading") return "manifest_loading";
   if (state.manifest.phase === "failed") return "manifest_failed";
 
@@ -647,7 +650,6 @@ export function selectPreviewStage(state: PreviewStoreState): PreviewStage {
     op === "start" ||
     op === "restart" ||
     op === "switch" ||
-    phase === "installing" ||
     phase === "starting"
   ) {
     return "server_starting";

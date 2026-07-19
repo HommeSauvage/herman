@@ -9,15 +9,51 @@ import type {
   ProjectManifestView,
   ResolvedManifest,
 } from "../shared/herman-manifest.js";
-import { HermanYamlSchema } from "../shared/herman-manifest.js";
+import {
+  HermanYamlSchema,
+  isV1Manifest,
+  migrateV1Manifest,
+} from "../shared/herman-manifest.js";
 import { dumpFrontmatterYaml, parseHermanMd, yamlString } from "./herman-md.js";
 import { initProjectRepo } from "./worktree.js";
 
 const logger = getLogger(["herman-desktop", "project-manifest"]);
 
+/** Map a parsed v2 manifest shape (yaml or frontmatter) to the renderer view. */
+function toManifestView(parsed: {
+  name?: string;
+  description?: string;
+  env?: HermanFrontmatter["env"];
+  setup?: HermanFrontmatter["setup"];
+  servers?: HermanFrontmatter["servers"];
+  guidance?: string;
+  requirements?: HermanFrontmatter["requirements"];
+}): ProjectManifestView {
+  const servers = parsed.servers ?? [];
+  const primary =
+    servers.find((s) => s.primary) ?? (servers.length > 0 ? servers[0] : undefined);
+  return {
+    servers,
+    ...(primary ? { primary } : {}),
+    ...(parsed.setup?.length ? { setup: parsed.setup } : {}),
+    ...(parsed.env ? { env: parsed.env } : {}),
+    ...(parsed.guidance ? { guidance: parsed.guidance } : {}),
+    ...(parsed.requirements?.length ? { requirements: parsed.requirements } : {}),
+    ...(parsed.name ? { name: parsed.name } : {}),
+    ...(parsed.description ? { description: parsed.description } : {}),
+    ...(primary
+      ? {
+          devCommand: primary.command,
+          ...(primary.port != null ? { devPort: primary.port } : {}),
+        }
+      : {}),
+  };
+}
+
 /**
  * Reads the project's root herman.yaml first, then falls back to
  * HERMAN.md. Returns undefined if neither exists / is valid.
+ * v1 manifests are migrated to v2 on read.
  */
 export async function readProjectManifest(
   folderPath: string,
@@ -29,7 +65,7 @@ export async function readProjectManifest(
   }
 
   for (const root of candidateRoots) {
-    // 1. herman.yaml — new pure-YAML format (already resolved, no extends)
+    // 1. herman.yaml — pure-YAML format (already resolved, no extends)
     const yamlPath = join(root, "herman.yaml");
     if (existsSync(yamlPath)) {
       try {
@@ -42,33 +78,16 @@ export async function readProjectManifest(
       }
     }
 
-    // 2. HERMAN.md — original format (may have extends)
+    // 2. HERMAN.md — original format (may have extends; v1 shimmed at parse)
     const hermanMdPath = join(root, "HERMAN.md");
     if (existsSync(hermanMdPath)) {
       try {
         const raw = await readFile(hermanMdPath, "utf-8");
         const parsed = parseHermanMd(raw, "project");
-        const servers = parsed.frontmatter.dev?.servers ?? [];
-        const primary =
-          servers.find((s) => s.primary) ?? (servers.length > 0 ? servers[0] : undefined);
-        return {
-          servers,
-          primary,
-          ...(parsed.frontmatter.dev?.install
-            ? { install: parsed.frontmatter.dev.install }
-            : {}),
+        return toManifestView({
+          ...parsed.frontmatter,
           ...(parsed.sections.guidance ? { guidance: parsed.sections.guidance } : {}),
-          ...(parsed.frontmatter.env ? { env: parsed.frontmatter.env } : {}),
-          ...(parsed.frontmatter.requirements
-            ? { requirements: parsed.frontmatter.requirements }
-            : {}),
-          ...(primary
-            ? {
-                devCommand: primary.command,
-                ...(primary.port != null ? { devPort: primary.port } : {}),
-              }
-            : {}),
-        };
+        });
       } catch (error) {
         logger.warning("Failed to read HERMAN.md", {
           folderPath: root,
@@ -86,33 +105,16 @@ async function readHermanYaml(
   yamlPath: string,
 ): Promise<ProjectManifestView> {
   const raw = await readFile(yamlPath, "utf-8");
-  const parsed = HermanYamlSchema.parse(Bun.YAML.parse(raw));
-
-  const servers = parsed.dev?.servers ?? [];
-  const primary =
-    servers.find((s) => s.primary) ?? (servers.length > 0 ? servers[0] : undefined);
-
-  return {
-    servers,
-    ...(primary ? { primary } : {}),
-    ...(parsed.dev?.install ? { install: parsed.dev.install } : {}),
-    ...(parsed.guidance ? { guidance: parsed.guidance } : {}),
-    ...(parsed.env ? { env: parsed.env } : {}),
-    ...(parsed.requirements ? { requirements: parsed.requirements } : {}),
-    ...(primary
-      ? {
-          devCommand: primary.command,
-          ...(primary.port != null ? { devPort: primary.port } : {}),
-        }
-      : {}),
-  };
+  const parsedRaw: unknown = Bun.YAML.parse(raw);
+  const migrated = isV1Manifest(parsedRaw) ? migrateV1Manifest(parsedRaw) : parsedRaw;
+  const parsed = HermanYamlSchema.parse(migrated);
+  return toManifestView(parsed);
 }
 
 /**
- * Serialize a resolved manifest to herman.yaml (pure YAML).
- * Uses the same standard as the HERMAN.md frontmatter, but strips
- * wizard-only fields (setup_goal, extends) and embeds guidance as
- * a YAML key instead of markdown.
+ * Serialize a resolved manifest to herman.yaml (pure YAML, v2).
+ * Strips wizard-only fields (setup_goal, extends, template metadata) and
+ * embeds guidance as a YAML key instead of markdown.
  */
 export function serializeHermanYaml(manifest: ResolvedManifest): string {
   const fm = manifest.frontmatter;
@@ -123,8 +125,9 @@ export function serializeHermanYaml(manifest: ResolvedManifest): string {
     version: fm.version,
     ...(fm.name != null ? { name: fm.name } : {}),
     ...(fm.description != null ? { description: fm.description } : {}),
-    ...(fm.dev ? { dev: fm.dev } : {}),
     ...(fm.env ? { env: fm.env } : {}),
+    ...(fm.setup?.length ? { setup: fm.setup } : {}),
+    ...(fm.servers?.length ? { servers: fm.servers } : {}),
     ...(fm.requirements?.length ? { requirements: fm.requirements } : {}),
   };
 

@@ -6,6 +6,9 @@ import {
   VISUAL_TONE_QUESTION_ID,
   DEFAULT_PROJECT_NAME_QUESTION,
   DEFAULT_VISUAL_TONE_QUESTION,
+  INSTALL_SENTINEL,
+  encodeInstallEnvelope,
+  tryParseInstallEnvelope,
   encodeWizardEnvelope,
   tryParseWizardEnvelope,
   encodeWizardAnswers,
@@ -14,7 +17,7 @@ import {
   ensureProjectNameFirst,
   type WizardAskEnvelope,
 } from "../../src/shared/wizard-protocol.js";
-import { tryParseWizardRequest } from "../../src/shared/agent-protocol.js";
+import { tryParseInstallRequest, tryParseWizardRequest } from "../../src/shared/agent-protocol.js";
 
 describe("wizard-protocol", () => {
   it("round-trips an envelope through encode/parse", () => {
@@ -130,5 +133,68 @@ describe("tryParseWizardRequest", () => {
 
   it("sentinel constant is stable on the wire", () => {
     expect(WIZARD_SENTINEL).toBe("__herman_wizard__");
+  });
+});
+
+describe("install request envelope", () => {
+  it("round-trips an install envelope", () => {
+    const envelope = {
+      __herman_install__: true as const,
+      version: 1 as const,
+      toolId: "postgres",
+      label: "PostgreSQL",
+      reason: "Your project needs a database to store data.",
+      installCmd: "brew install postgresql@16",
+    };
+    const parsed = tryParseInstallEnvelope(encodeInstallEnvelope(envelope));
+    expect(parsed).toEqual(envelope);
+  });
+
+  it("rejects non-install payloads", () => {
+    expect(tryParseInstallEnvelope(undefined)).toBeUndefined();
+    expect(tryParseInstallEnvelope("not json")).toBeUndefined();
+    expect(tryParseInstallEnvelope('{"__herman_wizard__":true,"version":1,"questions":[]}')).toBeUndefined();
+    expect(tryParseInstallEnvelope('{"__herman_install__":true,"version":2,"toolId":"x","label":"y"}')).toBeUndefined();
+    // Missing required fields.
+    expect(tryParseInstallEnvelope('{"__herman_install__":true,"version":1,"toolId":"x"}')).toBeUndefined();
+  });
+
+  it("sentinel constant is stable on the wire", () => {
+    expect(INSTALL_SENTINEL).toBe("__herman_install__");
+  });
+
+  it("tryParseInstallRequest routes editor requests with install envelopes", () => {
+    const envelope = {
+      __herman_install__: true as const,
+      version: 1 as const,
+      toolId: "docker",
+      label: "Docker",
+    };
+    const hit = tryParseInstallRequest({
+      type: "extension_ui_request",
+      id: "req-install-1",
+      method: "editor",
+      prefill: JSON.stringify(envelope),
+    });
+    expect(hit?.requestId).toBe("req-install-1");
+    expect(hit?.envelope.toolId).toBe("docker");
+
+    // Real editor requests and wizard question envelopes don't match.
+    expect(
+      tryParseInstallRequest({
+        type: "extension_ui_request",
+        id: "req-install-2",
+        method: "editor",
+        prefill: "plain prose",
+      }),
+    ).toBeUndefined();
+    expect(
+      tryParseInstallRequest({
+        type: "extension_ui_request",
+        id: "req-install-3",
+        method: "editor",
+        prefill: '{"__herman_wizard__":true,"version":1,"questions":[]}',
+      }),
+    ).toBeUndefined();
   });
 });

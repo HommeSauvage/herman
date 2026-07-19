@@ -31,16 +31,17 @@ describe("readSessionSnapshot", () => {
 
   it("reads messages and context totals from pi session JSONL", () => {
     const tabId = "tab-1";
+    const sessionId = "019f442d-33f0-75c3-a71e-54e95c3e27fe";
     const sessionsDir = join(tempDir, "agent", "sessions");
     mkdirSync(sessionsDir, { recursive: true });
-    const file = join(sessionsDir, "2026-07-09T00-00-00-000Z_sess-1.jsonl");
+    const file = join(sessionsDir, `2026-07-09T00-00-00-000Z_${sessionId}.jsonl`);
     writeFileSync(
       file,
       [
         JSON.stringify({
           type: "session",
           version: 3,
-          id: "sess-1",
+          id: sessionId,
           timestamp: "2026-07-09T00:00:00.000Z",
           cwd: "/project",
         }),
@@ -68,7 +69,7 @@ describe("readSessionSnapshot", () => {
       ].join("\n") + "\n",
     );
 
-    const snapshot = readSessionSnapshot(tabId);
+    const snapshot = readSessionSnapshot(tabId, sessionId);
     expect(snapshot.messages).toEqual([
       { id: "u1", role: "user", content: "hello" },
       {
@@ -83,6 +84,7 @@ describe("readSessionSnapshot", () => {
     expect(snapshot.contextStats?.outputTokens).toBe(20);
     expect(snapshot.contextStats?.totalTokens).toBe(125);
     expect(snapshot.sessionFile).toBe(file);
+    expect(snapshot.piSessionId).toBe(sessionId);
   });
 
   it("uses persisted piSessionId instead of the newest session file", () => {

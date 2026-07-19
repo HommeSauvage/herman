@@ -11,16 +11,18 @@ import type {
   PendingAttachment,
   PersistedSession,
   QueuedFollowUp,
+  SessionSetupState,
   SessionWorktree,
   Session,
   TabMessageHydrationStatus,
 } from "../../../../shared/rpc.js";
 import type { TabId } from "../../../../shared/tab-utils.js";
-import type { WizardAskEnvelope } from "../../../../shared/wizard-protocol.js";
+import type { WizardAskEnvelope, WizardInstallEnvelope } from "../../../../shared/wizard-protocol.js";
 
 export type WizardStep =
   | "templates"
   | "describe"
+  | "setup"
   | "working"
   | "questions"
   | "done"
@@ -38,6 +40,7 @@ export const INITIAL_WIZARD_STATE = {
   progressLines: [] as string[],
   envelope: null as WizardAskEnvelope | null,
   pendingRequestId: null as string | null,
+  installRequest: null as { requestId: string; envelope: WizardInstallEnvelope } | null,
   projectPath: null as string | null,
   wizardError: null as string | null,
   retryAttempt: 0,
@@ -54,9 +57,9 @@ export type Tab = {
   projectRoot: string;
   projectColor: string;
   worktree?: SessionWorktree;
-  /** Tracks background worktree creation. "pending" while the worktree is being
-   *  created; "ready" once the agent can start; "error" if it failed. */
-  worktreeStatus?: "pending" | "ready" | "error";
+  /** Session setup state machine, owned by the main process and applied
+   *  wholesale from `sessionStateChanged` events. */
+  setup: SessionSetupState;
   messages: Message[];
   isThinking: boolean;
   currentModel?: string;
@@ -170,6 +173,8 @@ export type AgentState = {
     progressLines: string[];
     envelope?: WizardAskEnvelope | null;
     pendingRequestId?: string | null;
+    /** Pending agent-requested tool install (herman_request_install). */
+    installRequest?: { requestId: string; envelope: WizardInstallEnvelope } | null;
     projectPath?: string | null;
     wizardError?: string | null;
     retryAttempt: number;

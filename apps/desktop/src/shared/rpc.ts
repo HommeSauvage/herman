@@ -1,4 +1,5 @@
 import { type RPCSchema } from "electrobun/bun";
+import type { PreviewConsoleEntry } from "@herman/rpc/host-bridge";
 
 import type {
   AgentCommand,
@@ -14,6 +15,11 @@ import type {
   RequirementCheckResult,
   ResolvedManifest,
 } from "./herman-manifest.js";
+import type {
+  ToolchainEvent,
+  ToolchainToolStatus,
+  ToolInstallItem,
+} from "./tool-registry.js";
 import type {
   PreviewFleetSnapshot,
   PreviewLogEvent,
@@ -140,6 +146,19 @@ export type SkillSearchResult = {
   url: string;
 };
 
+export type PromptTemplateInfo = {
+  /** Template name (filename without .md). */
+  name: string;
+  /** Short description from frontmatter or first line. */
+  description: string;
+  /** Argument hint from frontmatter (e.g. "<file>"). */
+  argumentHint?: string;
+  /** Absolute path to the .md file. */
+  filePath: string;
+  /** Where the template came from. */
+  source: "global" | "project";
+};
+
 export type DesktopSettings = {
   providers: {
     herman: HermanProviderSettings;
@@ -159,7 +178,7 @@ export type DesktopSettings = {
     hiddenModels?: string[];
   };
   mode?: AppMode;
-  settingsActiveTab?: "providers" | "models" | "general" | "skills";
+  settingsActiveTab?: "providers" | "models" | "general" | "skills" | "tools";
   /** Transient error from the credential store; not persisted to disk. */
   credentialStoreError?: string;
   /** Skill names that should not be sent to the agent. */
@@ -207,6 +226,33 @@ export type SessionWorktree = {
   baseBranch: string;
   mainFolderPath: string;
 };
+
+/** How a session's workspace is isolated. Fixed at creation and persisted. */
+export type SessionIsolation = "worktree" | "direct";
+
+export type SessionSetupStepStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "warning"
+  | "failed"
+  | "skipped";
+
+export type SessionSetupStepSnapshot = {
+  id: string;
+  label: string;
+  status: SessionSetupStepStatus;
+};
+
+/**
+ * Explicit session setup state machine, owned by the main-process session
+ * bootstrapper and pushed to the renderer via `sessionStateChanged`.
+ */
+export type SessionSetupState =
+  | { phase: "none" } // normal-mode, non-git, or direct-on-main by policy
+  | { phase: "pending"; step?: string; label?: string; steps?: SessionSetupStepSnapshot[] }
+  | { phase: "ready" }
+  | { phase: "error"; step?: string; error: string; retryable: boolean; output?: string };
 
 export type QueuedFollowUp = {
   id: string;
@@ -300,6 +346,14 @@ export type PersistedSession = {
   /** Latest PI session UUID observed for this tab. */
   piSessionId?: string;
   worktree?: SessionWorktree;
+  /** Isolation policy fixed at creation. Undefined (legacy) means "direct". */
+  isolation?: SessionIsolation;
+  /** When the workspace setup runner last completed successfully. */
+  setupCompletedAt?: number;
+  /** Hash of the setup plan that was last applied (manifest changes invalidate). */
+  setupPlanHash?: string;
+  /** User explicitly stopped the preview; auto-start stays off until a manual start. */
+  previewManuallyStopped?: boolean;
   createdAt: number;
   updatedAt: number;
   /** Revert point: messages at or after this ID are considered reverted. */
@@ -381,9 +435,9 @@ export type Tab = {
   projectRoot: string;
   projectColor: string;
   worktree?: SessionWorktree;
-  /** Tracks background worktree creation. "pending" while the worktree is being
-   *  created; "ready" once the agent can start; "error" if it failed. */
-  worktreeStatus?: "pending" | "ready" | "error";
+  /** Session setup state machine (worktree provisioning + manifest setup steps).
+   *  Owned by the main process; the renderer only renders it. */
+  setup: SessionSetupState;
   messages: Message[];
   isThinking: boolean;
   currentModel?: string;
@@ -428,12 +482,20 @@ export type OutgoingMessages = {
   tabMessagesHydrated: TabMessagesHydrated;
   tabClosed: { tabId: TabId };
   tabActivated: { tabId: TabId };
-  tabFolderChanged: { tabId: TabId; folderPath?: string; projectRoot?: string; worktree?: SessionWorktree; worktreeStatus?: "pending" | "ready" | "error"; error?: string };
+  /** Authoritative session setup/folder push from the session bootstrapper. */
+  sessionStateChanged: {
+    tabId: TabId;
+    setup: SessionSetupState;
+    folderPath?: string;
+    projectRoot?: string;
+    worktree?: SessionWorktree;
+  };
   projectsChanged: { projects: string[] };
   sessionsChanged: { sessions: PersistedSession[] };
   projectOpened: { folderPath: string; projectRoot: string; projects: string[] };
   agentEvent: { tabId: TabId; event: AgentEvent };
   wizardEvent: { event: WizardSessionEvent };
+  toolchainEvent: { event: ToolchainEvent };
   agentStatusChanged: { tabId: TabId; state: AgentStatus["state"]; stderr?: string };
   adEvent: { tabId: TabId; placement: AdPlacement; campaign: AdCampaign };
   adVisibilityChanged: { focused: boolean; visible: boolean };
@@ -713,6 +775,30 @@ export type HermanDesktopRPC = {
         params: { templateId: string };
         response: { results: RequirementCheckResult[] };
       };
+      /** Requirements of an already-created project (herman.yaml / HERMAN.md). */
+      checkProjectRequirements: {
+        params: { folderPath: string };
+        response: { results: RequirementCheckResult[] };
+      };
+      /** Detection status of every curated tool + the platform's tier-0 ids. */
+      getToolchainStatus: {
+        params: undefined;
+        response: { tools: ToolchainToolStatus[]; required: string[] };
+      };
+      /**
+       * Start an install run (single-flight). Progress streams back as
+       * `toolchainEvent` messages tagged with `runId`; completion is the
+       * `all-done` event, not this response.
+       */
+      installTools: {
+        params: { runId: string; items: ToolInstallItem[] };
+        response: { accepted: boolean; reason?: string };
+      };
+      /** Approve/decline an agent-requested tool install in the wizard. */
+      respondWizardInstall: {
+        params: { wizardSessionId: string; requestId: string; approved: boolean };
+        response: undefined;
+      };
       startWizardSession: {
         params: { templateId: string; description: string; modelId?: string };
         response: { wizardSessionId: string };
@@ -765,6 +851,11 @@ export type HermanDesktopRPC = {
         params: { tabId: TabId };
         response: undefined;
       };
+      /** Re-run the workspace setup pipeline for a tab after a setup failure. */
+      retrySessionSetup: {
+        params: { tabId: TabId };
+        response: { ok: boolean; error?: string };
+      };
       focusWindow: {
         params: undefined;
         response: undefined;
@@ -773,9 +864,15 @@ export type HermanDesktopRPC = {
         params: { title: string; body?: string; subtitle?: string; tabId: TabId };
         response: undefined;
       };
+      /**
+       * Start preview servers for a scope. Pass `tabId` for session-owned
+       * previews (preferred); `folderPath` is the folder scope used by callers
+       * without a tab (e.g. the wizard).
+       */
       startPreview: {
         params: {
-          folderPath: string;
+          tabId?: TabId;
+          folderPath?: string;
           serverId?: string;
           devCommand?: string;
           devPort?: number;
@@ -785,12 +882,13 @@ export type HermanDesktopRPC = {
         response: PreviewStartResponse;
       };
       stopPreview: {
-        params: { folderPath: string; serverId?: string };
+        params: { tabId?: TabId; folderPath?: string; serverId?: string };
         response: undefined;
       };
       restartPreview: {
         params: {
-          folderPath: string;
+          tabId?: TabId;
+          folderPath?: string;
           serverId?: string;
           devCommand?: string;
           devPort?: number;
@@ -799,7 +897,7 @@ export type HermanDesktopRPC = {
         response: PreviewStartResponse;
       };
       getPreviewStatus: {
-        params: { folderPath: string; serverId?: string };
+        params: { tabId?: TabId; folderPath?: string; serverId?: string };
         response: PreviewFleetSnapshot;
       };
       getProjectManifest: {
@@ -809,6 +907,10 @@ export type HermanDesktopRPC = {
       getSkills: {
         params: { projectDir?: string };
         response: { skills: SkillInfo[] };
+      };
+      getPromptTemplates: {
+        params: { projectDir?: string };
+        response: { templates: PromptTemplateInfo[] };
       };
       installSkill: {
         params: { name: string; content: string };
@@ -841,6 +943,8 @@ export type HermanDesktopRPC = {
       downloadUpdate: undefined;
       applyUpdate: undefined;
       openProject: undefined;
+      previewConsoleBatch: { tabId: TabId; folderPath: string; entries: PreviewConsoleEntry[]; dropped: number };
+      previewNavigated: { tabId: TabId; folderPath: string; url: string };
     };
   }>;
   webview: RPCSchema<{
@@ -868,6 +972,9 @@ export type DesktopRpc = {
     handler: (payload: HermanDesktopRPC["webview"]["messages"][K]) => void,
   ) => void;
   send: {
-    [K in keyof HermanDesktopRPC["bun"]["messages"]]: () => void;
+    [K in keyof HermanDesktopRPC["bun"]["messages"]]:
+      HermanDesktopRPC["bun"]["messages"][K] extends undefined
+        ? () => void
+        : (payload: HermanDesktopRPC["bun"]["messages"][K]) => void;
   };
 };

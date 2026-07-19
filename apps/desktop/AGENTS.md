@@ -11,6 +11,12 @@ The app runs in two processes within a single Electrobun window:
 
 Shared types and utilities live in `src/shared/`.
 
+A **host bridge** (`src/bun/host-bridge/`) provides a localhost HTTP API with
+Bearer-token auth so the agent subprocess can query live preview state, logs,
+and session info without going through a UI dialog. The old sentinel-editor
+channel for `herman_get_session_info` has been replaced by this API.
+See [.agents/docs/host-bridge.md](../../.agents/docs/host-bridge.md).
+
 ## Design
 
 Visual standards (content widths, tokens, density): [DESIGN.md](DESIGN.md). Rookie is comfortable (cards, signal CTAs); Normal is compact (lists, quieter CTAs)—keep that intentional. Prefer Herman helpers in `src/views/main/components/ui/` over copy-pasted class strings; use `@herman/ui` for generic primitives (Dialog, Tooltip, etc.).
@@ -43,6 +49,17 @@ src/
 │   ├── keychain.ts       OS keychain abstraction
 │   ├── ad-telemetry.ts   Window focus/visibility telemetry
 │   ├── project-files.ts  Fuzzy file search within open projects
+│   ├── host-bridge/      Localhost HTTP API for agent ↔ desktop silent RPC
+│   │   ├── server.ts     Generic, auth-gated Bun.serve on ephemeral port
+│   │   └── routes/       Feature-specific route handlers (preview context, …)
+│   ├── preview-context/  Single owner of agent-facing preview state
+│   │   ├── service.ts    PreviewContextService: rings, nav, session info assembly
+│   │   ├── ring-buffer.ts  Bounded ring with drop counting
+│   │   └── format.ts     Log formatting with error-context windows
+│   ├── session-bootstrap/  Single owner of the tab → ready pipeline
+│   │   ├── bootstrapper.ts plan → provision (worktree) → reserve ports → setup → agent → preview
+│   │   ├── setup-runner.ts Manifest setup recipe: env files, ordered steps, stamp + resume
+│   │   └── worktree-gc.ts  Startup GC for orphaned worktrees/branches (24h guard)
 │   └── persistence/      SQLite-based persistence (tab history, composer drafts)
 ├── shared/               Types and utilities shared between main and renderer
 │   ├── rpc.ts            Electrobun RPC contract
@@ -96,7 +113,15 @@ Each open tab has its own agent subprocess, spawned via `agent-bridge.ts`. The s
 
 Communication between the main process and the agent uses JSON-RPC over stdin/stdout. Events flow through `agent-process-manager.ts`, which persists messages, manages session archives, and broadcasts state changes to the renderer.
 
-All tabs/wizards/headless runs share **one pi config root** (`~/.herman/agent`): `auth.json`, `models.json`, `settings.json`, and `npm/node_modules/` (bundled extensions). `syncAgentConfig()` writes it once at startup (serialized, single-flight) and on credential/settings changes; tab spawn awaits it but does no per-tab config writing. A tab is just a pi session (new or resumed by UUID) in the shared `sessions/` dir. Closing a tab with no conversation deletes only its JSONL file. Projects (folders) → sessions is handled natively via pi session JSONL headers (each carries `cwd`), surfaced by `pi-sessions.ts`.
+All tabs/wizards/headless runs share **one pi config root** (`~/.herman/agent`): `auth.json`, `models.json`, `settings.json`, and `npm/node_modules/` (bundled extensions). `syncAgentConfig()` writes it once at startup (serialized, single-flight) and on credential/settings changes; tab spawn awaits it but does no per-tab config writing. A tab is just a pi session (new or resumed by UUID) in the shared `sessions/` dir. Closing a tab with no conversation deletes only its JSONL file. Projects (folders) → sessions is handled natively via pi session JSONL headers (each carries `cwd`), surfaced by `pi-sessions.ts` (worktree cwds are mapped back to their owning project via `WorktreeIndex`).
+
+## Sessions, workspaces & previews
+
+Every rookie session is isolated in a git worktree (`~/Herman/.worktrees/<tabId>`, branch `herman/session/<tabId>`); normal-mode sessions run directly on the project. A session's isolation is fixed at creation and persisted (`PersistedSession.isolation`) — reopening never upgrades direct → worktree. The wizard's first session goes through the same pipeline as any rookie tab (`setupProjectRepo()` commits everything first).
+
+One main-process pipeline owns the tab → ready transition (`src/bun/session-bootstrap/`): resolve isolation → create/reattach the worktree → **reserve one port per manifest server** (held sockets, `src/bun/preview/port-registry.ts`) → run the workspace recipe from `herman.yaml` (v2: `env.files[]` provisioning with main-copy/example/empty sources + path rewrites + literal/session/generate vars, then ordered `setup[]` steps with `skip_if`/`optional`/timeouts, stamped in `<workspace>/.herman/setup.json` so interrupted setups resume as repair) → start the agent → auto-start the preview (rookie only, unless the user manually stopped it). Every transition pushes `sessionStateChanged { tabId, setup, folderPath?, worktree? }`; the renderer only renders `Tab.setup` (progress steps in `NewSessionView`, `waiting_for_setup` in the preview pane) and never triggers setup side effects.
+
+Preview servers are owned **per tab** (`tab:<tabId>` scope; synthetic `folder:`/`wizard:` scopes for tab-less callers). Ports are injected via manifest `portEnv` (e.g. `SERVER_PORT` for `php artisan serve`) plus `{port}`/`{url}` command substitution; `exportUrlAs` spreads sibling URLs across the fleet. Setup and server logs land in the preview-context ring (`serverId` `setup` for setup output) so the agent can read them via the host bridge.
 
 ## Environment variables
 

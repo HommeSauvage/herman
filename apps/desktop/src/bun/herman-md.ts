@@ -1,10 +1,12 @@
 import type {
+  EnvVarValue,
   HermanFrontmatter,
   HermanSections,
   ParsedHermanManifest,
 } from "../shared/herman-manifest.js";
 import {
-  HERMAN_MANIFEST_VERSION,
+  isV1Manifest,
+  migrateV1Manifest,
   HermanFrontmatterSchema,
 } from "../shared/herman-manifest.js";
 
@@ -15,6 +17,7 @@ const KNOWN_SECTIONS = new Set(["setup", "questions", "guidance"]);
 
 /**
  * Parse a HERMAN.md document into frontmatter + known Markdown sections.
+ * v1 frontmatter is migrated to v2 on read.
  */
 export function parseHermanMd(raw: string, id: string): ParsedHermanManifest {
   const trimmed = raw.replace(/^\uFEFF/, "");
@@ -45,7 +48,8 @@ export function parseHermanMd(raw: string, id: string): ParsedHermanManifest {
 }
 
 function validateFrontmatter(raw: unknown, id: string): HermanFrontmatter {
-  const result = HermanFrontmatterSchema.safeParse(raw);
+  const migrated = isV1Manifest(raw) ? migrateV1Manifest(raw) : raw;
+  const result = HermanFrontmatterSchema.safeParse(migrated);
   if (!result.success) {
     const first = result.error.issues[0];
     const path = first.path.join(".");
@@ -134,52 +138,88 @@ export function dumpFrontmatterYaml(fm: Omit<HermanFrontmatter, "extends">): str
       lines.push(`    label: ${yamlString(r.label)}`);
       lines.push(`    check: ${yamlString(r.check)}`);
       if (r.install) lines.push(`    install: ${yamlString(r.install)}`);
+      if (r.why) lines.push(`    why: ${yamlString(r.why)}`);
+      if (r.install_cmd) lines.push(`    install_cmd: ${yamlString(r.install_cmd)}`);
       if (r.optional) lines.push(`    optional: true`);
     }
   }
 
-  if (fm.env) {
+  if (fm.env?.files?.length) {
     lines.push("env:");
-    if (fm.env.file) lines.push(`  file: ${yamlString(fm.env.file)}`);
-    if (fm.env.vars?.length) {
-      lines.push("  vars:");
-      for (const v of fm.env.vars) {
-        lines.push(`    - key: ${yamlString(v.key)}`);
-        if (v.required != null) lines.push(`      required: ${v.required}`);
-        if (v.file) lines.push(`      file: ${yamlString(v.file)}`);
-        if (v.default) lines.push(`      default: ${yamlString(v.default)}`);
-        if (v.notes) lines.push(`      notes: ${yamlString(v.notes)}`);
-        if (v.generate) lines.push(`      generate: ${yamlString(v.generate)}`);
-      }
-    }
-  }
-
-  if (fm.dev) {
-    lines.push("dev:");
-    if (fm.dev.install) lines.push(`  install: ${yamlString(fm.dev.install)}`);
-    if (fm.dev.servers?.length) {
-      lines.push("  servers:");
-      for (const s of fm.dev.servers) {
-        lines.push(`    - id: ${yamlString(s.id)}`);
-        lines.push(`      label: ${yamlString(s.label)}`);
-        lines.push(`      command: ${yamlString(s.command)}`);
-        if (s.port != null) lines.push(`      port: ${s.port}`);
-        if (s.primary) lines.push(`      primary: true`);
-        if (s.exportUrlAs != null) {
-          if (typeof s.exportUrlAs === "string") {
-            lines.push(`      exportUrlAs: ${yamlString(s.exportUrlAs)}`);
-          } else if (s.exportUrlAs.length > 0) {
-            lines.push("      exportUrlAs:");
-            for (const key of s.exportUrlAs) {
-              lines.push(`        - ${yamlString(key)}`);
-            }
-          }
+    lines.push("  files:");
+    for (const f of fm.env.files) {
+      lines.push(`    - path: ${yamlString(f.path)}`);
+      if (f.from_main != null) lines.push(`      from_main: ${f.from_main}`);
+      if (f.from_example) lines.push(`      from_example: ${yamlString(f.from_example)}`);
+      if (f.merge) lines.push(`      merge: ${yamlString(f.merge)}`);
+      if (f.rewrite_paths != null) lines.push(`      rewrite_paths: ${f.rewrite_paths}`);
+      const vars = f.vars ?? {};
+      const keys = Object.keys(vars);
+      if (keys.length > 0) {
+        lines.push("      vars:");
+        for (const key of keys) {
+          const v = vars[key]!;
+          lines.push(`        ${yamlString(key)}:`);
+          dumpEnvVarValue(lines, v, "          ");
         }
       }
     }
   }
 
+  if (fm.setup?.length) {
+    lines.push("setup:");
+    for (const s of fm.setup) {
+      lines.push(`  - id: ${yamlString(s.id)}`);
+      lines.push(`    label: ${yamlString(s.label)}`);
+      lines.push(`    run: ${yamlString(s.run)}`);
+      if (s.skip_if) lines.push(`    skip_if: ${yamlString(s.skip_if)}`);
+      if (s.skip_if_env) lines.push(`    skip_if_env: ${yamlString(s.skip_if_env)}`);
+      if (s.env_file) lines.push(`    env_file: ${yamlString(s.env_file)}`);
+      if (s.optional) lines.push(`    optional: true`);
+      if (s.timeout != null) lines.push(`    timeout: ${s.timeout}`);
+    }
+  }
+
+  if (fm.servers?.length) {
+    lines.push("servers:");
+    for (const s of fm.servers) {
+      lines.push(`  - id: ${yamlString(s.id)}`);
+      lines.push(`    label: ${yamlString(s.label)}`);
+      lines.push(`    command: ${yamlString(s.command)}`);
+      if (s.port != null) lines.push(`    port: ${s.port}`);
+      if (s.primary) lines.push(`    primary: true`);
+      dumpStringOrList(lines, "exportUrlAs", s.exportUrlAs, "    ");
+      dumpStringOrList(lines, "portEnv", s.portEnv, "    ");
+    }
+  }
+
   return lines.join("\n");
+}
+
+function dumpEnvVarValue(lines: string[], v: EnvVarValue, indent: string): void {
+  if (v.value != null) lines.push(`${indent}value: ${yamlString(v.value)}`);
+  if (v.session) lines.push(`${indent}session: ${yamlString(v.session)}`);
+  if (v.generate) lines.push(`${indent}generate: ${yamlString(v.generate)}`);
+  if (v.required != null) lines.push(`${indent}required: ${v.required}`);
+  if (v.notes) lines.push(`${indent}notes: ${yamlString(v.notes)}`);
+}
+
+function dumpStringOrList(
+  lines: string[],
+  key: string,
+  value: string | string[] | undefined,
+  indent: string,
+): void {
+  if (value == null) return;
+  if (typeof value === "string") {
+    lines.push(`${indent}${key}: ${yamlString(value)}`);
+    return;
+  }
+  if (value.length === 0) return;
+  lines.push(`${indent}${key}:`);
+  for (const item of value) {
+    lines.push(`${indent}  - ${yamlString(item)}`);
+  }
 }
 
 export function yamlString(value: string): string {
@@ -197,7 +237,10 @@ export function yamlString(value: string): string {
 }
 
 /**
- * Merge frontmatter: base first, child wins on scalars; keyed arrays merge by id/key.
+ * Merge frontmatter: base first, child wins on scalars; `requirements` merge
+ * by id. Ordered arrays (`setup`, `env.files`, `servers`) are REPLACED
+ * wholesale by the child when it declares them — concatenation is an
+ * ordering trap for setup recipes.
  */
 export function mergeFrontmatter(
   base: HermanFrontmatter,
@@ -241,8 +284,10 @@ export function mergeFrontmatter(
 
   // Do not carry extends into resolved output.
   merged.requirements = mergeByKey(base.requirements, child.requirements, (r) => r.id);
-  merged.env = mergeEnv(base.env, child.env);
-  merged.dev = mergeDev(base.dev, child.dev);
+  // Array-replace semantics for the workspace recipe (see docstring).
+  if (child.env ?? base.env) merged.env = child.env ?? base.env;
+  if (child.setup ?? base.setup) merged.setup = child.setup ?? base.setup;
+  if (child.servers ?? base.servers) merged.servers = child.servers ?? base.servers;
 
   return merged;
 }
@@ -257,32 +302,6 @@ function mergeByKey<T>(
   for (const item of base ?? []) map.set(keyFn(item), item);
   for (const item of child ?? []) map.set(keyFn(item), item);
   return [...map.values()];
-}
-
-function mergeEnv(
-  base: HermanFrontmatter["env"],
-  child: HermanFrontmatter["env"],
-): HermanFrontmatter["env"] | undefined {
-  if (!base && !child) return undefined;
-  return {
-    ...(child?.file != null ? { file: child.file } : base?.file != null ? { file: base.file } : {}),
-    vars: mergeByKey(base?.vars, child?.vars, (v) => v.key),
-  };
-}
-
-function mergeDev(
-  base: HermanFrontmatter["dev"],
-  child: HermanFrontmatter["dev"],
-): HermanFrontmatter["dev"] | undefined {
-  if (!base && !child) return undefined;
-  return {
-    ...(child?.install != null
-      ? { install: child.install }
-      : base?.install != null
-        ? { install: base.install }
-        : {}),
-    servers: mergeByKey(base?.servers, child?.servers, (s) => s.id),
-  };
 }
 
 /**

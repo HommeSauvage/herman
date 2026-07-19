@@ -1,5 +1,5 @@
 import { cn } from "@herman/ui/lib/utils";
-import { ArrowLeft, Cpu, Layers, Puzzle, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Cpu, Layers, Puzzle, SlidersHorizontal, TriangleAlert, Wrench } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAgentStore } from "../lib/agent-store.js";
@@ -8,13 +8,15 @@ import { GeneralTab } from "./settings/general-tab.js";
 import { ModelsTab } from "./settings/models-tab.js";
 import { ProvidersTab } from "./settings/providers-tab.js";
 import { SkillsTab } from "./settings/skills-tab.js";
+import { ToolsTab } from "./settings/tools-tab.js";
 
-type SettingsTab = "providers" | "models" | "general" | "skills";
+type SettingsTab = "providers" | "models" | "general" | "skills" | "tools";
 
 const TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
   { id: "providers", label: "Providers", icon: Layers },
   { id: "models", label: "Models", icon: Cpu },
   { id: "skills", label: "Skills", icon: Puzzle },
+  { id: "tools", label: "Tools", icon: Wrench },
   { id: "general", label: "General", icon: SlidersHorizontal },
 ];
 
@@ -58,7 +60,7 @@ export function SettingsView() {
         <h2 className="text-ghost mb-2 hidden px-2 text-[10px] font-bold tracking-[0.12em] uppercase min-[501px]:block">
           Settings
         </h2>
-        {TABS.map((tab) => {
+        {TABS.filter((tab) => tab.id !== "tools" || settings.mode !== "rookie").map((tab) => {
           const Icon = tab.icon;
           return (
             <button
@@ -113,6 +115,9 @@ export function SettingsView() {
         </div>
         <div role="tabpanel" hidden={activeTab !== "skills"}>
           <SkillsTab />
+        </div>
+        <div role="tabpanel" hidden={activeTab !== "tools"}>
+          <ToolsTab />
         </div>
         <div role="tabpanel" hidden={activeTab !== "general"}>
           <GeneralTab />

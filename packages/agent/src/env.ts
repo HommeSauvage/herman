@@ -8,6 +8,8 @@ const env = arkenv({
   HERMAN_PINNED_PROVIDERS: "string = '{}'",
   HERMAN_MODE: "'rookie' | 'normal' | '' = ''",
   HERMAN_AGENT_LOG_LEVEL: "'info' | 'debug' | 'trace' | 'warning' | 'error' | 'fatal' = 'info'",
+  HERMAN_HOST_BRIDGE_URL: "string = ''",
+  HERMAN_HOST_BRIDGE_TOKEN: "string = ''",
 });
 
 export const config = {
@@ -18,6 +20,8 @@ export const config = {
   pinnedProviders: env.HERMAN_PINNED_PROVIDERS,
   mode: (env.HERMAN_MODE || undefined) as "rookie" | "normal" | undefined,
   logLevel: env.HERMAN_AGENT_LOG_LEVEL,
+  hostBridgeUrl: env.HERMAN_HOST_BRIDGE_URL,
+  hostBridgeToken: env.HERMAN_HOST_BRIDGE_TOKEN,
 } as const;
 
 export function requireServerUrl(): string {

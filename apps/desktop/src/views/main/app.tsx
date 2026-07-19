@@ -1,15 +1,16 @@
 import { Sparkles, Loader2 } from "lucide-react";
 import { getLogger } from "@logtape/logtape";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Toaster } from "sonner";
 
-import type { DesktopSettings, ModelCatalogSnapshot, PersistedSession, Session, SessionWorktree, Tab, TabId } from "../../shared/rpc.js";
+import type { DesktopSettings, ModelCatalogSnapshot, PersistedSession, Session, SessionSetupState, SessionWorktree, Tab, TabId } from "../../shared/rpc.js";
 import { ErrorBoundary } from "./components/error-boundary.js";
 import { LoginView } from "./components/login-view.js";
 import { ModeChoiceView } from "./components/mode-choice-view.js";
 import { OnboardingWizard } from "./components/onboarding-wizard.js";
 import { RookieShell } from "./components/rookie-shell.js";
 import { Shell } from "./components/shell.js";
+import { ToolchainSetup } from "./components/toolchain-setup.js";
 import { UpdateBanner } from "./components/update-banner.js";
 import { useAgentFinishedNotifications } from "./hooks/use-agent-finished-notifications.js";
 import { useAgentStream } from "./hooks/use-agent-stream.js";
@@ -40,14 +41,14 @@ function AppContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [showModeChoice, setShowModeChoice] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showToolchainSetup, setShowToolchainSetup] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<{ status: string; message: string } | null>(
     null,
   );
   useAgentStream();
 
-  useEffect(() => {
-    async function init() {
-      try {
+  const initApp = useCallback(async () => {
+    try {
         const [currentSession, settings] = await Promise.all([
           desktopRpc.request.getSession(),
           desktopRpc.request.getSettings(),
@@ -63,6 +64,23 @@ function AppContent() {
         const { tabs, activeTabId } = await desktopRpc.request.getTabs();
         const { projects, sessions } = await desktopRpc.request.getProjectsAndSessions();
         restoreTabs(tabs, activeTabId, projects, sessions);
+
+        // One-time toolchain gate (git / Homebrew / bun on macOS): nothing
+        // works without these, so it takes priority over everything else.
+        // Only surfaces when something required is actually missing.
+        if (currentSession) {
+          const toolchain = await desktopRpc.request.getToolchainStatus().catch(() => null);
+          if (toolchain) {
+            const missingRequired = toolchain.required.some(
+              (id) => !toolchain.tools.find((t) => t.id === id)?.installed,
+            );
+            if (missingRequired) {
+              setShowToolchainSetup(true);
+              setIsLoading(false);
+              return;
+            }
+          }
+        }
 
         // Interrupted wizard takes priority over empty-projects onboarding.
         const recovery = await desktopRpc.request.getWizardRecovery().catch(() => null);
@@ -117,9 +135,11 @@ function AppContent() {
       } finally {
         setIsLoading(false);
       }
-    }
-    void init();
   }, [setSession, setSettings, restoreTabs]);
+
+  useEffect(() => {
+    void initApp();
+  }, [initApp]);
 
   useEffect(() => {
     const onSessionChanged = (nextSession?: Session) => setSession(nextSession);
@@ -147,35 +167,29 @@ function AppContent() {
     const onTabCreated = ({ tab }: { tab: Tab }) => addTab(tab);
     const onTabClosed = ({ tabId }: { tabId: TabId }) => closeTab(tabId);
     const onTabActivated = ({ tabId }: { tabId: TabId }) => activateTab(tabId);
-    const onTabFolderChanged = ({
+    const onSessionStateChanged = ({
       tabId,
+      setup,
       folderPath,
       projectRoot,
       worktree,
-      worktreeStatus,
-      error,
     }: {
       tabId: TabId;
+      setup: SessionSetupState;
       folderPath?: string;
       projectRoot?: string;
       worktree?: SessionWorktree;
-      worktreeStatus?: "pending" | "ready" | "error";
-      error?: string;
     }) => {
       // Folder / project updates only apply when we have a new folder path.
       if (folderPath) {
         setProjectForTab(tabId, { folderPath, projectRoot });
       }
-      // Worktree status updates (ready, error) come from the background
-      // worktree task.  "ready" is a transient main-process marker — clear
-      // it so the renderer only sees undefined (normal) or "error".
-      if (worktree || worktreeStatus || error) {
-        useAgentStore.getState().updateTab(tabId, {
-          ...(worktree ? { worktree } : {}),
-          worktreeStatus: worktreeStatus === "ready" ? undefined : worktreeStatus,
-          ...(error ? { connectionError: error } : {}),
-        });
-      }
+      // The setup state machine is owned by the main process — apply it
+      // wholesale, along with the worktree when the workspace is ready.
+      useAgentStore.getState().updateTab(tabId, {
+        setup,
+        ...(worktree ? { worktree } : {}),
+      });
     };
     const onProjectsChanged = ({ projects }: { projects: string[] }) => setProjects(projects);
     const onSessionsChanged = ({ sessions }: { sessions: PersistedSession[] }) =>
@@ -201,7 +215,7 @@ function AppContent() {
     desktopRpc.addMessageListener("tabCreated", onTabCreated);
     desktopRpc.addMessageListener("tabClosed", onTabClosed);
     desktopRpc.addMessageListener("tabActivated", onTabActivated);
-    desktopRpc.addMessageListener("tabFolderChanged", onTabFolderChanged);
+    desktopRpc.addMessageListener("sessionStateChanged", onSessionStateChanged);
     desktopRpc.addMessageListener("projectsChanged", onProjectsChanged);
     desktopRpc.addMessageListener("sessionsChanged", onSessionsChanged);
     desktopRpc.addMessageListener("projectOpened", onProjectOpened);
@@ -217,7 +231,7 @@ function AppContent() {
       desktopRpc.removeMessageListener("tabCreated", onTabCreated);
       desktopRpc.removeMessageListener("tabClosed", onTabClosed);
       desktopRpc.removeMessageListener("tabActivated", onTabActivated);
-      desktopRpc.removeMessageListener("tabFolderChanged", onTabFolderChanged);
+      desktopRpc.removeMessageListener("sessionStateChanged", onSessionStateChanged);
       desktopRpc.removeMessageListener("projectsChanged", onProjectsChanged);
       desktopRpc.removeMessageListener("sessionsChanged", onSessionsChanged);
       desktopRpc.removeMessageListener("projectOpened", onProjectOpened);
@@ -254,6 +268,20 @@ function AppContent() {
   // Not logged in — show login
   if (!session && settings.providers.herman.enabled) {
     return <LoginView />;
+  }
+
+  // One-time computer setup (only when required tools are missing)
+  if (showToolchainSetup) {
+    return (
+      <ToolchainSetup
+        onComplete={() => {
+          setShowToolchainSetup(false);
+          // The first init pass stopped at the gate — resume it so mode
+          // choice / onboarding / wizard recovery run as usual.
+          void initApp();
+        }}
+      />
+    );
   }
 
   // First launch — mode choice

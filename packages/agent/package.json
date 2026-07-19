@@ -16,7 +16,6 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@bacnh85/pi-fff": "^0.7.0",
 		"@earendil-works/pi-agent-core": "catalog:",
 		"@earendil-works/pi-coding-agent": "catalog:",
 		"@herman/pi-context-reporter": "workspace:*",
@@ -26,8 +25,6 @@
 		"@logtape/redaction": "catalog:",
 		"arkenv": "catalog:",
 		"arktype": "catalog:",
-		"pi-rewind": "^0.5.0",
-		"typebox": "catalog:",
 		"@earendil-works/pi-ai": "catalog:",
 		"@earendil-works/pi-tui": "catalog:"
 	},

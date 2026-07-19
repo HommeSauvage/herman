@@ -124,50 +124,18 @@ describe("hermanExtension", () => {
     expect(mockApi._registered[0].config.api).toBe("openai-completions");
   });
 
-  it("registers herman_get_session_info tool", async () => {
+  // herman_get_session_info was moved to preview-context-extension.ts;
+  // herman-extension no longer registers session/preview tools.
+  it("no longer registers herman_get_session_info", async () => {
     globalThis.fetch = mockFetch([
       { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", api: "openai-completions" },
     ]) as unknown as typeof fetch;
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
-    const { mockApi, mockUi } = createMockApi();
+    const { mockApi } = createMockApi();
 
     await hermanExtension(mockApi as never);
 
-    expect(mockApi._registeredTools.map((t) => t.name)).toContain("herman_get_session_info");
-
-    const execute = mockApi._toolExecutors.get("herman_get_session_info");
-    expect(execute).toBeTypeOf("function");
-
-    // Standalone / non-RPC: graceful unavailable message (no invented ports).
-    const unavailable = (await execute!("call-1", {}, undefined, undefined, {
-      mode: "interactive",
-      hasUI: false,
-      ui: mockUi,
-    })) as { content: { type: string; text: string }[]; details: { error: string } };
-    expect(unavailable.details.error).toBe("unavailable");
-    expect(unavailable.content[0]?.text).toContain("Herman Desktop");
-
-    // RPC + host reply with live port 3001 (not preferred 3000).
-    mockUi.editor = async () =>
-      JSON.stringify({
-        __herman_session_info__: true,
-        version: 1,
-        projectPath: "/tmp/project",
-        mode: "rookie",
-        preview: {
-          phase: "ready",
-          primaryUrl: "http://localhost:3001",
-          servers: [{ serverId: "web", phase: "ready", url: "http://localhost:3001", port: 3001 }],
-        },
-      });
-
-    const ok = (await execute!("call-2", {}, undefined, undefined, {
-      mode: "rpc",
-      hasUI: true,
-      ui: mockUi,
-    })) as { content: { type: string; text: string }[]; details: Record<string, unknown> };
-    expect(ok.content[0]?.text).toContain("http://localhost:3001");
-    expect(ok.details.preview).toMatchObject({ primaryUrl: "http://localhost:3001" });
+    expect(mockApi._registeredTools.map((t) => t.name)).not.toContain("herman_get_session_info");
   });
 
   it("registers models returned by the server", async () => {

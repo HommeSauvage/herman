@@ -64,6 +64,24 @@ type WizardAskEnvelope = {
 type WizardAnswer = { id: string; value: string; values?: string[] };
 type WizardAskAnswers = { answers: WizardAnswer[]; cancelled: boolean };
 
+// ── Install-request shapes (mirror shared/wizard-protocol.ts — keep in sync) ─
+
+type WizardInstallEnvelope = {
+	__herman_install__: true;
+	version: 1;
+	toolId: string;
+	label: string;
+	reason?: string;
+	check?: string;
+	installCmd?: string;
+};
+
+type WizardInstallResponse = {
+	approved: boolean;
+	installed: boolean;
+	detail?: string;
+};
+
 type WizardAskParams = { header?: string; questions: WizardAskQuestion[] };
 type WizardCompleteParams = { projectPath: string; summary?: string };
 type WizardCompletePlanningParams = {
@@ -213,6 +231,26 @@ const WizardCompleteParams: JsonSchema = obj(
 		summary: str("Short human-readable summary of what was done."),
 	},
 	["projectPath"],
+	"",
+);
+
+const RequestInstallParams: JsonSchema = obj(
+	{
+		toolId: str(
+			"Tool identifier. Use a Herman registry id when one applies (docker, postgres, redis, python, node); otherwise a short lowercase slug.",
+		),
+		label: str("Human-readable tool name shown to the user (e.g. 'PostgreSQL')."),
+		reason: str(
+			"One plain-language sentence telling a non-technical user why this tool is needed.",
+		),
+		check: str(
+			"Shell command that exits 0 when the tool is present (default: '<toolId> --version').",
+		),
+		installCmd: str(
+			"Suggested install command (e.g. 'brew install postgresql@16'). Herman runs it only after the user approves.",
+		),
+	},
+	["toolId", "label", "reason"],
 	"",
 );
 
@@ -416,6 +454,110 @@ export default function hermanWizardExtension(pi: ExtensionAPI): void {
 					summary: summary || undefined,
 					ok: true,
 				},
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "herman_request_install",
+		label: "Request Tool Install",
+		description:
+			`Ask Herman to install a missing system tool the project needs (e.g. a database, Docker, a language runtime). Herman shows the user an approval card and runs the install safely. Use this ONLY during coding/QA when a command fails because a tool is missing — never for tools the wizard setup already covers (git, bun, php, composer, node), and never during planning.`,
+		promptSnippet: "Request installation of a missing system tool (with user approval)",
+		promptGuidelines: [
+			`Before calling herman_request_install, verify the tool is actually missing (run its check command and see it fail).`,
+			"Prefer Herman registry ids (docker, postgres, redis, python, node) so Herman can use its curated installer; otherwise provide installCmd (prefer brew on macOS).",
+			"Write 'reason' for a non-technical user: what the tool does for THEIR project, one sentence, no jargon.",
+			"If the user declines or the install fails, continue with a workaround (e.g. sqlite instead of postgres) instead of blocking.",
+		],
+		parameters: RequestInstallParams as any,
+
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
+			const params = _params as {
+				toolId: string;
+				label: string;
+				reason?: string;
+				check?: string;
+				installCmd?: string;
+			};
+
+			if (ctx.mode !== "rpc" || !ctx.hasUI) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Install requests are only available in Herman's wizard mode. Continue with a workaround.",
+						},
+					],
+					details: { approved: false, installed: false } satisfies WizardInstallResponse,
+				};
+			}
+
+			const envelope: WizardInstallEnvelope = {
+				__herman_install__: true,
+				version: 1,
+				toolId: params.toolId,
+				label: params.label,
+				...(params.reason ? { reason: params.reason } : {}),
+				...(params.check ? { check: params.check } : {}),
+				...(params.installCmd ? { installCmd: params.installCmd } : {}),
+			};
+
+			const responseText = await ctx.ui.editor(
+				`Install ${params.label}?`,
+				JSON.stringify(envelope),
+			);
+
+			let parsed: WizardInstallResponse | undefined;
+			try {
+				const obj = responseText ? (JSON.parse(responseText) as unknown) : undefined;
+				if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+					const o = obj as Record<string, unknown>;
+					parsed = {
+						approved: o.approved === true,
+						installed: o.installed === true,
+						...(typeof o.detail === "string" ? { detail: o.detail } : {}),
+					};
+				}
+			} catch {
+				parsed = undefined;
+			}
+
+			if (!parsed) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "The install request could not be completed (cancelled or unparsable response). Continue with a workaround.",
+						},
+					],
+					details: { approved: false, installed: false } satisfies WizardInstallResponse,
+				};
+			}
+
+			if (parsed.installed) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `${params.label} was installed successfully. You can now use it — retry the command that failed before.${parsed.detail ? ` (${parsed.detail})` : ""}`,
+						},
+					],
+					details: parsed,
+				};
+			}
+
+			const why = parsed.approved
+				? `the install failed${parsed.detail ? `: ${parsed.detail}` : ""}`
+				: "the user declined the install";
+			return {
+				content: [
+					{
+						type: "text",
+						text: `${params.label} is NOT available — ${why}. Do not retry it; continue with a workaround that uses tools already installed.`,
+					},
+				],
+				details: parsed,
 			};
 		},
 	});

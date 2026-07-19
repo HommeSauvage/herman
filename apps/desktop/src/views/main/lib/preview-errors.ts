@@ -45,12 +45,15 @@ export function buildAskHermanPrompt(
   error: string,
   context: "preview" | "save" | "runtime",
 ): string {
+  const logHint = "Recent preview logs are available via the `herman_get_preview_logs` tool (environment: 'server' and 'console') — use it for full context before and after the error.";
   if (context === "preview") {
     return `The preview server for this project failed to start or crashed with this error:
 
 ${error}
 
-Please investigate and fix it so the preview can run again. Check the project configuration, dependencies, install command, and dev server setup.`;
+Please investigate and fix it so the preview can run again. Check the project configuration, dependencies, install command, and dev server setup.
+
+${logHint}`;
   }
   if (context === "runtime") {
     return `The server is showing errors. Please investigate and fix them.
@@ -58,7 +61,9 @@ Please investigate and fix it so the preview can run again. Check the project co
 Errors:
 ${error}
 
-Check both the frontend (browser/runtime) and the dev server. After fixing, the preview should load without these errors.`;
+Check both the frontend (browser/runtime) and the dev server. After fixing, the preview should load without these errors.
+
+${logHint}`;
   }
   return `Saving the draft changes to the main project failed with this error:
 

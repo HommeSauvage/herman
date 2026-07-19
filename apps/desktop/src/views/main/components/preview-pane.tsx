@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 
 import type { DevServer } from "../../../shared/herman-manifest.js";
+import type { SessionSetupState } from "../../../shared/rpc.js";
 import { usePreviewController } from "../hooks/use-preview-controller.js";
 import { usePreviewErrorToasts } from "../hooks/use-preview-error-toasts.js";
 import { useAgentStore } from "../lib/agent-store.js";
@@ -18,12 +19,16 @@ import { PreviewBrowserBar, PreviewToolbar } from "./preview/preview-toolbar.js"
 import { PreviewSaveErrorStrip } from "./preview/preview-save-error-strip.js";
 import { PreviewStage } from "./preview/preview-stage.js";
 import type { PreviewWebviewHandle } from "./preview-webview.js";
+import { reportPreviewConsoleEntry } from "../lib/preview-console-reporter.js";
+import type { PreviewConsoleEntry } from "@herman/rpc/host-bridge";
 
 type PreviewPaneProps = {
   folderPath: string;
   projectRoot?: string;
   tabId?: string;
   isWorktree?: boolean;
+  /** The session's setup state — the preview waits for the workspace to be ready. */
+  setup?: SessionSetupState;
   onPublish?: () => void;
   /** True while RookieShell split divider is being dragged. */
   splitDragging?: boolean;
@@ -36,11 +41,12 @@ export function PreviewPane({
   projectRoot,
   tabId,
   isWorktree,
+  setup,
   onPublish,
   splitDragging,
   publishOpen,
 }: PreviewPaneProps) {
-  usePreviewController({ folderPath, projectRoot, tabId, isWorktree });
+  usePreviewController({ folderPath, projectRoot, tabId, isWorktree, setupPhase: setup?.phase });
 
   const webviewRef = useRef<PreviewWebviewHandle>(null);
 
@@ -110,8 +116,18 @@ export function PreviewPane({
   const handleWebviewNavigate = useCallback(
     (url: string) => {
       setCurrentUrl(url);
+      // Navigation reporting is handled by the store subscriber in usePreviewController.
     },
     [setCurrentUrl],
+  );
+
+  const handleConsoleEntry = useCallback(
+    (entry: PreviewConsoleEntry) => {
+      if (tabId && folderPath) {
+        reportPreviewConsoleEntry(tabId, folderPath, entry);
+      }
+    },
+    [tabId, folderPath],
   );
 
   const manifestError = manifest.phase === "failed" ? manifest.error : undefined;
@@ -173,6 +189,7 @@ export function PreviewPane({
           passthrough={Boolean(splitDragging)}
           continuousSync={Boolean(splitDragging)}
           onClientError={acceptClientError}
+          onConsoleEntry={handleConsoleEntry}
           onAskFixManifest={() => void askHermanToFix(manifestError ?? "", "preview")}
           onAskFixServer={() => void askHermanToFix(serverError ?? "", "preview")}
           onRetryServer={() => void restart()}

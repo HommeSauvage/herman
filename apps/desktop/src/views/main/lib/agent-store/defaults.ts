@@ -47,6 +47,7 @@ export function makeTab(folderPath: string, title?: string): Tab {
     thinkingMessages: [],
     availableModels: [],
     connectionState: "idle",
+    setup: { phase: "none" },
     createdAt: now,
     updatedAt: now,
     composerValue: "",
