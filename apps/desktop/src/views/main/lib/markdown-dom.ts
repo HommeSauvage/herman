@@ -1,5 +1,3 @@
-import { Check, Copy } from "lucide-react";
-
 /**
  * After dangerouslySetInnerHTML, inject copy buttons into code blocks.
  * Uses event delegation on the container to avoid per-button listeners.

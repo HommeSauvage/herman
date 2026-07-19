@@ -1,8 +1,8 @@
-import { motion, AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
-import { ImpressionState, useImpression } from "../hooks/use-impression.js";
+import { type ImpressionState, useImpression } from "../hooks/use-impression.js";
 import { reportAdClick, reportImpression } from "../lib/agent-actions.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { useIsHermanProvider } from "../lib/model-utils.js";

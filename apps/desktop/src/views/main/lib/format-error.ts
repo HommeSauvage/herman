@@ -36,10 +36,7 @@ function tryExtract(text: string, status?: string): string | undefined {
   }
 }
 
-function extractMessage(
-  parsed: unknown,
-  status?: string,
-): string | undefined {
+function extractMessage(parsed: unknown, status?: string): string | undefined {
   if (!parsed || typeof parsed !== "object") return undefined;
   const obj = parsed as Record<string, unknown>;
 
@@ -58,11 +55,7 @@ function extractMessage(
   if (obj.error && typeof obj.error === "object") {
     const err = obj.error as Record<string, unknown>;
     type =
-      typeof err.type === "string"
-        ? err.type
-        : typeof err.code === "string"
-          ? err.code
-          : undefined;
+      typeof err.type === "string" ? err.type : typeof err.code === "string" ? err.code : undefined;
     message =
       typeof err.message === "string"
         ? err.message
@@ -96,7 +89,5 @@ function extractMessage(
 }
 
 function humanizeType(type: string): string {
-  return type
-    .replace(/[_-]+/g, " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+  return type.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }

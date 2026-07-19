@@ -1,15 +1,13 @@
+import { cn } from "@herman/ui/lib/utils";
+import { getLogger } from "@logtape/logtape";
 import { ArrowLeft, BookOpen, FileText, Loader2, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-import { getLogger } from "@logtape/logtape";
-
-import { cn } from "@herman/ui/lib/utils";
 
 import type { ProjectDoc } from "../../../shared/rpc.js";
 import { getProjectName } from "../../../shared/tab-utils.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { parseMarkdown, parseMarkdownSync } from "../lib/markdown-parser.js";
-import { ContentWidth, SectionLabel, SignalButton, proseClasses } from "./ui/index.js";
+import { ContentWidth, proseClasses, SectionLabel, SignalButton } from "./ui/index.js";
 
 const logger = getLogger(["herman-desktop", "view", "wizard-docs"]);
 
@@ -138,6 +136,7 @@ export function WizardDocsView({
       <div className="border-b border-mist px-6 py-3">
         <ContentWidth size="page" className="flex items-center gap-3">
           <button
+            type="button"
             onClick={onBack}
             className="text-ghost hover:text-dim flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs transition hover:bg-fog"
           >
@@ -190,6 +189,7 @@ export function WizardDocsView({
                 const active = doc.fileName === selectedFile;
                 return (
                   <button
+                    type="button"
                     key={doc.fileName}
                     onClick={() => setSelectedFile(doc.fileName)}
                     className={cn(
@@ -214,7 +214,9 @@ export function WizardDocsView({
             <ContentWidth size="chat">
               {selected && html ? (
                 <>
-                  <div
+                  {/* biome-ignore lint/a11y/noStaticElementInteractions: content clicks navigate to project files */}
+                  {/* biome-ignore lint/a11y/useKeyWithClickEvents: content clicks navigate to project files, keyboard users can use the file list */}
+                  <section
                     className={cn("text-body min-w-0 text-sm leading-relaxed", proseClasses)}
                     onClick={handleContentClick}
                     dangerouslySetInnerHTML={{ __html: html }}

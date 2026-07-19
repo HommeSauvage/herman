@@ -1,6 +1,6 @@
 import { cn } from "@herman/ui/lib/utils";
 import { Brain, Cpu, Globe, Search, X, Zap } from "lucide-react";
-import { motion, AnimatePresence, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { ElementType } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -12,7 +12,12 @@ import { desktopRpc } from "../lib/desktop-rpc.js";
 
 const EMPTY_HIDDEN_MODELS: string[] = []; // stable fallback for useShallow selector
 
-function getEnabledProviders(settings: { providers: { herman: { enabled: boolean }; custom: Record<string, { enabled?: boolean } | undefined> } }): Set<string> {
+function getEnabledProviders(settings: {
+  providers: {
+    herman: { enabled: boolean };
+    custom: Record<string, { enabled?: boolean } | undefined>;
+  };
+}): Set<string> {
   const enabled = new Set<string>();
   if (settings.providers.herman.enabled) enabled.add(HERMAN_PROVIDER_ID);
   for (const [id, config] of Object.entries(settings.providers.custom)) {
@@ -76,16 +81,14 @@ export function ModelSelector() {
   const [search, setSearch] = useState("");
 
   const query = search.trim().toLowerCase();
-  const enabledProviders = useMemo(
-    () => getEnabledProviders(settings),
-    [settings],
-  );
+  const enabledProviders = useMemo(() => getEnabledProviders(settings), [settings]);
   const visibleModels = useMemo(
-    () => models.filter((id) => {
-      if (hiddenModels.includes(id)) return false;
-      const [provider] = id.split('/');
-      return enabledProviders.has(provider ?? 'unknown');
-    }),
+    () =>
+      models.filter((id) => {
+        if (hiddenModels.includes(id)) return false;
+        const [provider] = id.split("/");
+        return enabledProviders.has(provider ?? "unknown");
+      }),
     [models, hiddenModels, enabledProviders],
   );
   const filteredModels = useMemo(
@@ -187,9 +190,11 @@ export function ModelSelector() {
       // Apply mid-session if the wizard agent is already running.
       const sessionId = store.wizard.sessionId;
       if (sessionId) {
-        void desktopRpc.request.setWizardModel({ wizardSessionId: sessionId, modelId }).catch(() => {
-          // Best-effort: selection still sticks in the UI.
-        });
+        void desktopRpc.request
+          .setWizardModel({ wizardSessionId: sessionId, modelId })
+          .catch(() => {
+            // Best-effort: selection still sticks in the UI.
+          });
       }
       return;
     }
@@ -238,6 +243,7 @@ export function ModelSelector() {
                 className="text-text placeholder:text-ghost flex-1 bg-transparent text-sm focus:outline-none"
               />
               <button
+                type="button"
                 onClick={() => setModelSelectorOpen(false)}
                 className="text-faint hover:text-text rounded-md p-1 transition hover:bg-white/[0.06]"
               >
@@ -245,7 +251,11 @@ export function ModelSelector() {
               </button>
             </div>
 
-            <div className="max-h-[320px] overflow-y-auto p-2" onKeyDown={handleListKeyDown}>
+            <div
+              role="listbox"
+              className="max-h-[320px] overflow-y-auto p-2"
+              onKeyDown={handleListKeyDown}
+            >
               {filteredModels.length === 0 ? (
                 <div className="text-dim px-3 py-6 text-center text-xs">
                   {models.length === 0

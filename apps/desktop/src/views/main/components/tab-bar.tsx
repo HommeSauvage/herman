@@ -1,13 +1,22 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/tooltip";
 import { cn } from "@herman/ui/lib/utils";
-import { LayoutGrid, Plus, PanelRightClose, PanelRightOpen, X, Brain, Eye, EyeOff } from "lucide-react";
-import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { getLogger } from "@logtape/logtape";
+import {
+  Brain,
+  Eye,
+  EyeOff,
+  LayoutGrid,
+  PanelRightClose,
+  PanelRightOpen,
+  Plus,
+  X,
+} from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef } from "react";
 
-import { closeTab, activateTab } from "../lib/agent-actions.js";
+import { activateTab, closeTab } from "../lib/agent-actions.js";
 import { useAgentStore, useTabSummaries } from "../lib/agent-store.js";
-import { getShortcutLabelForCommand, type CommandId } from "../lib/commands.js";
+import { type CommandId, getShortcutLabelForCommand } from "../lib/commands.js";
 import { CommandButton } from "./command-button.js";
 import { FuelGauge } from "./fuel-gauge.js";
 import { ProjectIcon } from "./project-icon.js";
@@ -106,23 +115,11 @@ function ShowThinkingToggle() {
             aria-label={showThinking ? "Hide thinking" : "Show thinking"}
           >
             <span className="relative flex h-full w-full">
-              <Brain
-                size={12}
-                className="absolute top-0 right-0 z-0"
-                strokeWidth={1.5}
-              />
+              <Brain size={12} className="absolute top-0 right-0 z-0" strokeWidth={1.5} />
               {showThinking ? (
-                <Eye
-                  size={16}
-                  className="absolute bottom-0 left-0 z-10"
-                  strokeWidth={2}
-                />
+                <Eye size={16} className="absolute bottom-0 left-0 z-10" strokeWidth={2} />
               ) : (
-                <EyeOff
-                  size={16}
-                  className="absolute bottom-0 left-0 z-10"
-                  strokeWidth={2}
-                />
+                <EyeOff size={16} className="absolute bottom-0 left-0 z-10" strokeWidth={2} />
               )}
             </span>
           </button>

@@ -5,7 +5,10 @@ export function getTodayKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function parseCurrentModel(currentModel?: string): { providerId?: string; modelId?: string } {
+export function parseCurrentModel(currentModel?: string): {
+  providerId?: string;
+  modelId?: string;
+} {
   if (!currentModel) return {};
   const [providerId, modelId] = currentModel.split("/", 2);
   return { providerId, modelId: modelId ?? providerId };
@@ -34,17 +37,10 @@ export function currentStreamingAssistantId(messages: Message[]): string | undef
   return undefined;
 }
 
-export function findLastStreamingThinkingIndex(
-  messages: Message[],
-  parentId: string,
-): number {
+export function findLastStreamingThinkingIndex(messages: Message[], parentId: string): number {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
-    if (
-      message?.role === "thinking" &&
-      message.parentId === parentId &&
-      message.isStreaming
-    ) {
+    if (message?.role === "thinking" && message.parentId === parentId && message.isStreaming) {
       return i;
     }
   }

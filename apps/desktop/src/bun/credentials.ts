@@ -1,11 +1,10 @@
-import { createCipheriv, createHash, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { hostname } from "node:os";
-import { dirname } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
 
 import type { ProviderCredential } from "../shared/rpc.js";
-import { appDir, credentialsPath as appCredentialsPath } from "./app-paths.js";
+import { credentialsPath as appCredentialsPath, appDir } from "./app-paths.js";
 import { ensureDir, writeFileAtomically } from "./fs-utils.js";
 import { removeKey, retrieveKey, storeKey } from "./keychain.js";
 import { refreshOAuthToken } from "./oauth.js";

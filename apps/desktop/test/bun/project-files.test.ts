@@ -1,10 +1,9 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-
-import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { clearProjectFilesCache, findProjectFiles } from "../../src/bun/project-files.js";
+import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 
 describe("findProjectFiles", () => {
   let tmpDir: string;

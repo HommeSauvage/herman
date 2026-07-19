@@ -1,4 +1,10 @@
-import type { ContextStats, FileDiff, Message, ModelMetadata, PersistedSession } from "../../../../shared/rpc.js";
+import type {
+  ContextStats,
+  FileDiff,
+  Message,
+  ModelMetadata,
+  PersistedSession,
+} from "../../../../shared/rpc.js";
 import { createTabId, getProjectColor } from "../../../../shared/tab-utils.js";
 import type { Tab } from "./types.js";
 

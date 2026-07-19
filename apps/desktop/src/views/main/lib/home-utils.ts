@@ -38,7 +38,9 @@ export function filterSessions<T extends SessionLike>(sessions: T[], query: stri
   return sessions.filter(
     (session) =>
       session.title.toLowerCase().includes(normalized) ||
-      getProjectName(session.projectRoot ?? session.folderPath).toLowerCase().includes(normalized),
+      getProjectName(session.projectRoot ?? session.folderPath)
+        .toLowerCase()
+        .includes(normalized),
   );
 }
 

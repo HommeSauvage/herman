@@ -1,29 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-import { CONTEXT_TOOLS, getToolInfo, isContextTool } from "../../../../src/views/main/lib/tool-info.js";
+import {
+  CONTEXT_TOOLS,
+  getToolInfo,
+  isContextTool,
+} from "../../../../src/views/main/lib/tool-info.js";
 
 describe("getToolInfo", () => {
   it("returns Read with the filename as subtitle", () => {
-    const info = getToolInfo("read", { filePath: "/tmp/foo.ts" });
+    const info = getToolInfo("read", { path: "/tmp/foo.ts" });
     expect(info.title).toBe("Read");
     expect(info.subtitle).toBe("foo.ts");
   });
 
   it("includes offset and limit chips for read", () => {
-    const info = getToolInfo("read", { filePath: "/tmp/foo.ts", offset: 12, limit: 50 });
+    const info = getToolInfo("read", { path: "/tmp/foo.ts", offset: 12, limit: 50 });
     expect(info.subtitle).toContain("foo.ts");
     expect(info.subtitle).toContain("offset=12");
     expect(info.subtitle).toContain("limit=50");
   });
 
   it("returns Edit with the filename", () => {
-    const info = getToolInfo("edit", { filePath: "/x/bar.tsx" });
+    const info = getToolInfo("edit", { path: "/x/bar.tsx" });
     expect(info.title).toBe("Edit");
     expect(info.subtitle).toBe("bar.tsx");
   });
 
   it("returns Write with the filename", () => {
-    const info = getToolInfo("write", { filePath: "/x/baz.ts" });
+    const info = getToolInfo("write", { path: "/x/baz.ts" });
     expect(info.title).toBe("Write");
     expect(info.subtitle).toBe("baz.ts");
   });

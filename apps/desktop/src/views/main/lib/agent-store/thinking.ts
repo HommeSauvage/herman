@@ -34,10 +34,11 @@ export function applyAgentEventToThinkingMessages(
       const idx = findLastStreamingThinkingIndex(thinkingMessages, parentId);
       if (idx === -1) return thinkingMessages;
       const next = [...thinkingMessages];
-      const previous = next[idx]! as Extract<Message, { role: "thinking" }>;
+      const previous = next[idx] as Extract<Message, { role: "thinking" }>;
+      if (!previous) return thinkingMessages;
       next[idx] = {
         ...previous,
-        content: previous.content + (assistantEvent!.delta ?? ""),
+        content: previous.content + (assistantEvent?.delta ?? ""),
       };
       return next;
     }
@@ -48,7 +49,8 @@ export function applyAgentEventToThinkingMessages(
       const idx = findLastStreamingThinkingIndex(thinkingMessages, parentId);
       if (idx === -1) return thinkingMessages;
       const next = [...thinkingMessages];
-      const prev = next[idx]! as Extract<Message, { role: "thinking" }>;
+      const prev = next[idx] as Extract<Message, { role: "thinking" }>;
+      if (!prev) return thinkingMessages;
       next[idx] = { ...prev, isStreaming: false };
       return next;
     }
@@ -59,8 +61,8 @@ export function applyAgentEventToThinkingMessages(
     if (eventMessage?.role === "assistant") {
       const idx = (() => {
         for (let i = thinkingMessages.length - 1; i >= 0; i--) {
-          const m = thinkingMessages[i]!;
-          if (m.role === "thinking" && (m as Extract<Message, { role: "thinking" }>).isStreaming) {
+          const m = thinkingMessages[i];
+          if (m?.role === "thinking" && (m as Extract<Message, { role: "thinking" }>).isStreaming) {
             return i;
           }
         }
@@ -81,7 +83,11 @@ export function applyAgentEventToThinkingMessages(
     event.type === "agent_complete" ||
     event.type === "agent_error"
   ) {
-    if (thinkingMessages.some((m) => m.role === "thinking" && (m as Extract<Message, { role: "thinking" }>).isStreaming)) {
+    if (
+      thinkingMessages.some(
+        (m) => m.role === "thinking" && (m as Extract<Message, { role: "thinking" }>).isStreaming,
+      )
+    ) {
       return thinkingMessages.map((m) =>
         m.role === "thinking" && (m as Extract<Message, { role: "thinking" }>).isStreaming
           ? { ...m, isStreaming: false }

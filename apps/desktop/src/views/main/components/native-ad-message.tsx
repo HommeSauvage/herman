@@ -86,6 +86,7 @@ export function NativeAdMessage({ campaign }: { campaign: AdCampaign }) {
       <p className="text-dim text-sm leading-relaxed">
         {campaign.body ?? campaign.tagline}{" "}
         <button
+          type="button"
           onClick={() => void reportAdClick(campaign.id, "native")}
           className="text-signal hover:text-signal/80 inline underline underline-offset-2"
         >

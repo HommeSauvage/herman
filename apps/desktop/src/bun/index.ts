@@ -1,21 +1,17 @@
 import { getLogger } from "@logtape/logtape";
-import { BrowserWindow, BrowserView, ApplicationMenu, Updater, Utils } from "electrobun/bun";
 import type { ApplicationMenuItemConfig } from "electrobun/bun";
+import { ApplicationMenu, BrowserView, BrowserWindow, Updater, Utils } from "electrobun/bun";
 
 import { config } from "../env.js";
 import { configureLogging } from "../logging.js";
 import { parseAdEventFromNotify } from "../shared/agent-protocol.js";
 import { normalizeModelId, resolveSeedModel } from "../shared/model-selection.js";
-import type { DesktopSettings, HermanDesktopRPC, ProviderMetadata, TabId, FileDiff } from "../shared/rpc.js";
-import { startDeviceActivation, checkDeviceActivation } from "./activation.js";
+import type { FileDiff, HermanDesktopRPC, ProviderMetadata, TabId } from "../shared/rpc.js";
+import { checkDeviceActivation, startDeviceActivation } from "./activation.js";
 import { AdTelemetry } from "./ad-telemetry.js";
-import { AgentProcessManager } from "./agent-process-manager.js";
 import { syncAgentConfig } from "./agent-config-sync.js";
-import {
-  getProjectFoldersFromPiSessions,
-  listAllPiSessions,
-  listPiSessionsForProject,
-} from "./pi-sessions.js";
+import { AgentProcessManager } from "./agent-process-manager.js";
+import { getBrowserHarness } from "./browser-harness/index.js";
 import { clearAllComposerDrafts } from "./composer-drafts.js";
 import {
   getCredential,
@@ -23,48 +19,65 @@ import {
   removeCredential,
   setCredential,
 } from "./credentials.js";
-import { reportImpression, reportAdClick } from "./herman-api.js";
-import { cancelOAuthLogin, pollOAuthLogin, startOAuthLogin } from "./oauth.js";
-import { findProjectFiles } from "./project-files.js";
 import { openFilePicker } from "./file-picker.js";
-import { loadState, saveSession, clearSession, clearAllState } from "./session.js";
-import { loadSettings, saveSettings, updateSettings } from "./settings.js";
+import { reportAdClick, reportImpression } from "./herman-api.js";
+import { browserRoutes } from "./host-bridge/routes/browser.js";
+import { previewContextRoutes } from "./host-bridge/routes/preview-context.js";
+import { publishingRoutes } from "./host-bridge/routes/publishing.js";
+import { startHostBridgeServer } from "./host-bridge/server.js";
 import { ModelCatalogService } from "./model-catalog.js";
-import { rewindManager, getUserMessageIds } from "./rewind-manager.js";
-import { resolveShellEnv } from "./shell-env.js";
-import { clearAllTabHistory } from "./tab-history.js";
+import { cancelOAuthLogin, pollOAuthLogin, startOAuthLogin } from "./oauth.js";
+import {
+  getProjectFoldersFromPiSessions,
+  listAllPiSessions,
+  listPiSessionsForProject,
+} from "./pi-sessions.js";
+import { PreviewContextService } from "./preview-context/service.js";
 import {
   ensurePreviewStarted,
-  restartPreview as restartPreviewServers,
-  stopPreviewsForScope,
-  stopAllPreviewsForProject,
-  getDevServerStatus,
-  stopAllDevServers,
-  setPreviewStatusHandler,
-  setPreviewLogHandler,
-  setPreviewLineHandler,
-  tabScope,
   folderScope,
+  getDevServerStatus,
+  restartPreview as restartPreviewServers,
+  setPreviewLineHandler,
+  setPreviewLogHandler,
+  setPreviewStatusHandler,
+  stopAllDevServers,
+  stopAllPreviewsForProject,
+  stopPreviewsForScope,
+  tabScope,
+  wizardScope,
 } from "./preview-server.js";
-import { PreviewContextService } from "./preview-context/service.js";
-import { startHostBridgeServer } from "./host-bridge/server.js";
-import { previewContextRoutes } from "./host-bridge/routes/preview-context.js";
-import { collectOrphanWorktrees } from "./session-bootstrap/worktree-gc.js";
-
+import { findProjectFiles } from "./project-files.js";
 import { readProjectManifest, setupProjectRepo } from "./project-manifest.js";
-import { listProjectDocs } from "./rookie-docs.js";
 import { checkRequirements } from "./requirements.js";
-import { getToolchainStatus, installTools } from "./toolchain.js";
-import { getGalleryTemplates as loadGalleryTemplates, resolveTemplateManifest } from "./template-registry.js";
-import { WizardSessionManager } from "./wizard-session.js";
-import { listAllSkills, installSkill, removeSkill, searchSkills, installSkillFromCommand, setSkillEnabled as toggleSkill } from "./skills.js";
-import { getSessionChanges, removeSessionWorktree, WorktreeIndex } from "./worktree.js";
+import { getUserMessageIds, rewindManager } from "./rewind-manager.js";
+import { listProjectDocs } from "./rookie-docs.js";
+import { clearAllState, clearSession, loadState, saveSession } from "./session.js";
+import { collectOrphanWorktrees } from "./session-bootstrap/worktree-gc.js";
+import { loadSettings, saveSettings, updateSettings } from "./settings.js";
+import { resolveShellEnv } from "./shell-env.js";
 import {
-  loadWindowState,
-  saveWindowState,
-  resolveFrame,
+  installSkill,
+  installSkillFromCommand,
+  listAllSkills,
+  removeSkill,
+  searchSkills,
+  setSkillEnabled as toggleSkill,
+} from "./skills.js";
+import { clearAllTabHistory } from "./tab-history.js";
+import {
+  getGalleryTemplates as loadGalleryTemplates,
+  resolveTemplateManifest,
+} from "./template-registry.js";
+import { getToolchainStatus, installTools } from "./toolchain.js";
+import {
   clearWindowState,
+  loadWindowState,
+  resolveFrame,
+  saveWindowState,
 } from "./window-state.js";
+import { WizardSessionManager } from "./wizard-session.js";
+import { getSessionChanges, removeSessionWorktree } from "./worktree.js";
 
 await configureLogging();
 const logger = getLogger(["herman-desktop", "main"]);
@@ -659,7 +672,24 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       checkTemplateRequirements: async ({ templateId }) => {
         const manifest = await resolveTemplateManifest(templateId);
-        const results = await checkRequirements(manifest.frontmatter.requirements);
+        const requirements = [...(manifest.frontmatter.requirements ?? [])];
+        // Wizard QA uses a headless browser; offer Chromium as an optional
+        // pre-install when the template has preview servers. System Chrome is
+        // still a runtime fallback if the user skips this.
+        if (
+          (manifest.frontmatter.servers?.length ?? 0) > 0 &&
+          !requirements.some((r) => r.id === "browser-chromium")
+        ) {
+          requirements.push({
+            id: "browser-chromium",
+            label: "Preview browser",
+            check:
+              'test -d "$HOME/.herman/browsers" && find "$HOME/.herman/browsers" -type f \\( -name chrome -o -name chromium -o -name "chrome-*" \\) 2>/dev/null | head -1 | grep -q .',
+            why: "Lets Herman open and check your website during setup so it can catch problems before you see them.",
+            optional: true,
+          });
+        }
+        const results = await checkRequirements(requirements);
         return { results };
       },
       checkProjectRequirements: async ({ folderPath }) => {
@@ -781,14 +811,14 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
       },
       applySession: async ({ tabId }) => {
         const tab = agentProcessManager.getTab(tabId);
-        if (!tab || !tab.worktree) {
+        if (!tab?.worktree) {
           return { status: "error" as const, error: "No draft session found" };
         }
         return agentProcessManager.syncSessionToMain(tabId);
       },
       discardSession: async ({ tabId }) => {
         const tab = agentProcessManager.getTab(tabId);
-        if (!tab || !tab.worktree) return;
+        if (!tab?.worktree) return;
         await removeSessionWorktree(tab);
         // closeTab defers preview shutdown so the renderer unmounts the webview
         // before the preview server is killed — no explicit stop needed.
@@ -901,6 +931,74 @@ const mainRPC = BrowserView.defineRPC<HermanDesktopRPC>({
         settings.disabledSkills = toggleSkill(name, enabled, current);
         await saveSettings(settings);
       },
+      getPublishingConfig: async ({ projectPath }) => {
+        const { getPublishingConfigView } = await import("./publishing/index.js");
+        const config = await getPublishingConfigView(projectPath);
+        return { config };
+      },
+      savePublishingConfig: async ({ projectPath, update }) => {
+        const { savePublishingConfig, getPublishingConfigView } = await import(
+          "./publishing/index.js"
+        );
+        await savePublishingConfig(projectPath, update);
+        const config = await getPublishingConfigView(projectPath);
+        if (!config) {
+          throw new Error("Failed to save publishing config");
+        }
+        return { config };
+      },
+      deletePublishingConfig: async ({ projectPath }) => {
+        const { deletePublishingConfig } = await import("./publishing/index.js");
+        const deleted = await deletePublishingConfig(projectPath);
+        return { deleted };
+      },
+      generatePublishingSshKey: async ({ keyName }) => {
+        const { generateSshKey } = await import("./publishing/index.js");
+        const keyPair = await generateSshKey(keyName);
+        return keyPair;
+      },
+      discoverSshKeys: async () => {
+        const { discoverSshKeys } = await import("./publishing/index.js");
+        return { keys: discoverSshKeys() };
+      },
+      installCoolify: async ({ projectPath }) => {
+        const { getPublishingConfig, savePublishingConfig, installCoolify } = await import(
+          "./publishing/index.js"
+        );
+
+        const config = await getPublishingConfig(projectPath);
+        if (!config?.serverIp) {
+          return { ok: false, error: "Set up the server first (Publishing screen)." };
+        }
+        if (!config.sshKeyPath) {
+          return {
+            ok: false,
+            error:
+              "Herman has no private SSH key for this project (a pasted public key is not enough to connect). Generate a key in the Publishing screen, add it to the server, then retry.",
+          };
+        }
+
+        const result = await installCoolify({
+          serverIp: config.serverIp,
+          sshKeyPath: config.sshKeyPath,
+          onProgress: (p) => {
+            try {
+              webviewRpc.send.publishingInstallProgress({
+                projectPath,
+                stream: p.stream,
+                line: p.line,
+              });
+            } catch {
+              // webview gone — the install keeps running
+            }
+          },
+        });
+
+        if (result.ok && result.coolifyUrl) {
+          await savePublishingConfig(projectPath, { coolifyUrl: result.coolifyUrl });
+        }
+        return result;
+      },
     },
     messages: {
       requestActivation: () => {
@@ -965,7 +1063,7 @@ const win = new BrowserWindow({
   rpc: mainRPC,
 });
 
-const webviewRpc = win.webview.rpc!;
+const webviewRpc = win.webview.rpc as RpcClient;
 
 // ── Model catalog ─────────────────────────────────────────────────────────
 // Single source of truth for "which models exist". Seeds instantly from the
@@ -1028,6 +1126,9 @@ const agentProcessManager = new AgentProcessManager({
   },
   onTabClosed: (tabId) => {
     previewContext.clearTab(tabId);
+    void getBrowserHarness()
+      .dispose(tabId)
+      .catch(() => undefined);
   },
   emitServerLine: (line) => {
     previewContext.handleServerLine(line);
@@ -1499,6 +1600,9 @@ async function handleMenuAction(action?: string) {
     case "quit": {
       await agentProcessManager.closeAll();
       await stopAllDevServers();
+      await getBrowserHarness()
+        .disposeAll()
+        .catch(() => undefined);
       void hostBridge.stop();
       // Safety net: remove any BrowserViews the renderer couldn't clean up.
       agentProcessManager.removeOrphanedPreviewViews();
@@ -1671,21 +1775,50 @@ function wireNavigationRules(mainWindow: BrowserWindow, allowedOrigin?: string) 
 
 // ── Host bridge + preview context (before any agent spawns) ──
 const previewContext = new PreviewContextService({
-  getTab: (tabId) => {
-    const tab = agentProcessManager.getTab(tabId);
-    if (!tab) return undefined;
-    return {
-      folderPath: tab.folderPath,
-      projectRoot: tab.projectRoot,
-      worktree: tab.worktree,
-    };
+  resolve: (id) => {
+    const tab = agentProcessManager.getTab(id);
+    if (tab) {
+      return {
+        snapshot: {
+          folderPath: tab.folderPath,
+          projectRoot: tab.projectRoot,
+          worktree: tab.worktree,
+        },
+        scope: tabScope(id),
+      };
+    }
+    const wizard = wizardSessionManager.get(id);
+    const projectPath = wizard?.getProjectPath();
+    if (projectPath) {
+      return {
+        snapshot: { folderPath: projectPath, projectRoot: projectPath },
+        scope: wizardScope(id),
+      };
+    }
+    return { scope: tabScope(id) };
   },
   getMode,
   getFleetStatus: (scope) => getDevServerStatus(scope),
 });
 setPreviewLineHandler((line) => previewContext.handleServerLine(line));
 
+const browserHarness = getBrowserHarness({
+  onConsole: (ownerId, entry) => {
+    previewContext.handleConsoleBatch(ownerId, "", [entry]);
+  },
+});
+
 // Must be ready before restoreApp() spawns any agent subprocess.
-const hostBridge = await startHostBridgeServer(previewContextRoutes(previewContext));
+const hostBridge = await startHostBridgeServer([
+  ...previewContextRoutes(previewContext),
+  ...browserRoutes(browserHarness, previewContext),
+  ...publishingRoutes({
+    getProjectRootForTab: (tabId) => {
+      const tab = agentProcessManager.getTab(tabId);
+      if (!tab) return undefined;
+      return tab.projectRoot ?? tab.folderPath;
+    },
+  }),
+]);
 
 restoreApp();

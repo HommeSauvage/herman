@@ -1,8 +1,17 @@
 import { Loader2, Monitor, Play } from "lucide-react";
-import { type Ref } from "react";
+import type { Ref } from "react";
 
-import { DEVICE_WIDTHS, type DeviceMode, type PreviewStage as PreviewStageKind } from "../../lib/preview-store.js";
-import { PreviewWebview, type PreviewClientError, type PreviewConsoleEntryCallback, type PreviewWebviewHandle } from "../preview-webview.js";
+import {
+  DEVICE_WIDTHS,
+  type DeviceMode,
+  type PreviewStage as PreviewStageKind,
+} from "../../lib/preview-store.js";
+import {
+  type PreviewClientError,
+  type PreviewConsoleEntryCallback,
+  PreviewWebview,
+  type PreviewWebviewHandle,
+} from "../preview-webview.js";
 import { PreviewErrorBox } from "./preview-error-box.js";
 
 type PreviewStageProps = {
@@ -85,7 +94,9 @@ export function PreviewStage({
           <Loader2 size={22} className="text-signal animate-spin" />
           <div className="text-center">
             <p className="text-dim text-sm">Setting up your workspace…</p>
-            <p className="text-ghost mt-1 text-xs">The preview will start automatically when it's ready.</p>
+            <p className="text-ghost mt-1 text-xs">
+              The preview will start automatically when it's ready.
+            </p>
           </div>
         </div>
       );

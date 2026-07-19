@@ -3,17 +3,17 @@ import { useCallback, useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import type { PendingAttachment, QueuedFollowUp, TabId } from "../../../shared/rpc.js";
-import { useFileMention } from "../hooks/use-file-mention.js";
-import { useSlashCommand } from "../hooks/use-slash-command.js";
 import { useComposerDraftSync } from "../hooks/use-composer-draft-sync.js";
 import { useComposerTextarea } from "../hooks/use-composer-textarea.js";
+import { useFileMention } from "../hooks/use-file-mention.js";
+import { useSlashCommand } from "../hooks/use-slash-command.js";
 import { sendPrompt } from "../lib/agent-actions.js";
 import { isTabWorking, useAgentStore } from "../lib/agent-store.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
-import { AttachmentList } from "./attachment-list.js";
 import { AttachButton } from "./attach-button.js";
-import { ComposerInput } from "./composer-input.js";
+import { AttachmentList } from "./attachment-list.js";
 import { ComposerActions } from "./composer-actions.js";
+import { ComposerInput } from "./composer-input.js";
 import { FileMentionPopover } from "./file-mention-popover.js";
 import { QueuedFollowUps } from "./queued-follow-ups.js";
 import { SlashCommandPopover } from "./slash-command-popover.js";
@@ -44,9 +44,7 @@ export function Composer() {
     }),
   );
   const queuedMessages = useAgentStore(
-    useShallow((s) =>
-      s.activeTabId ? (s.tabs[s.activeTabId]?.queuedMessages ?? []) : [],
-    ),
+    useShallow((s) => (s.activeTabId ? (s.tabs[s.activeTabId]?.queuedMessages ?? []) : [])),
   );
   const queueMessage = useAgentStore((s) => s.queueMessage);
   const removeQueuedMessage = useAgentStore((s) => s.removeQueuedMessage);
@@ -292,8 +290,7 @@ export function Composer() {
           event.preventDefault();
           return;
         }
-        const ctrl =
-          event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+        const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
         if (ctrl && (event.key === "n" || event.key === "p")) {
           slashState.moveActive(event.key === "n" ? 1 : -1);
           event.preventDefault();
@@ -327,8 +324,7 @@ export function Composer() {
           event.preventDefault();
           return;
         }
-        const ctrl =
-          event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+        const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
         if (ctrl && (event.key === "n" || event.key === "p")) {
           mentionState.moveActive(event.key === "n" ? 1 : -1);
           event.preventDefault();

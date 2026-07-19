@@ -10,6 +10,7 @@ import { useAgentStore } from "./agent-store.js";
 import { desktopRpc as realDesktopRpc } from "./desktop-rpc.js";
 
 const logger = getLogger(["herman-desktop", "view", "preview-store"]);
+
 import {
   appendRuntimeError,
   buildAskHermanPrompt,
@@ -161,11 +162,7 @@ function expectedScope(state: PreviewStoreState): string {
   return state.folderPath ? folderScope(state.folderPath) : "";
 }
 
-function matchesScope(
-  state: PreviewStoreState,
-  scope: string,
-  folderPath: string,
-): boolean {
+function matchesScope(state: PreviewStoreState, scope: string, folderPath: string): boolean {
   const expected = expectedScope(state);
   if (expected && scope === expected) return true;
   // Folder-scoped events are a fallback for stores without a tab.
@@ -323,7 +320,11 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
         next.activeServerId = snapshot.serverId;
       }
 
-      if (snapshot.phase === "ready" || snapshot.phase === "failed" || snapshot.phase === "stopped") {
+      if (
+        snapshot.phase === "ready" ||
+        snapshot.phase === "failed" ||
+        snapshot.phase === "stopped"
+      ) {
         next.operation = "none";
       }
 
@@ -458,7 +459,11 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
           activeServerId: result.serverId ?? state.activeServerId,
           operation: result.starting ? "restart" : "none",
           ...(result.phase === "ready"
-            ? { reloadRevision: get().reloadRevision + 1, currentUrl: result.url ?? null, canGoBack: false }
+            ? {
+                reloadRevision: get().reloadRevision + 1,
+                currentUrl: result.url ?? null,
+                canGoBack: false,
+              }
             : {}),
         });
       } catch (err) {
@@ -596,10 +601,11 @@ export function createPreviewStore(rpcDeps: PreviewRpcDeps = defaultRpcDeps) {
       });
       try {
         await desktopRpc.request.discardSession({ tabId });
-      } finally {
-        if (!isCurrent(get(), generation, folderPath, tabId)) return;
-        set({ draft: { ...get().draft, operation: "none" } });
+      } catch {
+        // discardSession failed — fall through to reset draft state
       }
+      if (!isCurrent(get(), generation, folderPath, tabId)) return;
+      set({ draft: { ...get().draft, operation: "none" } });
     },
 
     askHermanToFix: (error, context) => {
@@ -646,12 +652,7 @@ export function selectPreviewStage(state: PreviewStoreState): PreviewStage {
   const op = state.operation;
 
   if (phase === "failed") return "server_failed";
-  if (
-    op === "start" ||
-    op === "restart" ||
-    op === "switch" ||
-    phase === "starting"
-  ) {
+  if (op === "start" || op === "restart" || op === "switch" || phase === "starting") {
     return "server_starting";
   }
   if (phase === "ready" && state.server?.url) return "ready";

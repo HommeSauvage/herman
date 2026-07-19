@@ -8,15 +8,15 @@ import type {
   ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
 import { PROTECTED_PROVIDER_KEY_VARS } from "@herman/agent/protected-keys";
+import type { AdCampaign, AdPlacement } from "@herman/rpc/ads";
 import {
   HERMAN_REFRESH_MODELS_MESSAGE,
-  LEGACY_HERMAN_MODELS_CACHE_FILENAME,
-  MODEL_CATALOG_FILENAME,
   type HermanModelEntry,
+  LEGACY_HERMAN_MODELS_CACHE_FILENAME,
   type LegacyHermanModelsCacheFile,
+  MODEL_CATALOG_FILENAME,
   type ModelCatalogFile,
 } from "@herman/rpc/agent";
-import type { AdCampaign, AdPlacement } from "@herman/rpc/ads";
 import { getLogger } from "@logtape/logtape";
 
 import { config } from "../env.js";
@@ -24,7 +24,11 @@ import { buildPrompt } from "../prompts/index.js";
 
 const logger = getLogger(["herman-agent", "extension"]);
 
-function extLog(level: "info" | "error" | "debug", message: string, meta?: Record<string, unknown>) {
+function extLog(
+  level: "info" | "error" | "debug",
+  message: string,
+  meta?: Record<string, unknown>,
+) {
   if (level === "error") {
     logger.error(message, meta ?? {});
     return;
@@ -291,12 +295,18 @@ function sendModelsSync(
   const sorted = sortAvailableHermanFirst(available);
   const modelMetadata: Record<string, { contextWindow: number; maxTokens?: number }> = {};
   for (const model of sorted) {
-    if (typeof model.contextWindow !== "number" || !Number.isFinite(model.contextWindow) || model.contextWindow <= 0) {
+    if (
+      typeof model.contextWindow !== "number" ||
+      !Number.isFinite(model.contextWindow) ||
+      model.contextWindow <= 0
+    ) {
       continue;
     }
     modelMetadata[`${model.provider}/${model.id}`] = {
       contextWindow: model.contextWindow,
-      ...(typeof model.maxTokens === "number" && Number.isFinite(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
+      ...(typeof model.maxTokens === "number" && Number.isFinite(model.maxTokens)
+        ? { maxTokens: model.maxTokens }
+        : {}),
     };
   }
   const payload: Record<string, unknown> = {
@@ -341,7 +351,7 @@ async function selectDefaultModel(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   hermanModels: HermanModel[],
-) : Promise<string | undefined> {
+): Promise<string | undefined> {
   const current = ctx.model;
   const available = ctx.modelRegistry.getAvailable();
 
@@ -352,9 +362,7 @@ async function selectDefaultModel(
     const alreadyHerman = current?.provider === HERMAN_PROVIDER;
     if (!alreadyHerman) {
       const preferred = available.find(
-        (model) =>
-          model.provider === HERMAN_PROVIDER &&
-          model.id === hermanModels[0]!.id,
+        (model) => model.provider === HERMAN_PROVIDER && model.id === hermanModels[0]?.id,
       );
       if (preferred) {
         await pi.setModel(preferred);
@@ -380,8 +388,6 @@ async function selectDefaultModel(
 function shouldRefreshModels(status: number | null): boolean {
   return status === 403 || status === 503;
 }
-
-
 
 export default async function hermanExtension(pi: ExtensionAPI) {
   let hermanModels: HermanModel[] = [];
@@ -471,7 +477,9 @@ export default async function hermanExtension(pi: ExtensionAPI) {
         registerModels(models);
       } catch (error) {
         fetchError = error instanceof Error ? error.message : String(error);
-        extLog("error", "Failed to fetch Herman models and no cache available", { error: fetchError });
+        extLog("error", "Failed to fetch Herman models and no cache available", {
+          error: fetchError,
+        });
         registerModels([]);
       }
     }
@@ -575,7 +583,7 @@ export default async function hermanExtension(pi: ExtensionAPI) {
 
   pi.on("message_end", async (event) => {
     const message = event.message as unknown as Record<string, unknown> | undefined;
-    if (!message || message.role !== "assistant") return;
+    if (message?.role !== "assistant") return;
 
     const stopReason = message.stopReason;
     const errorMessage = message.errorMessage;

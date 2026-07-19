@@ -44,10 +44,7 @@ export function SessionRow({
         </div>
         {subtitle ? (
           <div
-            className={cn(
-              "text-ghost truncate text-[11px]",
-              density === "comfortable" && "mt-0.5",
-            )}
+            className={cn("text-ghost truncate text-[11px]", density === "comfortable" && "mt-0.5")}
           >
             {subtitle}
           </div>
@@ -68,7 +65,12 @@ export function SessionRow({
 
   if (density === "comfortable") {
     return (
-      <motion.button type="button" whileTap={{ scale: 0.98 }} onClick={onClick} className={className}>
+      <motion.button
+        type="button"
+        whileTap={{ scale: 0.98 }}
+        onClick={onClick}
+        className={className}
+      >
         {body}
       </motion.button>
     );

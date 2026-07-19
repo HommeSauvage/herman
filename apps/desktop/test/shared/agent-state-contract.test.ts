@@ -1,16 +1,10 @@
 import { mock } from "bun:test";
-import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
-import { useAgentStore } from "../../src/views/main/lib/agent-store.js";
 import type { AgentEvent } from "../../src/shared/agent-protocol.js";
 import type { Message, Tab } from "../../src/shared/rpc.js";
+import { useAgentStore } from "../../src/views/main/lib/agent-store.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
 
 let tempDir: string;
 let mockInstances: MockAgentBridge[] = [];

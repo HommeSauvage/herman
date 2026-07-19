@@ -1,6 +1,6 @@
+import { getLogger } from "@logtape/logtape";
 import { useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
-import { getLogger } from "@logtape/logtape";
 
 import type { AdCampaign, AgentEvent } from "../../../shared/agent-protocol.js";
 import { isContextTool } from "../../../shared/context-tools.js";
@@ -171,7 +171,9 @@ function useAgentEventPolling() {
           // renderer store optimistically; the poll must not overwrite them.
           const currentModelFallback = tab.currentModel ? undefined : freshTab.currentModel;
           const changed = useAgentStore.getState().updateTab(activeTabId, {
-            ...(streaming ? {} : { messages: freshTab.messages, contextStats: freshTab.contextStats }),
+            ...(streaming
+              ? {}
+              : { messages: freshTab.messages, contextStats: freshTab.contextStats }),
             isThinking: freshTab.isThinking,
             availableModels: freshTab.availableModels,
             ...(currentModelFallback ? { currentModel: currentModelFallback } : {}),
@@ -296,13 +298,15 @@ function useMessageHydrationRetry() {
 
   useEffect(() => {
     const onHydrated = (payload: TabMessagesHydrated) => {
-      useAgentStore.getState().applyMessagesHydration(
-        payload.tabId,
-        payload.status,
-        payload.messages,
-        payload.error,
-        payload.contextStats,
-      );
+      useAgentStore
+        .getState()
+        .applyMessagesHydration(
+          payload.tabId,
+          payload.status,
+          payload.messages,
+          payload.error,
+          payload.contextStats,
+        );
 
       if (payload.status !== "failed") return;
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -310,13 +314,15 @@ function useMessageHydrationRetry() {
         void desktopRpc.request
           .retryTabMessageHydration({ tabId: payload.tabId })
           .then((result) => {
-            useAgentStore.getState().applyMessagesHydration(
-              result.tabId,
-              result.status,
-              result.messages,
-              result.error,
-              result.contextStats,
-            );
+            useAgentStore
+              .getState()
+              .applyMessagesHydration(
+                result.tabId,
+                result.status,
+                result.messages,
+                result.error,
+                result.contextStats,
+              );
           })
           .catch((error) => {
             logger.warning("Message hydration retry failed", {

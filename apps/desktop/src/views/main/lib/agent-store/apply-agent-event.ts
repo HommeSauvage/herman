@@ -1,10 +1,13 @@
 import type { AgentEvent } from "../../../../shared/agent-protocol.js";
-import { applyAgentEventToMessages, isAgentEndCurrent } from "../../../../shared/apply-agent-event.js";
+import {
+  applyAgentEventToMessages,
+  isAgentEndCurrent,
+} from "../../../../shared/apply-agent-event.js";
 import type { ContextStats, ModelMetadata } from "../../../../shared/rpc.js";
 import { contextStatsEqual } from "./compare.js";
+import { applyAgentEventToThinkingMessages } from "./thinking.js";
 import type { Tab } from "./types.js";
 import { computeRetryState, MAX_RETRY_ATTEMPTS, parseCurrentModel } from "./utils.js";
-import { applyAgentEventToThinkingMessages } from "./thinking.js";
 
 /** Merge new model metadata into the store so context-stats computation
  *  always has the latest context-window limits. */
@@ -19,7 +22,7 @@ export function mergeModelMetadata(
 export function applyAgentEvent(
   tab: Tab,
   event: AgentEvent,
-  modelMetadata?: Record<string, ModelMetadata>,
+  _modelMetadata?: Record<string, ModelMetadata>,
 ): Tab {
   const now = Date.now();
   let next: Tab = tab;
@@ -107,7 +110,10 @@ export function applyAgentEvent(
     case "message_end": {
       const lastAssistant = [...updatedMessages]
         .reverse()
-        .find((m): m is Extract<Tab["messages"][number], { role: "assistant" }> => m.role === "assistant");
+        .find(
+          (m): m is Extract<Tab["messages"][number], { role: "assistant" }> =>
+            m.role === "assistant",
+        );
       if (lastAssistant) {
         const isError =
           lastAssistant.stopReason === "error" ||

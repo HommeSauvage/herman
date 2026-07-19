@@ -1,5 +1,5 @@
 import { cn } from "@herman/ui/lib/utils";
-import { Sparkles, Code } from "lucide-react";
+import { Code, Sparkles } from "lucide-react";
 import { useCallback } from "react";
 
 import { useAgentStore } from "../../lib/agent-store.js";

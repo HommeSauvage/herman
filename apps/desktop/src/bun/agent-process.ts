@@ -1,7 +1,7 @@
-import { PROTECTED_PROVIDER_KEY_SET } from "@herman/agent/protected-keys";
-import type { Subprocess } from "bun";
 import { existsSync } from "node:fs";
+import { PROTECTED_PROVIDER_KEY_SET } from "@herman/agent/protected-keys";
 import { getLogger } from "@logtape/logtape";
+import type { Subprocess } from "bun";
 
 import { AgentRpcClient } from "./agent-rpc.js";
 import { resolveShellEnv } from "./shell-env.js";
@@ -120,11 +120,10 @@ export class AgentProcess {
     }
     if (!existsSync(cwd)) {
       this.processState = "crashed";
-      throw new AgentSpawnError(
-        `Agent working directory does not exist: ${cwd}`,
-        "cwd-missing",
-        { binaryPath: this.options.binaryPath, cwd },
-      );
+      throw new AgentSpawnError(`Agent working directory does not exist: ${cwd}`, "cwd-missing", {
+        binaryPath: this.options.binaryPath,
+        cwd,
+      });
     }
 
     try {

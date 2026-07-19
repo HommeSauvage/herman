@@ -1,7 +1,7 @@
+import { getLogger } from "@logtape/logtape";
+import { Sparkles } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { Sparkles } from "lucide-react";
-import { getLogger } from "@logtape/logtape";
 
 import type { PreviewRuntimeError } from "../components/preview-error-banner";
 import { formatRuntimeErrors, usePreviewStore } from "../lib/preview-store";
@@ -14,10 +14,7 @@ const logger = getLogger(["herman-desktop", "view", "preview-error-toasts"]);
  * with other toasts. The "Ask Herman" action reads the latest error snapshot
  * from the store so it always captures every current error.
  */
-export function usePreviewErrorToasts(
-  runtimeErrors: PreviewRuntimeError[],
-  show: boolean,
-) {
+export function usePreviewErrorToasts(runtimeErrors: PreviewRuntimeError[], show: boolean) {
   const toastIdsRef = useRef<Map<string, string | number>>(new Map());
   // Track which error IDs the user has manually dismissed so we don't
   // recreate toasts for them on the next render cycle.
@@ -27,10 +24,7 @@ export function usePreviewErrorToasts(
   const onAskFixRef = useRef(() => {
     const errors = usePreviewStore.getState().runtimeErrors;
     if (errors.length === 0) return;
-    usePreviewStore.getState().askHermanToFix(
-      formatRuntimeErrors(errors),
-      "runtime",
-    );
+    usePreviewStore.getState().askHermanToFix(formatRuntimeErrors(errors), "runtime");
   });
 
   useEffect(() => {
@@ -75,8 +69,7 @@ export function usePreviewErrorToasts(
       });
 
       const toastId = toast.error(err.message, {
-        description:
-          err.source === "client" ? "Browser runtime error" : "Server log error",
+        description: err.source === "client" ? "Browser runtime error" : "Server log error",
         duration: Infinity,
         closeButton: true,
         action: {

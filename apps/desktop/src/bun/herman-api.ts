@@ -60,10 +60,7 @@ export async function reportImpression(
   });
 }
 
-export async function reportAdClick(
-  token: string,
-  params: AdClickReport,
-): Promise<Response> {
+export async function reportAdClick(token: string, params: AdClickReport): Promise<Response> {
   return apiFetch("/api/ads/click", token, {
     method: "POST",
     body: JSON.stringify(params),

@@ -8,33 +8,26 @@
  * dialogs announced in advance, logs behind a disclosure, per-tool retry.
  */
 
-import { motion } from "motion/react";
+import { cn } from "@herman/ui/lib/utils";
 import {
+  AlertCircle,
   Check,
   ChevronDown,
-  Loader2,
-  AlertCircle,
-  Wrench,
-  ShieldCheck,
   ExternalLink,
+  Loader2,
+  ShieldCheck,
+  Wrench,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
-
-import { cn } from "@herman/ui/lib/utils";
 
 import type { ToolchainToolStatus } from "../../../shared/tool-registry.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
-import { useToolchainInstall, type ToolProgress } from "../lib/use-toolchain-install.js";
-import { ContentWidth, SignalButton } from "./ui/index.js";
+import { type ToolProgress, useToolchainInstall } from "../lib/use-toolchain-install.js";
 import { ProgressLog } from "./progress-log.js";
+import { ContentWidth, SignalButton } from "./ui/index.js";
 
-function ToolRow({
-  tool,
-  progress,
-}: {
-  tool: ToolchainToolStatus;
-  progress?: ToolProgress;
-}) {
+function ToolRow({ tool, progress }: { tool: ToolchainToolStatus; progress?: ToolProgress }) {
   const state = progress?.state ?? (tool.installed ? "done" : "pending");
   return (
     <div className="flex items-start gap-3 px-4 py-3">
@@ -108,9 +101,7 @@ export function ToolchainSetup({ onComplete }: { onComplete: () => void }) {
   const handleInstall = useCallback(async () => {
     if (!tools) return;
     const missing = tools.filter((t) => !t.installed);
-    const results = await runInstall(
-      missing.map((t) => ({ toolId: t.id, label: t.label })),
-    );
+    const results = await runInstall(missing.map((t) => ({ toolId: t.id, label: t.label })));
     const allOk = results.every((r) => r.ok);
     // Re-detect from scratch (also covers tools the user installed manually
     // in another window while this screen was up).
@@ -141,8 +132,8 @@ export function ToolchainSetup({ onComplete }: { onComplete: () => void }) {
                 One-time computer setup
               </h1>
               <p className="text-dim mt-1.5 text-sm leading-relaxed">
-                Herman needs a few free tools to build projects on your computer.
-                This takes about 10 minutes and only happens once.
+                Herman needs a few free tools to build projects on your computer. This takes about
+                10 minutes and only happens once.
               </p>
             </div>
 
@@ -171,8 +162,8 @@ export function ToolchainSetup({ onComplete }: { onComplete: () => void }) {
 
             <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-500/15 bg-amber-500/[0.06] px-4 py-3">
               <span className="text-amber-200/90 text-[11px] leading-relaxed">
-                Along the way your Mac will show two system dialogs — an Apple installer
-                and a password prompt. Both are expected; Herman never sees your password.
+                Along the way your Mac will show two system dialogs — an Apple installer and a
+                password prompt. Both are expected; Herman never sees your password.
               </span>
             </div>
 

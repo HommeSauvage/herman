@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
-import type { Subprocess } from "bun";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import type { Subprocess } from "bun";
 import { $ } from "bun";
+import { describe, expect, it } from "vitest";
 
 const CLI_PATH = resolve(import.meta.dir, "..", "dist", "herman-agent");
 type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;

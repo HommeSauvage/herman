@@ -1,5 +1,5 @@
-import { AlertTriangle, RefreshCcw } from "lucide-react";
 import { getLogger } from "@logtape/logtape";
+import { AlertTriangle, RefreshCcw } from "lucide-react";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
 const logger = getLogger(["herman-desktop", "view", "error-boundary"]);

@@ -1,7 +1,7 @@
 import type { ContextStats, Message } from "../shared/rpc.js";
 import type { TabId } from "../shared/tab-utils.js";
-import { loadTabHistoryCache } from "./tab-history.js";
 import { readSessionSnapshot, type SessionSnapshot } from "./session-snapshot.js";
+import { loadTabHistoryCache } from "./tab-history.js";
 import type { PersistedSession } from "./window-state.js";
 
 export type InstantHydration = {
@@ -21,15 +21,10 @@ export async function loadInstantHydration(
 
   const merged = mergeHydrationSources(cache?.messages ?? [], cache?.contextStats, snapshot);
 
-  const piSessionId =
-    persisted.piSessionId ?? snapshot.piSessionId ?? cache?.piSessionId;
+  const piSessionId = persisted.piSessionId ?? snapshot.piSessionId ?? cache?.piSessionId;
 
   const hydrationStatus =
-    merged.messages.length > 0
-      ? "success"
-      : persisted.folderPath
-        ? "pending"
-        : "empty";
+    merged.messages.length > 0 ? "success" : persisted.folderPath ? "pending" : "empty";
 
   return {
     messages: merged.messages,

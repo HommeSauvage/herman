@@ -46,10 +46,10 @@ describe("migrateV1Manifest", () => {
     expect(migrated.env.files).toHaveLength(2);
     const env = migrated.env.files.find((f) => f.path === ".env");
     const local = migrated.env.files.find((f) => f.path === ".env.local");
-    expect(Object.keys(env!.vars).sort()).toEqual(["A", "C"]);
-    expect(env!.vars.A).toEqual({ value: "1" });
-    expect(env!.vars.C).toEqual({ generate: "openssl rand -base64 32" });
-    expect(local!.vars.B).toEqual({ notes: "extra", required: true });
+    expect(Object.keys(env?.vars).sort()).toEqual(["A", "C"]);
+    expect(env?.vars.A).toEqual({ value: "1" });
+    expect(env?.vars.C).toEqual({ generate: "openssl rand -base64 32" });
+    expect(local?.vars.B).toEqual({ notes: "extra", required: true });
   });
 
   it("migrates the real mamine-cooking-v2 herman.yaml shape", () => {
@@ -126,7 +126,12 @@ describe("HermanYamlSchema (v2)", () => {
         ],
       },
       setup: [
-        { id: "php-deps", label: "Installing PHP dependencies", run: "composer install", skip_if: "vendor/autoload.php" },
+        {
+          id: "php-deps",
+          label: "Installing PHP dependencies",
+          run: "composer install",
+          skip_if: "vendor/autoload.php",
+        },
         { id: "seed", label: "Seeding", run: "php artisan db:seed", optional: true, timeout: 120 },
       ],
       servers: [

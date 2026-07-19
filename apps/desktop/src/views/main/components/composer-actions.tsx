@@ -1,9 +1,9 @@
 import { Kbd } from "@herman/ui/components/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/tooltip";
 import { cn } from "@herman/ui/lib/utils";
+import { getLogger } from "@logtape/logtape";
 import { ArrowUp, Clock, Square } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { getLogger } from "@logtape/logtape";
 import { useEffect, useRef } from "react";
 
 import type { TabId } from "../../../shared/rpc.js";
@@ -57,6 +57,7 @@ export function ComposerActions({
         <TooltipTrigger
           render={
             <button
+              type="button"
               aria-label="Stop"
               onClick={() =>
                 tabId &&
@@ -96,6 +97,7 @@ export function ComposerActions({
               <TooltipTrigger
                 render={
                   <button
+                    type="button"
                     aria-label="Queue"
                     onClick={onQueue}
                     className="text-text/60 hover:text-text relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] transition hover:border-white/[0.14] hover:bg-white/[0.08] active:scale-[0.96]"
@@ -124,6 +126,7 @@ export function ComposerActions({
         <TooltipTrigger
           render={
             <button
+              type="button"
               aria-label={showSteerMode ? "Steer" : "Send"}
               onClick={() => void (showSteerMode ? onSteer() : onSubmit())}
               disabled={!hasText}

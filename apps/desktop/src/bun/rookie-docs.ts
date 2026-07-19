@@ -1,10 +1,11 @@
-import { existsSync, readdirSync, type Dirent } from "node:fs";
+import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
 
 import type { ProjectDoc } from "../shared/rpc.js";
+import { bundledAssetDir } from "./app-paths.js";
 
 const logger = getLogger(["herman-desktop", "rookie-docs"]);
 
@@ -23,13 +24,9 @@ const MAX_DOC_CHARS = 100_000;
 
 /**
  * Resolves the bundled rookie-docs seed directory.
- * Production: app/bun/index.js → ../rookie-docs
- * Local dev: apps/desktop/src/bun → ../../rookie-docs
  */
 export function getRookieDocsDir(): string {
-  const bundledPath = resolve(import.meta.dir, "..", "rookie-docs");
-  if (existsSync(bundledPath)) return bundledPath;
-  return resolve(import.meta.dir, "..", "..", "rookie-docs");
+  return bundledAssetDir("rookie-docs");
 }
 
 /**
@@ -57,7 +54,7 @@ export async function seedStaticRookieDocs(projectPath: string): Promise<void> {
 function docSortKey(fileName: string): { rank: number; name: string } {
   const match = fileName.match(/^(\d+)-/);
   return match
-    ? { rank: Number.parseInt(match[1]!, 10), name: fileName }
+    ? { rank: Number.parseInt(match[1] as string, 10), name: fileName }
     : { rank: Number.MAX_SAFE_INTEGER, name: fileName };
 }
 
@@ -66,7 +63,7 @@ function humanizeFileName(fileName: string): string {
     .replace(/^\d+-/, "")
     .replace(/\.md$/i, "")
     .split("-")
-    .map((w) => (w ? w[0]!.toUpperCase() + w.slice(1) : w))
+    .map((w) => (w ? w[0]?.toUpperCase() + w.slice(1) : w))
     .join(" ");
 }
 

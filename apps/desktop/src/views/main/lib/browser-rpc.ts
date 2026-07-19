@@ -6,9 +6,7 @@ import type {
   DesktopSettings,
   OutgoingMessages,
   PersistedSession,
-  ProviderCredential,
   ProviderMetadata,
-  Session,
   Tab,
   TabId,
 } from "../../../shared/rpc.js";
@@ -63,6 +61,7 @@ function createBrowserRpc(): DesktopRpc {
     modelCatalogChanged: [],
     tabModelChanged: [],
     settingsChanged: [],
+    publishingInstallProgress: [],
   };
 
   ws.addEventListener("open", async () => {
@@ -75,15 +74,17 @@ function createBrowserRpc(): DesktopRpc {
     ws.send(JSON.stringify({ type: "start_agent", sessionId }));
     agentStarted = true;
 
-    listeners.tabsRestored.forEach((handler) =>
+    for (const handler of listeners.tabsRestored) {
       handler({
         tabs: [createTab()],
         activeTabId: TAB_ID,
         projects: [],
         sessions: [toPersistedSession(createTab())],
-      }),
-    );
-    listeners.tabActivated.forEach((handler) => handler({ tabId: TAB_ID }));
+      });
+    }
+    for (const handler of listeners.tabActivated) {
+      handler({ tabId: TAB_ID });
+    }
   });
 
   ws.addEventListener("message", (event) => {
@@ -96,23 +97,25 @@ function createBrowserRpc(): DesktopRpc {
 
     if (data.type === "agent_event") {
       const agentEvent = (data.event ?? {}) as AgentEvent;
-      listeners.agentEvent.forEach((handler) => handler({ tabId: TAB_ID, event: agentEvent }));
+      for (const handler of listeners.agentEvent) {
+        handler({ tabId: TAB_ID, event: agentEvent });
+      }
     }
 
     if (data.type === "agent_stderr") {
-      listeners.agentStatusChanged.forEach((handler) =>
-        handler({ tabId: TAB_ID, state: "running", stderr: String(data.text ?? "") }),
-      );
+      for (const handler of listeners.agentStatusChanged) {
+        handler({ tabId: TAB_ID, state: "running", stderr: String(data.text ?? "") });
+      }
     }
 
     if (data.type === "agent_exit") {
-      listeners.agentStatusChanged.forEach((handler) =>
+      for (const handler of listeners.agentStatusChanged) {
         handler({
           tabId: TAB_ID,
           state: "crashed",
           stderr: `Agent exited with code ${String(data.code)}`,
-        }),
-      );
+        });
+      }
     }
   });
 
@@ -273,7 +276,10 @@ function createBrowserRpc(): DesktopRpc {
       adoptWizardSession: async ({ projectPath }) => createTab(projectPath),
       getProjectDocs: async () => ({ docs: [] }),
       getSessionChanges: async () => ({ isWorktree: false, changedFiles: 0, canApply: false }),
-      applySession: async () => ({ status: "error" as const, error: "Unavailable in browser mock" }),
+      applySession: async () => ({
+        status: "error" as const,
+        error: "Unavailable in browser mock",
+      }),
       discardSession: async () => {},
       retrySessionSetup: async () => ({ ok: true }),
       startPreview: async ({ tabId, folderPath }: { tabId?: TabId; folderPath?: string }) => ({
@@ -308,11 +314,29 @@ function createBrowserRpc(): DesktopRpc {
         path: `/tmp/herman/skills/${name}/SKILL.md`,
       }),
       searchSkills: async () => ({ results: [] }),
-      installSkillFromCommand: async () => ({ path: "/tmp/herman/skills/skill/SKILL.md", name: "skill" }),
+      installSkillFromCommand: async () => ({
+        path: "/tmp/herman/skills/skill/SKILL.md",
+        name: "skill",
+      }),
       removeSkill: async () => {},
       setSkillEnabled: async () => {},
       focusWindow: async () => {},
       showNativeNotification: async () => {},
+      getPublishingConfig: async () => ({ config: null }),
+      savePublishingConfig: async () => ({
+        config: {
+          projectPath: "",
+          status: "none",
+          hasApiToken: false,
+          hasSshKey: false,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      }),
+      deletePublishingConfig: async () => ({ deleted: false }),
+      generatePublishingSshKey: async () => ({ privateKeyPath: "", publicKey: "" }),
+      discoverSshKeys: async () => ({ keys: [] }),
+      installCoolify: async () => ({ ok: false, error: "Not available in browser mode" }),
     },
     addMessageListener: <K extends keyof OutgoingMessages>(
       name: K,

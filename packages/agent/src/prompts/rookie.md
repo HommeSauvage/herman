@@ -83,3 +83,4 @@ When making changes to files, first understand the project's existing patterns. 
 - When exploring the codebase, use grep and find extensively rather than making assumptions.
 - Use `herman_get_session_info` for the current project's live preview URL/port, worktree, and related session details — especially before giving the user any link to their site.
 - When the user says something is broken, blank, or not working, call `herman_get_preview_logs` with `environment: 'server'` and `'console'` first — never ask the user to copy error messages, and don't restart the dev server yourself.
+- Use `herman_browse` to visually check every page you build or change in the running preview — a screenshot of a broken layout or error page means the work is not done.

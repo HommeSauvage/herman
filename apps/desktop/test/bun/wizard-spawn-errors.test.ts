@@ -1,17 +1,11 @@
-import { mock } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
-import type { AgentEvent } from "../../src/shared/agent-protocol.js";
-import type { ResolvedManifest } from "../../src/shared/herman-manifest.js";
 import { AgentSpawnError } from "../../src/bun/agent-process.js";
+import type { AgentEvent } from "../../src/shared/agent-protocol.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
+import { DEFAULT_FAKE_MANIFEST, fakeWizardDeps } from "../helpers/wizard-fake-deps.js";
 
 let tempDir: string;
 let mockInstances: MockAgentBridge[] = [];
@@ -93,42 +87,22 @@ class MockAgentBridge {
   }
 }
 
-const mockManifest: ResolvedManifest = {
-  id: "blog",
-  frontmatter: {
-    version: 1,
-    name: "Blog",
-    description: "A personal blog",
-    source: { repo: "https://github.com/example/blog.git", ref: "main" },
-    setup_goal: "Homepage loads",
-  },
-  sections: {
-    setup: "Install deps.",
-    questions: "- Topics?",
-    guidance: "Keep it simple.",
-  },
-  serialized: "",
-};
+const fakeDeps = () =>
+  fakeWizardDeps({
+    createBridge: (...args: ConstructorParameters<typeof MockAgentBridge>) =>
+      new MockAgentBridge(...args),
+    manifest: DEFAULT_FAKE_MANIFEST,
+  });
 
 beforeEach(() => {
   tempDir = createTestTempDir("herman-wizard-spawn-");
   mockInstances = [];
   nextStartError = null;
   setHermantAppDir(tempDir);
-  mock.module("../../src/bun/agent-bridge.js", () => ({
-    AgentBridge: MockAgentBridge,
-  }));
-  mock.module("../../src/bun/template-registry.js", () => ({
-    resolveTemplateManifest: async () => mockManifest,
-  }));
-  mock.module("../../src/bun/agent-config-sync.js", () => ({
-    resolveWizardExtensionPath: () => [],
-  }));
 });
 
 afterEach(() => {
   clearHermantAppDir(tempDir);
-  mock.restore();
 });
 
 function waitFor(
@@ -154,37 +128,90 @@ function waitFor(
 
 type EmittedEvent = { type: string; error?: string; phase?: string };
 
-/** Drive a session through planning into the coding phase. */
+const MILESTONE_PLAN = `# Plan
+
+## Milestone 1: Foundation
+- [ ] Setup project
+Acceptance: App boots
+
+## Milestone 2: Polish
+- [ ] Style the home page
+Acceptance: Home matches design
+`;
+
+const DESIGN_DOC = `# Design
+
+## Design tokens
+- colors: warm
+
+## Layout system
+- single column
+
+## Page inventory
+- \`/\` — Home: landing page
+`;
+
+/** Drive a session through planning → design → coding (first milestone). */
 async function advanceToCoding(
   session: { start: (templateId: string, description: string) => Promise<void> },
   projectName: string,
-): Promise<{ projectPath: string; planPath: string }> {
-  const { WIZARD_PLAN_FILENAME } = await import("../../src/bun/wizard-session.js");
+): Promise<{ projectPath: string; planPath: string; designPath: string }> {
+  const { WIZARD_PLAN_FILENAME, WIZARD_DESIGN_FILENAME } = await import(
+    "../../src/bun/wizard-session.js"
+  );
   const projectPath = join(tempDir, projectName);
   const planPath = join(projectPath, WIZARD_PLAN_FILENAME);
+  const designPath = join(projectPath, WIZARD_DESIGN_FILENAME);
   mkdirSync(projectPath, { recursive: true });
-  writeFileSync(planPath, "# Plan\n\n- [ ] Setup\n");
+  writeFileSync(planPath, "# Interview digest\n\nUser wants a cooking blog.\n");
 
   await session.start("blog", "A cooking blog");
-  await waitFor(() => mockInstances.length >= 1 && mockInstances[0]!.prompts.length >= 1);
+  await waitFor(() => mockInstances.length >= 1 && mockInstances[0]?.prompts.length >= 1);
 
-  mockInstances[0]!.emitEvent({
+  mockInstances[0]?.emitEvent({
     type: "tool_execution_start",
     toolName: "herman_complete_planning",
     toolCallId: "tc-1",
     args: { projectPath, planPath },
   } as AgentEvent);
 
-  await waitFor(() => mockInstances.length >= 2 && mockInstances[1]!.prompts.length >= 1);
-  return { projectPath, planPath };
+  await waitFor(() => mockInstances.length >= 2 && mockInstances[1]?.prompts.length >= 1);
+
+  writeFileSync(planPath, MILESTONE_PLAN);
+  writeFileSync(designPath, DESIGN_DOC);
+  mockInstances[1]?.emitEvent({
+    type: "tool_execution_start",
+    toolName: "herman_complete_design",
+    toolCallId: "tc-2",
+    args: { projectPath, designPath, planPath },
+  } as AgentEvent);
+
+  await waitFor(() => mockInstances.length >= 3 && mockInstances[2]?.prompts.length >= 1);
+  return { projectPath, planPath, designPath };
 }
 
-function emitCompleteWizard(bridge: MockAgentBridge, args: Record<string, unknown>): void {
+/** Coding/QA advancement is driven by the host gate, not tool_execution_start. */
+function getCodingBridge(): MockAgentBridge {
+  const bridge = mockInstances[2];
+  if (!bridge) throw new Error("test precondition: expected coding bridge");
+  return bridge;
+}
+
+function emitGateRequest(
+  bridge: MockAgentBridge,
+  args: { projectPath: string; summary?: string },
+): void {
   bridge.emitEvent({
-    type: "tool_execution_start",
-    toolName: "herman_complete_wizard",
-    toolCallId: "tc-complete",
-    args,
+    type: "extension_ui_request",
+    id: `gate-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    method: "editor",
+    prefill: JSON.stringify({
+      __herman_gate__: true,
+      version: 1,
+      phase: "coding",
+      projectPath: args.projectPath,
+      ...(args.summary ? { summary: args.summary } : {}),
+    }),
   } as AgentEvent);
 }
 
@@ -193,46 +220,49 @@ describe("WizardSession project path validation", () => {
     const { WizardSession } = await import("../../src/bun/wizard-session.js");
 
     const events: EmittedEvent[] = [];
-    const session = new WizardSession({ emit: (event) => events.push(event as EmittedEvent) });
+    const session = new WizardSession({
+      emit: (event) => events.push(event as EmittedEvent),
+      deps: fakeDeps(),
+    });
     const { projectPath } = await advanceToCoding(session, "path-blog");
 
     // The coding agent reports a corrupted path (leading "/" dropped) — the
-    // exact failure from production logs that broke the QA phase spawn.
-    emitCompleteWizard(mockInstances[1]!, {
+    // exact failure from production logs that broke the next-phase spawn.
+    emitGateRequest(getCodingBridge(), {
       projectPath: `.${projectPath}`,
       summary: "done",
     });
 
-    // QA phase must start in the ORIGINAL validated project folder.
-    await waitFor(() => mockInstances.length >= 3 && mockInstances[2]!.prompts.length >= 1);
-    expect(mockInstances[2]!.folderPath).toBe(projectPath);
+    // Next coding milestone must start in the ORIGINAL validated project folder.
+    await waitFor(() => mockInstances.length >= 4 && mockInstances[3]?.prompts.length >= 1);
+    expect(mockInstances[3]?.folderPath).toBe(projectPath);
   });
 
   it("ignores a nonexistent projectPath from herman_complete_wizard", async () => {
     const { WizardSession } = await import("../../src/bun/wizard-session.js");
 
-    const session = new WizardSession({ emit: () => {} });
+    const session = new WizardSession({ emit: () => {}, deps: fakeDeps() });
     const { projectPath } = await advanceToCoding(session, "ghost-blog");
 
-    emitCompleteWizard(mockInstances[1]!, {
+    emitGateRequest(getCodingBridge(), {
       projectPath: join(tempDir, "does-not-exist"),
       summary: "done",
     });
 
-    await waitFor(() => mockInstances.length >= 3 && mockInstances[2]!.prompts.length >= 1);
-    expect(mockInstances[2]!.folderPath).toBe(projectPath);
+    await waitFor(() => mockInstances.length >= 4 && mockInstances[3]?.prompts.length >= 1);
+    expect(mockInstances[3]?.folderPath).toBe(projectPath);
   });
 
   it("accepts the projectPath when it matches the validated one", async () => {
     const { WizardSession } = await import("../../src/bun/wizard-session.js");
 
-    const session = new WizardSession({ emit: () => {} });
+    const session = new WizardSession({ emit: () => {}, deps: fakeDeps() });
     const { projectPath } = await advanceToCoding(session, "match-blog");
 
-    emitCompleteWizard(mockInstances[1]!, { projectPath, summary: "done" });
+    emitGateRequest(getCodingBridge(), { projectPath, summary: "done" });
 
-    await waitFor(() => mockInstances.length >= 3 && mockInstances[2]!.prompts.length >= 1);
-    expect(mockInstances[2]!.folderPath).toBe(projectPath);
+    await waitFor(() => mockInstances.length >= 4 && mockInstances[3]?.prompts.length >= 1);
+    expect(mockInstances[3]?.folderPath).toBe(projectPath);
     expect(session.getSnapshot().projectPath).toBe(projectPath);
   });
 });
@@ -242,14 +272,17 @@ describe("WizardSession deterministic spawn failures", () => {
     const { WizardSession } = await import("../../src/bun/wizard-session.js");
 
     const events: EmittedEvent[] = [];
-    const session = new WizardSession({ emit: (event) => events.push(event as EmittedEvent) });
+    const session = new WizardSession({
+      emit: (event) => events.push(event as EmittedEvent),
+      deps: fakeDeps(),
+    });
     const { projectPath } = await advanceToCoding(session, "vanished-blog");
 
     // Delete the project folder between phases, then complete coding with the
     // (previously valid) path. The phase guard must fail fast — no retries.
     rmSync(projectPath, { recursive: true, force: true });
     const instancesBefore = mockInstances.length;
-    emitCompleteWizard(mockInstances[1]!, { projectPath, summary: "done" });
+    emitGateRequest(getCodingBridge(), { projectPath, summary: "done" });
 
     await waitFor(() => events.some((e) => e.type === "wizard_end" && !!e.error));
     const end = events.find((e) => e.type === "wizard_end");
@@ -265,7 +298,10 @@ describe("WizardSession deterministic spawn failures", () => {
     const { WizardSession } = await import("../../src/bun/wizard-session.js");
 
     const events: EmittedEvent[] = [];
-    const session = new WizardSession({ emit: (event) => events.push(event as EmittedEvent) });
+    const session = new WizardSession({
+      emit: (event) => events.push(event as EmittedEvent),
+      deps: fakeDeps(),
+    });
     const { projectPath } = await advanceToCoding(session, "nobin-blog");
 
     nextStartError = new AgentSpawnError(
@@ -274,7 +310,7 @@ describe("WizardSession deterministic spawn failures", () => {
       { binaryPath: join(tempDir, "herman-agent"), cwd: projectPath },
     );
     const instancesBefore = mockInstances.length;
-    emitCompleteWizard(mockInstances[1]!, { projectPath, summary: "done" });
+    emitGateRequest(getCodingBridge(), { projectPath, summary: "done" });
 
     await waitFor(() => events.some((e) => e.type === "wizard_end" && !!e.error));
     const end = events.find((e) => e.type === "wizard_end");
@@ -290,7 +326,10 @@ describe("WizardSession deterministic spawn failures", () => {
     const { WizardSession } = await import("../../src/bun/wizard-session.js");
 
     const events: EmittedEvent[] = [];
-    const session = new WizardSession({ emit: (event) => events.push(event as EmittedEvent) });
+    const session = new WizardSession({
+      emit: (event) => events.push(event as EmittedEvent),
+      deps: fakeDeps(),
+    });
     const { projectPath } = await advanceToCoding(session, "transient-blog");
 
     // "spawn-failed" (e.g. a resource limit) stays on the retry path; the
@@ -300,14 +339,14 @@ describe("WizardSession deterministic spawn failures", () => {
       "spawn-failed",
       { binaryPath: join(tempDir, "herman-agent"), cwd: projectPath },
     );
-    emitCompleteWizard(mockInstances[1]!, { projectPath, summary: "done" });
+    emitGateRequest(getCodingBridge(), { projectPath, summary: "done" });
 
-    // Attempt 1 throws (consuming mockInstances[2]); the retry starts a fresh
-    // bridge (mockInstances[3]) which succeeds.
+    // Attempt 1 throws (consuming mockInstances[3]); the retry starts a fresh
+    // bridge (mockInstances[4]) which succeeds.
     await waitFor(() => events.some((e) => e.type === "wizard_retrying"));
-    await waitFor(() => mockInstances.length >= 4 && mockInstances[3]!.prompts.length >= 1, {
+    await waitFor(() => mockInstances.length >= 5 && mockInstances[4]?.prompts.length >= 1, {
       timeoutMs: 8_000,
     });
-    expect(mockInstances[3]!.folderPath).toBe(projectPath);
+    expect(mockInstances[4]?.folderPath).toBe(projectPath);
   }, 15_000);
 });

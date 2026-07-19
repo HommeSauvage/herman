@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { unlink, mkdir } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { getLogger } from "@logtape/logtape";
 
@@ -8,7 +8,7 @@ import { writeFileAtomically } from "./fs-utils.js";
 
 const logger = getLogger(["herman-desktop", "wizard-checkpoint"]);
 
-export type WizardCheckpointPhase = "planning" | "coding" | "qa" | "docs";
+export type WizardCheckpointPhase = "planning" | "design" | "coding" | "qa" | "docs";
 
 /** Disk snapshot of an incomplete wizard so cold start / crash can offer Continue. */
 export type WizardCheckpoint = {
@@ -19,10 +19,14 @@ export type WizardCheckpoint = {
   phase: WizardCheckpointPhase;
   projectPath?: string;
   planPath?: string;
+  designPath?: string;
   codingSummary?: string;
   capturedPiSessionId?: string;
   /** Goal objective text (without `/goal ` prefix) for resilience verification. */
   phaseGoal?: string;
+  milestoneIndex?: number;
+  milestoneSummaries?: string[];
+  gateWarnings?: string[];
   lastError?: string;
   /** Last progress lines for the recovery UI. */
   progressLines?: string[];
@@ -72,7 +76,7 @@ export async function clearWizardCheckpoint(): Promise<void> {
 
 /**
  * A checkpoint is cold-resumable when we have a pi session id, and for
- * coding/QA the project directory still exists.
+ * design/coding/QA/docs the project directory still exists.
  * Mid-planning without a pi session (or stuck on an unanswered ask) is not
  * cold-resumed — those checkpoints should be discarded.
  */
@@ -83,7 +87,12 @@ export function evaluateWizardCheckpoint(checkpoint: WizardCheckpoint): {
   if (!checkpoint.capturedPiSessionId) {
     return { resumable: false, reason: "Missing pi session id" };
   }
-  if (checkpoint.phase === "coding" || checkpoint.phase === "qa" || checkpoint.phase === "docs") {
+  if (
+    checkpoint.phase === "design" ||
+    checkpoint.phase === "coding" ||
+    checkpoint.phase === "qa" ||
+    checkpoint.phase === "docs"
+  ) {
     if (!checkpoint.projectPath) {
       return { resumable: false, reason: "Missing project path" };
     }
@@ -101,7 +110,11 @@ function isWizardCheckpoint(value: unknown): value is WizardCheckpoint {
     typeof c.id === "string" &&
     typeof c.templateId === "string" &&
     typeof c.description === "string" &&
-    (c.phase === "planning" || c.phase === "coding" || c.phase === "qa" || c.phase === "docs") &&
+    (c.phase === "planning" ||
+      c.phase === "design" ||
+      c.phase === "coding" ||
+      c.phase === "qa" ||
+      c.phase === "docs") &&
     typeof c.updatedAt === "number"
   );
 }

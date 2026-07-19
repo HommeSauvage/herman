@@ -4,11 +4,7 @@ import { join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import {
-  cleanupAllTestTempDirs,
-  createTestTempDir,
-  removeTestTempDir,
-} from "./temp-dir.js";
+import { cleanupAllTestTempDirs, createTestTempDir, removeTestTempDir } from "./temp-dir.js";
 
 describe("temp-dir helpers", () => {
   afterAll(() => {

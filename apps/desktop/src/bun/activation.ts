@@ -3,8 +3,8 @@ import { createAuthClient } from "better-auth/client";
 import { deviceAuthorizationClient } from "better-auth/client/plugins";
 
 import { config } from "../env.js";
-import { exchangeDeviceToken } from "./herman-api.js";
 import type { DeviceCodeResponse, DeviceTokenResponse } from "../shared/rpc.js";
+import { exchangeDeviceToken } from "./herman-api.js";
 
 const logger = getLogger(["herman-desktop", "activation"]);
 
@@ -38,9 +38,7 @@ export async function startDeviceActivation(): Promise<DeviceCodeResponse> {
   };
 }
 
-export async function checkDeviceActivation(
-  deviceCode: string,
-): Promise<DeviceTokenResponse> {
+export async function checkDeviceActivation(deviceCode: string): Promise<DeviceTokenResponse> {
   logger.debug("Polling device token endpoint");
   const { data, error } = await authClient.device.token({
     grant_type: DEVICE_GRANT_TYPE,

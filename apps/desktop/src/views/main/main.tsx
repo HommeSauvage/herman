@@ -1,5 +1,5 @@
-import { getLogger } from "@logtape/logtape";
 import { TooltipProvider } from "@herman/ui/components/tooltip";
+import { getLogger } from "@logtape/logtape";
 import React, { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 

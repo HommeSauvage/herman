@@ -1,16 +1,10 @@
-import { mock } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
 import type { AgentEvent } from "../../src/shared/agent-protocol.js";
-import type { ResolvedManifest } from "../../src/shared/herman-manifest.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
+import { DEFAULT_FAKE_MANIFEST, fakeWizardDeps } from "../helpers/wizard-fake-deps.js";
 
 let tempDir: string;
 let mockInstances: MockAgentBridge[] = [];
@@ -90,41 +84,21 @@ class MockAgentBridge {
   }
 }
 
-const mockManifest: ResolvedManifest = {
-  id: "blog",
-  frontmatter: {
-    version: 1,
-    name: "Blog",
-    description: "A personal blog",
-    source: { repo: "https://github.com/example/blog.git", ref: "main" },
-    setup_goal: "Homepage loads",
-  },
-  sections: {
-    setup: "Install deps.",
-    questions: "- Topics?",
-    guidance: "Keep it simple.",
-  },
-  serialized: "",
-};
+const fakeDeps = () =>
+  fakeWizardDeps({
+    createBridge: (...args: ConstructorParameters<typeof MockAgentBridge>) =>
+      new MockAgentBridge(...args),
+    manifest: DEFAULT_FAKE_MANIFEST,
+  });
 
 beforeEach(() => {
   tempDir = createTestTempDir("herman-wizard-resume-");
   mockInstances = [];
   setHermantAppDir(tempDir);
-  mock.module("../../src/bun/agent-bridge.js", () => ({
-    AgentBridge: MockAgentBridge,
-  }));
-  mock.module("../../src/bun/template-registry.js", () => ({
-    resolveTemplateManifest: async () => mockManifest,
-  }));
-  mock.module("../../src/bun/agent-config-sync.js", () => ({
-    resolveWizardExtensionPath: () => [],
-  }));
 });
 
 afterEach(() => {
   clearHermantAppDir(tempDir);
-  mock.restore();
 });
 
 function waitFor(
@@ -148,28 +122,68 @@ function waitFor(
   });
 }
 
+const MILESTONE_PLAN = `# Plan
+
+## Milestone 1: Foundation
+- [ ] Setup project
+Acceptance: App boots
+
+## Milestone 2: Polish
+- [ ] Style the home page
+Acceptance: Home matches design
+`;
+
+const DESIGN_DOC = `# Design
+
+## Design tokens
+- colors: warm
+
+## Layout system
+- single column
+
+## Page inventory
+- \`/\` — Home: landing page
+`;
+
 async function advanceToCoding(
   session: { start: (templateId: string, description: string) => Promise<void> },
   projectName: string,
-): Promise<{ projectPath: string; planPath: string }> {
-  const { WIZARD_PLAN_FILENAME } = await import("../../src/bun/wizard-session.js");
+  opts: { alreadyStarted?: boolean } = {},
+): Promise<{ projectPath: string; planPath: string; designPath: string }> {
+  const { WIZARD_PLAN_FILENAME, WIZARD_DESIGN_FILENAME } = await import(
+    "../../src/bun/wizard-session.js"
+  );
   const projectPath = join(tempDir, projectName);
   const planPath = join(projectPath, WIZARD_PLAN_FILENAME);
+  const designPath = join(projectPath, WIZARD_DESIGN_FILENAME);
   mkdirSync(projectPath, { recursive: true });
-  writeFileSync(planPath, "# Plan\n\n- [ ] Setup\n");
+  writeFileSync(planPath, "# Interview digest\n\nUser wants a cooking blog.\n");
 
-  await session.start("blog", "A cooking blog");
-  await waitFor(() => mockInstances.length >= 1 && mockInstances[0]!.prompts.length >= 1);
+  if (!opts.alreadyStarted) {
+    await session.start("blog", "A cooking blog");
+  }
+  await waitFor(() => mockInstances.length >= 1 && mockInstances[0]?.prompts.length >= 1);
 
-  mockInstances[0]!.emitEvent({
+  mockInstances[0]?.emitEvent({
     type: "tool_execution_start",
     toolName: "herman_complete_planning",
     toolCallId: "tc-1",
     args: { projectPath, planPath },
   } as AgentEvent);
 
-  await waitFor(() => mockInstances.length >= 2 && mockInstances[1]!.prompts.length >= 1);
-  return { projectPath, planPath };
+  await waitFor(() => mockInstances.length >= 2 && mockInstances[1]?.prompts.length >= 1);
+
+  writeFileSync(planPath, MILESTONE_PLAN);
+  writeFileSync(designPath, DESIGN_DOC);
+  mockInstances[1]?.emitEvent({
+    type: "tool_execution_start",
+    toolName: "herman_complete_design",
+    toolCallId: "tc-2",
+    args: { projectPath, designPath, planPath },
+  } as AgentEvent);
+
+  await waitFor(() => mockInstances.length >= 3 && mockInstances[2]?.prompts.length >= 1);
+  return { projectPath, planPath, designPath };
 }
 
 describe("WizardSession.resume", () => {
@@ -178,18 +192,22 @@ describe("WizardSession.resume", () => {
       "../../src/bun/wizard-session.js"
     );
 
-    const session = new WizardSession({ emit: () => {} });
+    const session = new WizardSession({ emit: () => {}, deps: fakeDeps() });
     await advanceToCoding(session, "my-blog");
 
-    const codingBridge = mockInstances[1]!;
+    const codingBridge = mockInstances[2];
+    if (!codingBridge) throw new Error("test precondition: expected bridge at index 2");
     expect(codingBridge.prompts[0]).toMatch(/^\/goal /);
     expect(codingBridge.prompts[0]).toContain("Homepage loads");
 
     const promptsBeforeResume = mockInstances.reduce((n, b) => n + b.prompts.length, 0);
     await session.resume();
-    await waitFor(() => mockInstances.reduce((n, b) => n + b.prompts.length, 0) > promptsBeforeResume);
+    await waitFor(
+      () => mockInstances.reduce((n, b) => n + b.prompts.length, 0) > promptsBeforeResume,
+    );
 
-    const lastBridge = mockInstances[mockInstances.length - 1]!;
+    const lastBridge = mockInstances[mockInstances.length - 1];
+    if (!lastBridge) throw new Error("test precondition: expected bridge");
     const lastPrompt = lastBridge.prompts[lastBridge.prompts.length - 1];
     expect(lastPrompt).toBe(WIZARD_RESUME_GOAL_PROMPT);
     expect(lastPrompt).not.toContain("Homepage loads");
@@ -199,7 +217,7 @@ describe("WizardSession.resume", () => {
   it("rejects resume after cancel", async () => {
     const { WizardSession } = await import("../../src/bun/wizard-session.js");
 
-    const session = new WizardSession({ emit: () => {} });
+    const session = new WizardSession({ emit: () => {}, deps: fakeDeps() });
     await session.start("blog", "A cooking blog");
     await waitFor(() => mockInstances.length >= 1);
 
@@ -213,31 +231,18 @@ describe("WizardSession.resume", () => {
       "../../src/bun/wizard-session.js"
     );
 
-    const manager = new WizardSessionManager(() => {});
+    const manager = new WizardSessionManager(() => {}, undefined, fakeDeps());
     const id = await manager.start("blog", "A cooking blog");
-
-    await waitFor(() => mockInstances.length >= 1 && mockInstances[0]!.prompts.length >= 1);
-
-    const { WIZARD_PLAN_FILENAME } = await import("../../src/bun/wizard-session.js");
-    const projectPath = join(tempDir, "mgr-blog");
-    const planPath = join(projectPath, WIZARD_PLAN_FILENAME);
-    mkdirSync(projectPath, { recursive: true });
-    writeFileSync(planPath, "# Plan\n\n- [ ] Setup\n");
-
-    mockInstances[0]!.emitEvent({
-      type: "tool_execution_start",
-      toolName: "herman_complete_planning",
-      toolCallId: "tc-1",
-      args: { projectPath, planPath },
-    } as AgentEvent);
-
-    await waitFor(() => mockInstances.length >= 2 && mockInstances[1]!.prompts.length >= 1);
+    const session = manager.get(id);
+    if (!session) throw new Error("test precondition: expected session");
+    await advanceToCoding(session, "mgr-blog", { alreadyStarted: true });
 
     const promptsBefore = mockInstances.reduce((n, b) => n + b.prompts.length, 0);
     await manager.resume(id);
     await waitFor(() => mockInstances.reduce((n, b) => n + b.prompts.length, 0) > promptsBefore);
 
-    const lastBridge = mockInstances[mockInstances.length - 1]!;
+    const lastBridge = mockInstances[mockInstances.length - 1];
+    if (!lastBridge) throw new Error("test precondition: expected bridge");
     expect(lastBridge.prompts[lastBridge.prompts.length - 1]).toBe(WIZARD_RESUME_GOAL_PROMPT);
   });
 
@@ -251,13 +256,14 @@ describe("WizardSession.resume", () => {
       emit: (event) => {
         events.push(event);
       },
+      deps: fakeDeps(),
     });
     await advanceToCoding(session, "failed-blog");
 
     // Simulate exhausted auto-retries ending the session (private end()).
-    (
-      session as unknown as { end: (error?: string) => void }
-    ).end("Setup failed after 20 attempts: Command prompt timed out after 30000ms");
+    (session as unknown as { end: (error?: string) => void }).end(
+      "Setup failed after 20 attempts: Command prompt timed out after 30000ms",
+    );
 
     expect(events.some((e) => e.type === "wizard_end" && e.error)).toBe(true);
 
@@ -265,27 +271,26 @@ describe("WizardSession.resume", () => {
     await session.resume();
     await waitFor(() => mockInstances.reduce((n, b) => n + b.prompts.length, 0) > promptsBefore);
 
-    const lastBridge = mockInstances[mockInstances.length - 1]!;
+    const lastBridge = mockInstances[mockInstances.length - 1];
+    if (!lastBridge) throw new Error("test precondition: expected bridge");
     expect(lastBridge.prompts[lastBridge.prompts.length - 1]).toBe(WIZARD_RESUME_GOAL_PROMPT);
   });
 
   it("throws when the manager has no matching session", async () => {
     const { WizardSessionManager } = await import("../../src/bun/wizard-session.js");
-    const manager = new WizardSessionManager(() => {});
+    const manager = new WizardSessionManager(() => {}, undefined, fakeDeps());
     await expect(manager.resume("wizard-missing")).rejects.toThrow(/not found/i);
   });
 
   it("fromCheckpoint + resume sends /goal resume with the captured pi session", async () => {
-    const {
-      WizardSession,
-      WIZARD_RESUME_GOAL_PROMPT,
-      WIZARD_PLAN_FILENAME,
-    } = await import("../../src/bun/wizard-session.js");
+    const { WizardSession, WIZARD_RESUME_GOAL_PROMPT, WIZARD_PLAN_FILENAME } = await import(
+      "../../src/bun/wizard-session.js"
+    );
 
     const projectPath = join(tempDir, "checkpoint-blog");
     const planPath = join(projectPath, WIZARD_PLAN_FILENAME);
     mkdirSync(projectPath, { recursive: true });
-    writeFileSync(planPath, "# Plan\n\n- [ ] Setup\n");
+    writeFileSync(planPath, MILESTONE_PLAN);
 
     const session = await WizardSession.fromCheckpoint(
       {
@@ -297,20 +302,22 @@ describe("WizardSession.resume", () => {
         planPath,
         capturedPiSessionId: "pi-from-disk",
         phaseGoal: "Homepage loads",
+        milestoneIndex: 0,
         progressLines: ["Writing: src/index.ts"],
         lastError: "Setup failed after 20 attempts",
         updatedAt: Date.now(),
       },
-      { emit: () => {} },
+      { emit: () => {}, deps: fakeDeps() },
     );
 
     expect(session.getSnapshot().finished).toBe(true);
     expect(session.getSnapshot().capturedPiSessionId).toBe("pi-from-disk");
 
     await session.resume();
-    await waitFor(() => mockInstances.length >= 1 && mockInstances[0]!.prompts.length >= 1);
+    await waitFor(() => mockInstances.length >= 1 && mockInstances[0]?.prompts.length >= 1);
 
-    const bridge = mockInstances[0]!;
+    const bridge = mockInstances[0];
+    if (!bridge) throw new Error("test precondition: expected bridge");
     expect(bridge.prompts[0]).toBe(WIZARD_RESUME_GOAL_PROMPT);
     expect(bridge.lastStartOpts?.piSessionId).toBe("pi-from-disk");
   });
@@ -329,7 +336,7 @@ describe("WizardSession.resume", () => {
       updatedAt: Date.now(),
     });
 
-    const manager = new WizardSessionManager(() => {});
+    const manager = new WizardSessionManager(() => {}, undefined, fakeDeps());
     const recovery = await manager.restoreFromDisk();
     expect(recovery).not.toBeNull();
     expect(recovery?.resumable).toBe(false);
@@ -341,12 +348,13 @@ describe("WizardSession.resume", () => {
 
   it("restoreFromDisk rehydrates a resumable coding checkpoint as paused", async () => {
     const { saveWizardCheckpoint } = await import("../../src/bun/wizard-checkpoint.js");
-    const { WizardSessionManager, WIZARD_RESUME_GOAL_PROMPT, WIZARD_PLAN_FILENAME } =
-      await import("../../src/bun/wizard-session.js");
+    const { WizardSessionManager, WIZARD_RESUME_GOAL_PROMPT, WIZARD_PLAN_FILENAME } = await import(
+      "../../src/bun/wizard-session.js"
+    );
 
     const projectPath = join(tempDir, "restore-ok");
     mkdirSync(projectPath, { recursive: true });
-    writeFileSync(join(projectPath, WIZARD_PLAN_FILENAME), "- [ ] x\n");
+    writeFileSync(join(projectPath, WIZARD_PLAN_FILENAME), MILESTONE_PLAN);
 
     await saveWizardCheckpoint({
       id: "wizard-ok",
@@ -357,11 +365,12 @@ describe("WizardSession.resume", () => {
       planPath: join(projectPath, WIZARD_PLAN_FILENAME),
       capturedPiSessionId: "pi-ok",
       phaseGoal: "Homepage loads",
+      milestoneIndex: 0,
       updatedAt: Date.now(),
       lastError: "timed out",
     });
 
-    const manager = new WizardSessionManager(() => {});
+    const manager = new WizardSessionManager(() => {}, undefined, fakeDeps());
     const recovery = await manager.restoreFromDisk();
     expect(recovery?.resumable).toBe(true);
     expect(recovery?.live).toBe(false);
@@ -375,7 +384,7 @@ describe("WizardSession.resume", () => {
     const { loadWizardCheckpoint } = await import("../../src/bun/wizard-checkpoint.js");
     const { WizardSession } = await import("../../src/bun/wizard-session.js");
 
-    const session = new WizardSession({ emit: () => {} });
+    const session = new WizardSession({ emit: () => {}, deps: fakeDeps() });
     await session.start("blog", "A cooking blog");
     await waitFor(() => mockInstances.length >= 1);
 
@@ -410,7 +419,7 @@ describe("WizardSession.resume", () => {
       lastError: "boom",
     });
 
-    const manager = new WizardSessionManager(() => {});
+    const manager = new WizardSessionManager(() => {}, undefined, fakeDeps());
     await manager.restoreFromDisk();
     const liveId = await manager.start("blog", "A new blog");
     await waitFor(() => mockInstances.some((b) => b.started));

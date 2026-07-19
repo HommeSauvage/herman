@@ -1,11 +1,10 @@
-import { getLogger } from "@logtape/logtape";
 import { dirname } from "node:path";
-
+import { getLogger } from "@logtape/logtape";
+import { logStorageError } from "../logging-shared.js";
 import type { Session } from "../shared/rpc.js";
 import type { TabId } from "../shared/tab-utils.js";
 import { statePath } from "./app-paths.js";
 import { ensureDir } from "./fs-utils.js";
-import { logStorageError } from "../logging-shared.js";
 
 const logger = getLogger(["herman-desktop", "storage"]);
 

@@ -1,9 +1,8 @@
-import type { AdPlacement, AgentCommand, AgentEvent } from "../../../shared/agent-protocol.js";
-import type { AgentStatus, DesktopRpc, OutgoingMessages } from "../../../shared/rpc.js";
 import { getLogger } from "@logtape/logtape";
+import type { DesktopRpc, OutgoingMessages } from "../../../shared/rpc.js";
 import {
-  PendingMessageListenerRegistry,
   type MessageListenerFacade,
+  PendingMessageListenerRegistry,
 } from "./pending-message-listeners.js";
 
 const logger = getLogger(["herman-desktop", "view", "desktop-rpc"]);
@@ -21,7 +20,7 @@ async function loadImpl(): Promise<DesktopRpc> {
     const { desktopRpc } = await import("./browser-rpc.js");
     impl = desktopRpc;
   }
-  return impl!;
+  return impl as DesktopRpc;
 }
 
 const listenerRegistry = new PendingMessageListenerRegistry(async () => {

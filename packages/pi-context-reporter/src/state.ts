@@ -109,9 +109,12 @@ export class ContextState {
       if (uInput === 0 && uOutput === 0) continue;
       input += uInput;
       output += uOutput;
-      cacheRead += typeof u.cacheRead === "number" && Number.isFinite(u.cacheRead) ? u.cacheRead : 0;
-      cacheWrite += typeof u.cacheWrite === "number" && Number.isFinite(u.cacheWrite) ? u.cacheWrite : 0;
-      reasoning += typeof u.reasoning === "number" && Number.isFinite(u.reasoning) ? u.reasoning : 0;
+      cacheRead +=
+        typeof u.cacheRead === "number" && Number.isFinite(u.cacheRead) ? u.cacheRead : 0;
+      cacheWrite +=
+        typeof u.cacheWrite === "number" && Number.isFinite(u.cacheWrite) ? u.cacheWrite : 0;
+      reasoning +=
+        typeof u.reasoning === "number" && Number.isFinite(u.reasoning) ? u.reasoning : 0;
       const costRaw = u.cost;
       if (costRaw && typeof costRaw === "object") {
         const c = costRaw as Record<string, number>;
@@ -224,14 +227,10 @@ export class ContextState {
     // Add the in-flight turn's streaming output to the anchor so the
     // gauge reflects "what the next LLM call will see" during streaming.
     const tokens =
-      this.contextTokens === null
-        ? null
-        : this.contextTokens + (this.currentTurn?.output ?? 0);
+      this.contextTokens === null ? null : this.contextTokens + (this.currentTurn?.output ?? 0);
 
     const percent =
-      tokens === null || this.contextWindow <= 0
-        ? null
-        : (tokens / this.contextWindow) * 100;
+      tokens === null || this.contextWindow <= 0 ? null : (tokens / this.contextWindow) * 100;
 
     const context: ContextReportSnapshot = {
       tokens,

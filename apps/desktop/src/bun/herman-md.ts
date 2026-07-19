@@ -5,9 +5,9 @@ import type {
   ParsedHermanManifest,
 } from "../shared/herman-manifest.js";
 import {
+  HermanFrontmatterSchema,
   isV1Manifest,
   migrateV1Manifest,
-  HermanFrontmatterSchema,
 } from "../shared/herman-manifest.js";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
@@ -53,9 +53,7 @@ function validateFrontmatter(raw: unknown, id: string): HermanFrontmatter {
   if (!result.success) {
     const first = result.error.issues[0];
     const path = first.path.join(".");
-    throw new Error(
-      `HERMAN.md in ${id}: ${first.message}${path ? ` (at ${path})` : ""}`,
-    );
+    throw new Error(`HERMAN.md in ${id}: ${first.message}${path ? ` (at ${path})` : ""}`);
   }
   return result.data;
 }
@@ -64,9 +62,7 @@ function parseSections(body: string): HermanSections {
   const sections: HermanSections = {};
   const headings: { name: string; start: number; bodyStart: number }[] = [];
 
-  SECTION_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = SECTION_RE.exec(body)) != null) {
+  for (const match of body.matchAll(SECTION_RE)) {
     const name = (match[1] ?? "").trim().toLowerCase();
     headings.push({
       name,
@@ -76,8 +72,9 @@ function parseSections(body: string): HermanSections {
   }
 
   for (let i = 0; i < headings.length; i++) {
-    const heading = headings[i]!;
-    const end = i + 1 < headings.length ? headings[i + 1]!.start : body.length;
+    const heading = headings[i];
+    if (!heading) continue;
+    const end = i + 1 < headings.length ? headings[i + 1]?.start : body.length;
     const content = body.slice(heading.bodyStart, end).trim();
     if (!KNOWN_SECTIONS.has(heading.name)) continue;
     if (heading.name === "setup") sections.setup = content;
@@ -158,7 +155,8 @@ export function dumpFrontmatterYaml(fm: Omit<HermanFrontmatter, "extends">): str
       if (keys.length > 0) {
         lines.push("      vars:");
         for (const key of keys) {
-          const v = vars[key]!;
+          const v = vars[key];
+          if (v === undefined) continue;
           lines.push(`        ${yamlString(key)}:`);
           dumpEnvVarValue(lines, v, "          ");
         }
@@ -190,6 +188,16 @@ export function dumpFrontmatterYaml(fm: Omit<HermanFrontmatter, "extends">): str
       if (s.primary) lines.push(`    primary: true`);
       dumpStringOrList(lines, "exportUrlAs", s.exportUrlAs, "    ");
       dumpStringOrList(lines, "portEnv", s.portEnv, "    ");
+    }
+  }
+
+  if (fm.checks?.length) {
+    lines.push("checks:");
+    for (const c of fm.checks) {
+      lines.push(`  - id: ${yamlString(c.id)}`);
+      lines.push(`    label: ${yamlString(c.label)}`);
+      lines.push(`    run: ${yamlString(c.run)}`);
+      if (c.timeout != null) lines.push(`    timeout: ${c.timeout}`);
     }
   }
 
@@ -238,8 +246,8 @@ export function yamlString(value: string): string {
 
 /**
  * Merge frontmatter: base first, child wins on scalars; `requirements` merge
- * by id. Ordered arrays (`setup`, `env.files`, `servers`) are REPLACED
- * wholesale by the child when it declares them — concatenation is an
+ * by id. Ordered arrays (`setup`, `env.files`, `servers`, `checks`) are
+ * REPLACED wholesale by the child when it declares them — concatenation is an
  * ordering trap for setup recipes.
  */
 export function mergeFrontmatter(
@@ -288,6 +296,7 @@ export function mergeFrontmatter(
   if (child.env ?? base.env) merged.env = child.env ?? base.env;
   if (child.setup ?? base.setup) merged.setup = child.setup ?? base.setup;
   if (child.servers ?? base.servers) merged.servers = child.servers ?? base.servers;
+  if (child.checks ?? base.checks) merged.checks = child.checks ?? base.checks;
 
   return merged;
 }

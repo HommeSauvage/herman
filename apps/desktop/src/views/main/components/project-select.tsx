@@ -1,7 +1,7 @@
 import { cn } from "@herman/ui/lib/utils";
-import { FolderPlus, ChevronDown, Search, Check } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
-import { useRef, useState, useEffect, useCallback } from "react";
+import { Check, ChevronDown, FolderPlus, Search } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getProjectName } from "../../../shared/tab-utils.js";
 import { selectTabProject, setTabFolder } from "../lib/agent-actions.js";
@@ -103,6 +103,7 @@ export function ProjectSelect({ tabId }: ProjectSelectProps) {
   return (
     <div className="relative">
       <button
+        type="button"
         ref={triggerRef}
         onClick={() => setOpen((prev) => !prev)}
         className="text-dim hover:text-text flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.04] px-3 py-1.5 text-xs transition hover:border-white/[0.12] active:scale-[0.98]"
@@ -159,6 +160,7 @@ export function ProjectSelect({ tabId }: ProjectSelectProps) {
               ) : (
                 filtered.map((project, index) => (
                   <button
+                    type="button"
                     key={project}
                     onClick={() => handleSelect(project)}
                     onMouseEnter={() => setActiveIndex(index)}
@@ -181,6 +183,7 @@ export function ProjectSelect({ tabId }: ProjectSelectProps) {
 
             <div className="border-t border-white/[0.06] p-1.5">
               <button
+                type="button"
                 onClick={handleOpenFolder}
                 className="text-dim hover:text-text flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition hover:bg-white/[0.04]"
               >

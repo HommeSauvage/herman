@@ -2,17 +2,21 @@ import {
   type HostBridgePreviewLogs,
   type HostBridgePreviewState,
   type HostBridgeSessionInfo,
-  type PreviewConsoleEntry,
-  type PreviewLogsQuery,
   PREVIEW_LOGS_DEFAULT_CONTEXT,
   PREVIEW_LOGS_DEFAULT_MAX_ENTRIES,
   PREVIEW_LOGS_MAX_CONTEXT,
   PREVIEW_LOGS_MAX_ENTRIES,
   PREVIEW_TOOL_TEXT_MAX_CHARS,
+  type PreviewConsoleEntry,
+  type PreviewLogsQuery,
   RECENT_ERRORS_WINDOW_MS,
 } from "@herman/rpc/host-bridge";
 
-import type { PreviewFleetSnapshot, PreviewServerLogLine } from "../../shared/preview.js";
+import type {
+  PreviewFleetSnapshot,
+  PreviewScope,
+  PreviewServerLogLine,
+} from "../../shared/preview.js";
 import { MAX_LOG_LINE_CHARS, tabScope } from "../../shared/preview.js";
 import type { SessionWorktree } from "../../shared/rpc.js";
 import { HostBridgeError } from "../host-bridge/server.js";
@@ -22,6 +26,7 @@ import { RingBuffer } from "./ring-buffer.js";
 
 export type { PreviewServerLogLine };
 export { MAX_LOG_LINE_CHARS };
+
 const SERVER_RING_CAPACITY = 500;
 const SERVER_RING_MAP_CAP = 20;
 const CONSOLE_RING_CAPACITY = 500;
@@ -32,21 +37,69 @@ export type TabSnapshot = {
   worktree?: SessionWorktree;
 };
 
+/** Resolve a tab/wizard id to its preview scope + project snapshot. */
+export type ContextResolution = {
+  /** undefined → tab_not_found for logs, "no project" for info */
+  snapshot?: TabSnapshot;
+  scope: PreviewScope;
+};
+
 export type PreviewContextDeps = {
-  getTab: (tabId: string) => TabSnapshot | undefined;
+  resolve: (id: string) => ContextResolution;
   getMode: () => "rookie" | "normal" | undefined;
   /** Fleet status by owning scope (`tab:<id>` / `folder:<path>` / `wizard:<id>`). */
-  getFleetStatus: (scope: string) => PreviewFleetSnapshot;
+  getFleetStatus: (scope: PreviewScope) => PreviewFleetSnapshot;
   now?: () => number;
 };
+
+/**
+ * Back-compat adapter for callers that still provide getTab.
+ * Prefer `resolve` in new code.
+ */
+export function resolveFromGetTab(
+  getTab: (tabId: string) => TabSnapshot | undefined,
+): (id: string) => ContextResolution {
+  return (id) => {
+    const snapshot = getTab(id);
+    return {
+      ...(snapshot ? { snapshot } : {}),
+      scope: tabScope(id),
+    };
+  };
+}
 
 export class PreviewContextService {
   private readonly serverRings = new Map<string, RingBuffer<PreviewServerLogLine>>();
   private readonly consoleRings = new Map<string, RingBuffer<PreviewConsoleEntry>>();
   private readonly navigationUrls = new Map<string, string>();
   private readonly rendererDropped = new Map<string, number>();
+  private readonly resolve: (id: string) => ContextResolution;
 
-  constructor(private readonly deps: PreviewContextDeps) {}
+  constructor(
+    deps:
+      | PreviewContextDeps
+      | {
+          getTab: (tabId: string) => TabSnapshot | undefined;
+          getMode: () => "rookie" | "normal" | undefined;
+          getFleetStatus: (scope: PreviewScope) => PreviewFleetSnapshot;
+          now?: () => number;
+        },
+  ) {
+    if ("resolve" in deps) {
+      this.resolve = deps.resolve;
+      this.deps = deps;
+    } else {
+      this.resolve = resolveFromGetTab(deps.getTab);
+      this.deps = {
+        resolve: this.resolve,
+        getMode: deps.getMode,
+        getFleetStatus: deps.getFleetStatus,
+        now: deps.now,
+      };
+    }
+  }
+
+  private readonly deps: PreviewContextDeps;
 
   // ── Feeds ──
 
@@ -101,12 +154,23 @@ export class PreviewContextService {
     this.rendererDropped.delete(tabId);
   }
 
+  /** Expose server log tail for wizard-verify cold-boot failure reports. */
+  getServerLogTail(scope: PreviewScope, serverId: string, maxLines: number): string {
+    const ring = this.serverRings.get(serverRingKey(scope, serverId));
+    if (!ring) return "";
+    return ring
+      .items()
+      .slice(-maxLines)
+      .map((l) => `[${l.source}] ${l.line}`)
+      .join("\n");
+  }
+
   // ── Queries ──
 
   getSessionInfo(tabId: string): HostBridgeSessionInfo {
-    const tab = this.deps.getTab(tabId);
+    const { snapshot: tab, scope } = this.resolve(tabId);
     const folderPath = tab?.folderPath ?? "";
-    const preview = this.deps.getFleetStatus(tabScope(tabId));
+    const preview = this.deps.getFleetStatus(scope);
 
     const primary =
       preview.servers.find((s) => s.serverId === preview.primaryServerId) ??
@@ -156,7 +220,7 @@ export class PreviewContextService {
   }
 
   getPreviewState(tabId: string): HostBridgePreviewState {
-    const tab = this.deps.getTab(tabId);
+    const { snapshot: tab, scope } = this.resolve(tabId);
     const folderPath = tab?.folderPath ?? "";
     const available = Boolean(folderPath);
 
@@ -170,12 +234,11 @@ export class PreviewContextService {
       };
     }
 
-    const preview = this.deps.getFleetStatus(tabScope(tabId));
+    const preview = this.deps.getFleetStatus(scope);
     const now = this.deps.now?.() ?? Date.now();
     const windowStart = now - RECENT_ERRORS_WINDOW_MS;
-    const scope = tabScope(tabId);
 
-    // Count recent server errors across all servers in this tab's scope.
+    // Count recent server errors across all servers in this scope.
     let serverErrors = 0;
     for (const [key, ring] of this.serverRings) {
       if (!key.startsWith(`${scope}::`)) continue;
@@ -186,7 +249,7 @@ export class PreviewContextService {
       }
     }
 
-    // Count recent console errors for this tab.
+    // Count recent console errors for this id.
     let consoleErrors = 0;
     const consoleRing = this.consoleRings.get(tabId);
     if (consoleRing) {
@@ -202,9 +265,12 @@ export class PreviewContextService {
       preview.servers.find((s) => s.phase === "ready" && s.url) ??
       preview.servers[0];
 
-    const error = preview.phase === "failed"
-      ? (primary?.error ? primary.error.split("\n")[0] : undefined)
-      : undefined;
+    const error =
+      preview.phase === "failed"
+        ? primary?.error
+          ? primary.error.split("\n")[0]
+          : undefined
+        : undefined;
 
     return {
       version: 1,
@@ -227,33 +293,49 @@ export class PreviewContextService {
   }
 
   getPreviewLogs(tabId: string, query: PreviewLogsQuery): HostBridgePreviewLogs {
-    const tab = this.deps.getTab(tabId);
+    const { snapshot: tab, scope } = this.resolve(tabId);
     if (!tab) {
       throw new HostBridgeError(404, "tab_not_found", "Tab not found");
     }
 
     const folderPath = tab.folderPath ?? "";
-    const maxEntries = clamp(query.maxEntries ?? PREVIEW_LOGS_DEFAULT_MAX_ENTRIES, 1, PREVIEW_LOGS_MAX_ENTRIES);
-    const maxLinesBeforeAfter = clamp(query.maxLinesBeforeAfter ?? PREVIEW_LOGS_DEFAULT_CONTEXT, 0, PREVIEW_LOGS_MAX_CONTEXT);
+    const maxEntries = clamp(
+      query.maxEntries ?? PREVIEW_LOGS_DEFAULT_MAX_ENTRIES,
+      1,
+      PREVIEW_LOGS_MAX_ENTRIES,
+    );
+    const maxLinesBeforeAfter = clamp(
+      query.maxLinesBeforeAfter ?? PREVIEW_LOGS_DEFAULT_CONTEXT,
+      0,
+      PREVIEW_LOGS_MAX_CONTEXT,
+    );
 
     if (query.environment === "server") {
-      return this.getServerLogs(tabId, folderPath, query.serverId, maxEntries, maxLinesBeforeAfter);
+      return this.getServerLogs(
+        tabId,
+        scope,
+        folderPath,
+        query.serverId,
+        maxEntries,
+        maxLinesBeforeAfter,
+      );
     }
-    return this.getConsoleLogs(tabId, folderPath, maxEntries, maxLinesBeforeAfter);
+    return this.getConsoleLogs(tabId, scope, folderPath, maxEntries, maxLinesBeforeAfter);
   }
 
   private getServerLogs(
     tabId: string,
-    folderPath: string,
+    scope: PreviewScope,
+    _folderPath: string,
     serverId: string | undefined,
     maxEntries: number,
     maxLinesBeforeAfter: number,
   ): HostBridgePreviewLogs {
-    const preview = this.deps.getFleetStatus(tabScope(tabId));
+    const preview = this.deps.getFleetStatus(scope);
 
     // Resolve serverId.
     const resolvedId = serverId ?? preview.primaryServerId ?? "web";
-    const key = serverRingKey(tabScope(tabId), resolvedId);
+    const key = serverRingKey(scope, resolvedId);
     const ring = this.serverRings.get(key);
 
     if (!ring || ring.items().length === 0) {
@@ -273,7 +355,11 @@ export class PreviewContextService {
     }
 
     const rawLines = [...ring.items()];
-    const formatted = formatServerLogText(rawLines, { maxEntries, maxLinesBeforeAfter, maxChars: PREVIEW_TOOL_TEXT_MAX_CHARS });
+    const formatted = formatServerLogText(rawLines, {
+      maxEntries,
+      maxLinesBeforeAfter,
+      maxChars: PREVIEW_TOOL_TEXT_MAX_CHARS,
+    });
 
     const primary = preview.servers.find((s) => s.serverId === resolvedId);
     let text = formatted.text;
@@ -298,11 +384,12 @@ export class PreviewContextService {
 
   private getConsoleLogs(
     tabId: string,
-    folderPath: string,
+    scope: PreviewScope,
+    _folderPath: string,
     maxEntries: number,
     maxLinesBeforeAfter: number,
   ): HostBridgePreviewLogs {
-    const preview = this.deps.getFleetStatus(tabScope(tabId));
+    const preview = this.deps.getFleetStatus(scope);
 
     const ring = this.consoleRings.get(tabId);
     if (!ring || ring.items().length === 0) {

@@ -139,7 +139,7 @@ export async function retrieveKey(): Promise<string | undefined> {
 
   if (process.platform === "darwin") {
     const result = runSecurity(["find-generic-password", "-s", SERVICE, "-a", ACCOUNT, "-w"]);
-    if (!result || result.exitCode !== 0) return undefined;
+    if (result?.exitCode !== 0) return undefined;
     return result.stdout.toString().trim();
   }
 
@@ -150,13 +150,13 @@ export async function retrieveKey(): Promise<string | undefined> {
       $cred.Password
     `;
     const result = runPowershell(script);
-    if (!result || result.exitCode !== 0) return undefined;
+    if (result?.exitCode !== 0) return undefined;
     return result.stdout.toString().trim();
   }
 
   if (process.platform === "linux") {
     const result = runSecretTool(["lookup", "service", SERVICE, "account", ACCOUNT]);
-    if (!result || result.exitCode !== 0) return undefined;
+    if (result?.exitCode !== 0) return undefined;
     return result.stdout.toString().trim();
   }
 

@@ -84,9 +84,7 @@ export const MessageItem = memo(function MessageItem({
                 >
                   <RotateCcw size={13} />
                 </TooltipTrigger>
-                <TooltipContent side="top">
-                  Undo Herman&apos;s changes from here
-                </TooltipContent>
+                <TooltipContent side="top">Undo Herman&apos;s changes from here</TooltipContent>
               </Tooltip>
             )}
             <CopyButton text={message.content} />
@@ -116,11 +114,7 @@ export const MessageItem = memo(function MessageItem({
   return <AssistantMessage message={message} />;
 });
 
-function ThinkingMessage({
-  message,
-}: {
-  message: Extract<Message, { role: "thinking" }>;
-}) {
+function ThinkingMessage({ message }: { message: Extract<Message, { role: "thinking" }> }) {
   const isStreaming = !!message.isStreaming;
   const content = useStreamingTextThrottle(message.content, isStreaming);
 
@@ -205,9 +199,7 @@ function AssistantMessage({ message }: { message: Extract<Message, { role: "assi
       ) : (
         !message.errorMessage &&
         message.stopReason !== "error" &&
-        message.stopReason !== "aborted" && (
-          <span className="text-faint">…</span>
-        )
+        message.stopReason !== "aborted" && <span className="text-faint">…</span>
       )}
     </div>
   );

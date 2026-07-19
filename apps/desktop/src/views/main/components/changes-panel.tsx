@@ -1,5 +1,11 @@
-import { FileDiff as FileDiffIcon, FilePlus, FileMinus, RefreshCw, ChevronDown } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import {
+  ChevronDown,
+  FileDiff as FileDiffIcon,
+  FileMinus,
+  FilePlus,
+  RefreshCw,
+} from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -13,7 +19,7 @@ const EMPTY_DIFFS: readonly FileDiffType[] = Object.freeze([]);
 function fileDisplayInfo(path: string): { dir: string; name: string } {
   const lastSep = path.lastIndexOf("/");
   if (lastSep === -1) return { dir: "", name: path };
-  return { dir: path.slice(0, lastSep) + "/", name: path.slice(lastSep + 1) };
+  return { dir: `${path.slice(0, lastSep)}/`, name: path.slice(lastSep + 1) };
 }
 
 function statusIcon(status: FileDiffType["status"]) {
@@ -64,9 +70,7 @@ function FileDiffAccordion({ file }: { file: FileDiffType }) {
         />
         {statusIcon(file.status)}
         <span className="min-w-0 flex-1 truncate text-xs">
-          {info.dir && (
-            <span className="text-faint">{info.dir}</span>
-          )}
+          {info.dir && <span className="text-faint">{info.dir}</span>}
           <span className="text-text font-medium">{info.name}</span>
         </span>
         <span className="text-dim shrink-0 text-[10px] tabular-nums">
@@ -98,17 +102,16 @@ function FileDiffAccordion({ file }: { file: FileDiffType }) {
 }
 
 export function ChangesPanel() {
-  const { activeTabId, diffScope, diffFiles, diffLoading, setDiffScope, fetchDiff } =
-    useAgentStore(
-      useShallow((s) => ({
-        activeTabId: s.activeTabId,
-        diffScope: s.ui.diffScope,
-        diffFiles: s.activeTabId ? (s.ui.diffFiles[s.activeTabId] ?? EMPTY_DIFFS) : EMPTY_DIFFS,
-        diffLoading: s.activeTabId ? (s.ui.diffLoading[s.activeTabId] ?? false) : false,
-        setDiffScope: s.setDiffScope,
-        fetchDiff: s.fetchDiff,
-      })),
-    );
+  const { activeTabId, diffScope, diffFiles, diffLoading, setDiffScope, fetchDiff } = useAgentStore(
+    useShallow((s) => ({
+      activeTabId: s.activeTabId,
+      diffScope: s.ui.diffScope,
+      diffFiles: s.activeTabId ? (s.ui.diffFiles[s.activeTabId] ?? EMPTY_DIFFS) : EMPTY_DIFFS,
+      diffLoading: s.activeTabId ? (s.ui.diffLoading[s.activeTabId] ?? false) : false,
+      setDiffScope: s.setDiffScope,
+      fetchDiff: s.fetchDiff,
+    })),
+  );
 
   // Fetch diffs on mount and when tab/scope changes.
   // Brief race is possible on rapid scope toggling; eventual consistency holds.

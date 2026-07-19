@@ -1,44 +1,43 @@
-import { motion, AnimatePresence } from "motion/react";
-import {
-  ArrowRight,
-  BookOpen,
-  Sparkles,
-  Loader2,
-  Store,
-  Rocket,
-  FileText,
-  Check,
-  AlertCircle,
-  Cpu,
-  Download,
-  PartyPopper,
-} from "lucide-react";
-import { getLogger } from "@logtape/logtape";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useShallow } from "zustand/react/shallow";
-
-import { cn } from "@herman/ui/lib/utils";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@herman/ui/components/accordion";
+import { cn } from "@herman/ui/lib/utils";
+import { getLogger } from "@logtape/logtape";
+import {
+  AlertCircle,
+  ArrowRight,
+  BookOpen,
+  Check,
+  Cpu,
+  Download,
+  FileText,
+  Loader2,
+  PartyPopper,
+  Rocket,
+  Sparkles,
+  Store,
+} from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import type { WizardSessionEvent } from "../../../shared/agent-protocol.js";
 import type { GalleryTemplate } from "../../../shared/herman-manifest.js";
 import { getToolEntry } from "../../../shared/tool-registry.js";
-import { desktopRpc } from "../lib/desktop-rpc.js";
-import { useAgentStore } from "../lib/agent-store.js";
-import type { WizardStep, WizardPhaseId } from "../lib/agent-store/types.js";
 import { useConfetti } from "../hooks/use-confetti.js";
-import { ContentWidth, SignalButton } from "./ui/index.js";
+import type { WizardPhaseId, WizardStep } from "../lib/agent-store/types.js";
+import { useAgentStore } from "../lib/agent-store.js";
+import { desktopRpc } from "../lib/desktop-rpc.js";
 import { ModelSelector } from "./model-selector.js";
-import { WizardDocsView } from "./wizard-docs-view.js";
-import { WizardQuestions } from "./wizard-questions.js";
-import { WizardLoading } from "./wizard-loading.js";
-import { WizardToolSetup } from "./wizard-tool-setup.js";
 import { ProgressLog } from "./progress-log.js";
+import { ContentWidth, SignalButton } from "./ui/index.js";
+import { WizardDocsView } from "./wizard-docs-view.js";
+import { WizardLoading } from "./wizard-loading.js";
+import { WizardQuestions } from "./wizard-questions.js";
+import { WizardToolSetup } from "./wizard-tool-setup.js";
 
 const logger = getLogger(["herman-desktop", "view", "onboarding-wizard"]);
 
@@ -50,6 +49,11 @@ function shortModelLabel(modelId?: string): string {
 
 const PHASE_HEADERS: Record<WizardPhaseId, { title: string; subtitle: string }> = {
   planning: {
+    title: "Planning your project",
+    subtitle: "The agent is figuring out the best starting point.",
+  },
+  // Design is an internal phase — same visible step as planning.
+  design: {
     title: "Planning your project",
     subtitle: "The agent is figuring out the best starting point.",
   },
@@ -109,21 +113,20 @@ function TemplateListItem({
 }) {
   const IconComp = (template.icon ? ICON_MAP[template.icon] : undefined) ?? Sparkles;
   return (
-    <AccordionItem
-      value={template.id}
-      className="border-white/[0.06] data-open:bg-white/[0.04]"
-    >
+    <AccordionItem value={template.id} className="border-white/[0.06] data-open:bg-white/[0.04]">
       <AccordionTrigger className="px-4 py-3.5 hover:no-underline">
         <IconComp
           size={20}
           strokeWidth={1.5}
-          className={cn(
-            "mt-0.5 shrink-0 transition-colors",
-            selected ? "text-signal" : "text-dim",
-          )}
+          className={cn("mt-0.5 shrink-0 transition-colors", selected ? "text-signal" : "text-dim")}
         />
         <div className="flex flex-1 flex-col items-start gap-0.5 text-left">
-          <span className={cn("flex items-center gap-2 text-sm font-medium", selected ? "text-text" : "text-body")}>
+          <span
+            className={cn(
+              "flex items-center gap-2 text-sm font-medium",
+              selected ? "text-text" : "text-body",
+            )}
+          >
             {template.name}
             {missingCount !== undefined && missingCount > 0 && (
               <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-normal text-amber-300">
@@ -209,8 +212,9 @@ export function OnboardingWizard({
   const clearWizardState = useAgentStore((s) => s.clearWizardState);
   const deactivateWizard = useAgentStore((s) => s.deactivateWizard);
 
-  const selectedTemplate =
-    selectedTemplateId ? templates.find((t) => t.id === selectedTemplateId) ?? null : null;
+  const selectedTemplate = selectedTemplateId
+    ? (templates.find((t) => t.id === selectedTemplateId) ?? null)
+    : null;
 
   const { start: fireConfetti } = useConfetti();
   const confettiFiredRef = useRef(false);
@@ -240,53 +244,52 @@ export function OnboardingWizard({
       // Soft deactivate so HMR remount can rehydrate from Bun / Zustand.
       deactivateWizard();
     };
-  }, [
-    setWizardActive,
-    setWizardCurrentModel,
-    deactivateWizard,
-  ]);
+  }, [setWizardActive, setWizardCurrentModel, deactivateWizard]);
 
   // Reattach to a live Bun session or already-hydrated recovery (HMR).
   useEffect(() => {
     const existing = useAgentStore.getState().wizard;
     if (existing.recoveryMode === "continue" || existing.sessionId) return;
 
-    void desktopRpc.request.getWizardRecovery().then((recovery) => {
-      if (!recovery) return;
-      if (recovery.live) {
-        patchWizard({
+    void desktopRpc.request
+      .getWizardRecovery()
+      .then((recovery) => {
+        if (!recovery) return;
+        if (recovery.live) {
+          patchWizard({
+            sessionId: recovery.sessionId,
+            selectedTemplateId: recovery.templateId,
+            description: recovery.description ?? "",
+            progressLines: recovery.progressLines,
+            projectPath: recovery.projectPath ?? null,
+            wizardError: recovery.uiStep === "error" ? (recovery.lastError ?? null) : null,
+            recoveryMode: false,
+            recoveryBlocked: false,
+            step: (recovery.uiStep ?? "working") as WizardStep,
+            phase: recovery.phase ?? "planning",
+            pendingRequestId: recovery.pendingRequestId ?? null,
+            envelope: recovery.envelope ?? null,
+            retryAttempt: recovery.retryAttempt ?? 0,
+          });
+          return;
+        }
+        hydrateWizardFromRecovery({
           sessionId: recovery.sessionId,
-          selectedTemplateId: recovery.templateId,
-          description: recovery.description ?? "",
+          templateId: recovery.templateId,
+          description: recovery.description,
           progressLines: recovery.progressLines,
           projectPath: recovery.projectPath ?? null,
-          wizardError: recovery.uiStep === "error" ? recovery.lastError ?? null : null,
-          recoveryMode: false,
-          recoveryBlocked: false,
-          step: (recovery.uiStep ?? "working") as WizardStep,
-          phase: recovery.phase ?? "planning",
-          pendingRequestId: recovery.pendingRequestId ?? null,
-          envelope: recovery.envelope ?? null,
-          retryAttempt: recovery.retryAttempt ?? 0,
+          wizardError: recovery.lastError ?? recovery.blockedReason ?? null,
+          recoveryBlocked: !recovery.resumable,
+          preferredModel: recovery.preferredModel,
+          phase: recovery.phase,
         });
-        return;
-      }
-      hydrateWizardFromRecovery({
-        sessionId: recovery.sessionId,
-        templateId: recovery.templateId,
-        description: recovery.description,
-        progressLines: recovery.progressLines,
-        projectPath: recovery.projectPath ?? null,
-        wizardError: recovery.lastError ?? recovery.blockedReason ?? null,
-        recoveryBlocked: !recovery.resumable,
-        preferredModel: recovery.preferredModel,
-        phase: recovery.phase,
+      })
+      .catch((err) => {
+        logger.warning("Failed to query wizard recovery", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
-    }).catch((err) => {
-      logger.warning("Failed to query wizard recovery", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
   }, [hydrateWizardFromRecovery, patchWizard]);
 
   useEffect(() => {
@@ -335,7 +338,9 @@ export function OnboardingWizard({
           break;
         }
         case "wizard_progress": {
-          useAgentStore.getState().setWizardProgressLines((prev) => [...prev, event.text].slice(-50));
+          useAgentStore
+            .getState()
+            .setWizardProgressLines((prev) => [...prev, event.text].slice(-50));
           // If we were retrying, the first progress event means the agent
           // has recovered — transition back to the working state.
           if (useAgentStore.getState().wizard.step === "retrying") {
@@ -622,16 +627,20 @@ export function OnboardingWizard({
           />
         )}
         {step === "working" && (
+          <StepHeader title={PHASE_HEADERS[phase].title} subtitle={PHASE_HEADERS[phase].subtitle} />
+        )}
+        {step === "questions" && (
+          <StepHeader title="A few questions" subtitle="Only the bits we still need." />
+        )}
+        {step === "done" && (
           <StepHeader
-            title={PHASE_HEADERS[phase].title}
-            subtitle={PHASE_HEADERS[phase].subtitle}
+            title="Your project is ready"
+            subtitle="Take a minute to get familiar — or dive right in."
           />
         )}
-        {step === "questions" && <StepHeader title="A few questions" subtitle="Only the bits we still need." />}
-        {step === "done" && (
-          <StepHeader title="Your project is ready" subtitle="Take a minute to get familiar — or dive right in." />
+        {step === "error" && (
+          <StepHeader title="Something went wrong" subtitle="You can try again." />
         )}
-        {step === "error" && <StepHeader title="Something went wrong" subtitle="You can try again." />}
         {step === "recovery" && (
           <StepHeader
             title="Setup was interrupted"
@@ -667,7 +676,8 @@ export function OnboardingWizard({
                   </div>
                 )}
                 <div className="mb-4 text-dim text-sm">
-                  This is just the initial setup, you will be able to continue building on top of it. Choose the template that can be the best starting point for you.
+                  This is just the initial setup, you will be able to continue building on top of
+                  it. Choose the template that can be the best starting point for you.
                 </div>
                 <Accordion
                   value={selectedTemplate ? [selectedTemplate.id] : []}
@@ -714,7 +724,6 @@ export function OnboardingWizard({
                   placeholder="e.g. A blog about home cooking with recipes, photos, and weekly tips for beginners…"
                   rows={5}
                   className="text-text placeholder:text-ghost bg-void w-full resize-none rounded-xl border border-white/[0.08] px-4 py-3 text-sm transition focus:border-signal/40 focus:outline-none focus:ring-1 focus:ring-signal/20"
-                  autoFocus
                 />
                 <SignalButton
                   size="md"
@@ -832,7 +841,13 @@ export function OnboardingWizard({
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.35 }}
                 >
-                  <SignalButton size="lg" fullWidth glow className="mt-5" onClick={() => setDocsOpen(true)}>
+                  <SignalButton
+                    size="lg"
+                    fullWidth
+                    glow
+                    className="mt-5"
+                    onClick={() => setDocsOpen(true)}
+                  >
                     <BookOpen size={16} />
                     Let's get familiar with your project first
                   </SignalButton>
@@ -887,7 +902,13 @@ export function OnboardingWizard({
                 )}
                 <ProgressLog lines={progressLines} />
                 {!recoveryBlocked && (
-                  <SignalButton size="lg" fullWidth glow className="mt-4" onClick={handleRetryOrContinue}>
+                  <SignalButton
+                    size="lg"
+                    fullWidth
+                    glow
+                    className="mt-4"
+                    onClick={handleRetryOrContinue}
+                  >
                     Continue
                     <ArrowRight size={14} />
                   </SignalButton>
@@ -958,6 +979,7 @@ export function OnboardingWizard({
       {step === "templates" && (
         <div className="shrink-0 pb-6 text-center">
           <button
+            type="button"
             onClick={handleSkipOnboarding}
             className="text-ghost hover:text-dim text-xs transition"
           >
@@ -970,5 +992,3 @@ export function OnboardingWizard({
     </div>
   );
 }
-
-

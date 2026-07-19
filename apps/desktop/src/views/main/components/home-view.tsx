@@ -12,15 +12,10 @@ import {
   openProject,
   openSession,
 } from "../lib/agent-actions.js";
-import { useAgentStore, useActiveTabStable } from "../lib/agent-store.js";
+import { useActiveTabStable, useAgentStore } from "../lib/agent-store.js";
 import { getShortcutLabelForCommand } from "../lib/commands.js";
 import { filterSessions, filterSessionsByProject, groupSessionsByDate } from "../lib/home-utils.js";
-import {
-  SearchField,
-  SessionDateGroups,
-  SessionRow,
-  sessionProjectSubtitle,
-} from "./ui/index.js";
+import { SearchField, SessionDateGroups, SessionRow, sessionProjectSubtitle } from "./ui/index.js";
 
 // ── Unified display type (open tabs + native pi sessions) ────────────────────
 
@@ -37,7 +32,13 @@ type DisplaySession = {
 };
 
 function toDisplaySession(
-  session: { id: string; title: string; folderPath: string; projectRoot: string; updatedAt: number },
+  session: {
+    id: string;
+    title: string;
+    folderPath: string;
+    projectRoot: string;
+    updatedAt: number;
+  },
   isOpen: boolean,
   piSessionId?: string,
 ): DisplaySession {
@@ -169,6 +170,7 @@ export function HomeView() {
           className="flex-1"
         />
         <button
+          type="button"
           onClick={handleNewSession}
           disabled={!selectedProject && allSessions.length === 0}
           className="bg-peak text-text flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition hover:bg-white/[0.08] active:scale-[0.96] disabled:opacity-40"
@@ -190,6 +192,7 @@ export function HomeView() {
             </p>
             {!selectedProject && allSessions.length === 0 && (
               <button
+                type="button"
                 onClick={() => void openProject()}
                 className="bg-peak text-text flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition hover:bg-white/[0.08] active:scale-[0.96]"
               >
@@ -201,6 +204,7 @@ export function HomeView() {
                 <TooltipTrigger
                   render={
                     <button
+                      type="button"
                       onClick={handleNewSession}
                       aria-label="New session"
                       className="bg-peak text-text flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition hover:bg-white/[0.08] active:scale-[0.96]"

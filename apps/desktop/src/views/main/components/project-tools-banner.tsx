@@ -5,19 +5,21 @@
  * same toolchain engine as first-run setup, inline.
  */
 
-import { AlertTriangle, Check, Loader2, X, Wrench } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Wrench, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import type { RequirementCheckResult } from "../../../shared/herman-manifest.js";
-import { getToolEntry, currentToolPlatform, getStrategy } from "../../../shared/tool-registry.js";
+import { currentToolPlatform, getStrategy, getToolEntry } from "../../../shared/tool-registry.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useToolchainInstall } from "../lib/use-toolchain-install.js";
 
 export function ProjectToolsBanner() {
-  const activeTabId = useAgentStore((s) => s.activeTabId);
+  const _activeTabId = useAgentStore((s) => s.activeTabId);
   const projectRoot = useAgentStore((s) =>
-    s.activeTabId ? (s.tabs[s.activeTabId]?.projectRoot ?? s.tabs[s.activeTabId]?.folderPath) : undefined,
+    s.activeTabId
+      ? (s.tabs[s.activeTabId]?.projectRoot ?? s.tabs[s.activeTabId]?.folderPath)
+      : undefined,
   );
 
   const [missing, setMissing] = useState<RequirementCheckResult[]>([]);
@@ -84,7 +86,7 @@ export function ProjectToolsBanner() {
         <AlertTriangle size={13} className="shrink-0 text-amber-400" />
         <span className="min-w-0 flex-1 truncate text-amber-200/90">
           {missing.length === 1
-            ? `${missing[0]!.label} went missing — this project needs it.`
+            ? `${missing[0]?.label} went missing — this project needs it.`
             : `Missing tools: ${missing.map((m) => m.label).join(", ")}.`}
         </span>
         <button

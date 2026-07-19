@@ -103,9 +103,7 @@ export class PortRegistry {
 
   /** Free every port owned by a scope (session teardown). */
   async freeOwner(owner: string): Promise<void> {
-    const ports = [...this.owners.entries()]
-      .filter(([, o]) => o === owner)
-      .map(([port]) => port);
+    const ports = [...this.owners.entries()].filter(([, o]) => o === owner).map(([port]) => port);
     for (const port of ports) {
       await this.free(port, owner);
     }

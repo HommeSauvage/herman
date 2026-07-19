@@ -2,8 +2,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-
-import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 import {
   readProjectManifest,
   serializeHermanYaml,
@@ -13,6 +11,7 @@ import {
   clearTemplateRegistryCache,
   resolveTemplateManifest,
 } from "../../src/bun/template-registry.js";
+import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 
 function makeTempDir(prefix: string): string {
   const dir = createTestTempDir(`herman-manifest-${prefix}-`);
@@ -132,17 +131,17 @@ requirements:
 
     const manifest = await readProjectManifest(dir);
     expect(manifest).toBeTruthy();
-    expect(manifest!.servers).toHaveLength(1);
-    expect(manifest!.servers[0]!.command).toBe("npm run dev");
-    expect(manifest!.servers[0]!.port).toBe(3000);
-    expect(manifest!.primary?.command).toBe("npm run dev");
-    expect(manifest!.setup?.[0]?.run).toBe("npm install");
-    expect(manifest!.devCommand).toBe("npm run dev");
-    expect(manifest!.devPort).toBe(3000);
-    expect(manifest!.guidance).toBe("Keep it simple.");
-    expect(manifest!.env?.files[0]?.path).toBe(".env.local");
-    expect(Object.keys(manifest!.env?.files[0]?.vars ?? {})).toEqual(["API_KEY"]);
-    expect(manifest!.requirements).toHaveLength(1);
+    expect(manifest?.servers).toHaveLength(1);
+    expect(manifest?.servers[0]?.command).toBe("npm run dev");
+    expect(manifest?.servers[0]?.port).toBe(3000);
+    expect(manifest?.primary?.command).toBe("npm run dev");
+    expect(manifest?.setup?.[0]?.run).toBe("npm install");
+    expect(manifest?.devCommand).toBe("npm run dev");
+    expect(manifest?.devPort).toBe(3000);
+    expect(manifest?.guidance).toBe("Keep it simple.");
+    expect(manifest?.env?.files[0]?.path).toBe(".env.local");
+    expect(Object.keys(manifest?.env?.files[0]?.vars ?? {})).toEqual(["API_KEY"]);
+    expect(manifest?.requirements).toHaveLength(1);
 
     removeTestTempDir(dir);
   });
@@ -174,19 +173,19 @@ env:
     const manifest = await readProjectManifest(dir);
     expect(manifest).toBeTruthy();
     // dev.install → setup step (idempotency comes from the stamp, not heuristics)
-    expect(manifest!.setup).toEqual([
+    expect(manifest?.setup).toEqual([
       { id: "install", label: "Running project setup", run: "composer run setup" },
     ]);
     // dev.servers → servers
-    expect(manifest!.servers[0]!.command).toBe("composer run dev");
-    expect(manifest!.servers[0]!.port).toBe(8000);
+    expect(manifest?.servers[0]?.command).toBe("composer run dev");
+    expect(manifest?.servers[0]?.port).toBe(8000);
     // env.file + env.vars[] → env.files[]
-    expect(manifest!.env?.files).toHaveLength(1);
-    expect(manifest!.env?.files[0]?.path).toBe(".env");
-    expect(manifest!.env?.files[0]?.vars?.APP_KEY?.generate).toBe(
+    expect(manifest?.env?.files).toHaveLength(1);
+    expect(manifest?.env?.files[0]?.path).toBe(".env");
+    expect(manifest?.env?.files[0]?.vars?.APP_KEY?.generate).toBe(
       "php artisan key:generate --show",
     );
-    expect(manifest!.env?.files[0]?.vars?.DB_CONNECTION?.value).toBe("sqlite");
+    expect(manifest?.env?.files[0]?.vars?.DB_CONNECTION?.value).toBe("sqlite");
 
     removeTestTempDir(dir);
   });
@@ -211,15 +210,17 @@ Run it.
 
     const manifest = await readProjectManifest(dir);
     expect(manifest).toBeTruthy();
-    expect(manifest!.servers).toHaveLength(1);
-    expect(manifest!.servers[0]!.port).toBe(8080);
+    expect(manifest?.servers).toHaveLength(1);
+    expect(manifest?.servers[0]?.port).toBe(8080);
 
     removeTestTempDir(dir);
   });
 
   it("prefers herman.yaml over HERMAN.md when both exist", async () => {
     const dir = makeTempDir("both");
-    writeFileSync(join(dir, "herman.yaml"), `version: 2
+    writeFileSync(
+      join(dir, "herman.yaml"),
+      `version: 2
 name: YAML Wins
 servers:
   - id: web
@@ -227,17 +228,21 @@ servers:
     command: yarn dev
     port: 4000
     primary: true
-`);
-    writeFileSync(join(dir, "HERMAN.md"), `---
+`,
+    );
+    writeFileSync(
+      join(dir, "HERMAN.md"),
+      `---
 version: 2
 name: MD Project
 ---
 
-`);
+`,
+    );
     const manifest = await readProjectManifest(dir);
     expect(manifest).toBeTruthy();
-    expect(manifest!.servers[0]!.port).toBe(4000);
-    expect(manifest!.servers[0]!.command).toBe("yarn dev");
+    expect(manifest?.servers[0]?.port).toBe(4000);
+    expect(manifest?.servers[0]?.command).toBe("yarn dev");
 
     removeTestTempDir(dir);
   });
@@ -246,12 +251,15 @@ name: MD Project
     const dir = makeTempDir("invalid-yaml");
     // herman.yaml is missing required `version: number` — zod rejects it
     writeFileSync(join(dir, "herman.yaml"), `name: Broken\nservers:\n  - command: echo\n`);
-    writeFileSync(join(dir, "HERMAN.md"), `---\nversion: 2\nservers:\n  - id: web\n    label: Web\n    command: echo fallback\n    port: 9999\n    primary: true\n---\n`);
+    writeFileSync(
+      join(dir, "HERMAN.md"),
+      `---\nversion: 2\nservers:\n  - id: web\n    label: Web\n    command: echo fallback\n    port: 9999\n    primary: true\n---\n`,
+    );
 
     const manifest = await readProjectManifest(dir);
     expect(manifest).toBeTruthy();
-    expect(manifest!.servers[0]!.port).toBe(9999);
-    expect(manifest!.servers[0]!.command).toBe("echo fallback");
+    expect(manifest?.servers[0]?.port).toBe(9999);
+    expect(manifest?.servers[0]?.command).toBe("echo fallback");
 
     removeTestTempDir(dir);
   });
@@ -280,8 +288,8 @@ servers:
 
     const manifest = await readProjectManifest(worktree, projectRoot);
     expect(manifest).toBeTruthy();
-    expect(manifest!.servers[0]!.command).toBe("npm run dev");
-    expect(manifest!.servers[0]!.port).toBe(3000);
+    expect(manifest?.servers[0]?.command).toBe("npm run dev");
+    expect(manifest?.servers[0]?.port).toBe(3000);
 
     removeTestTempDir(projectRoot);
     removeTestTempDir(worktree);

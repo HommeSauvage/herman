@@ -29,6 +29,7 @@ export function TextShimmer({
       data-component="text-shimmer"
       data-active={active ? "true" : "false"}
       className={className}
+      role="status"
       aria-label={text}
       style={
         {

@@ -46,7 +46,9 @@ export function useToolchainInstall() {
             return {
               ...prev,
               tools: prev.tools.map((t) =>
-                t.toolId === event.toolId ? { ...t, state: "running" as const, note: event.message } : t,
+                t.toolId === event.toolId
+                  ? { ...t, state: "running" as const, note: event.message }
+                  : t,
               ),
             };
           case "tool-log":
@@ -55,7 +57,9 @@ export function useToolchainInstall() {
             return {
               ...prev,
               tools: prev.tools.map((t) =>
-                t.toolId === event.toolId ? { ...t, state: "waiting" as const, note: event.message } : t,
+                t.toolId === event.toolId
+                  ? { ...t, state: "waiting" as const, note: event.message }
+                  : t,
               ),
             };
           case "tool-done":

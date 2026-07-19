@@ -1,5 +1,5 @@
-import { Sparkles, Copy, ExternalLink, ArrowLeft, Loader2 } from "lucide-react";
 import { getLogger } from "@logtape/logtape";
+import { ArrowLeft, Copy, ExternalLink, Loader2, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { desktopRpc } from "../lib/desktop-rpc.js";
@@ -106,6 +106,7 @@ export function LoginView() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <button
+                    type="button"
                     onClick={copyCode}
                     className="text-text flex items-center justify-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.04] px-4 py-2.5 text-sm font-medium transition hover:bg-white/[0.08] active:scale-[0.96]"
                   >
@@ -113,6 +114,7 @@ export function LoginView() {
                     {copied ? "Copied" : "Copy code"}
                   </button>
                   <button
+                    type="button"
                     onClick={openUrl}
                     className="bg-signal hover:bg-signal-dim flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-primary-foreground transition active:scale-[0.96]"
                   >
@@ -122,6 +124,7 @@ export function LoginView() {
                 </div>
 
                 <button
+                  type="button"
                   onClick={cancel}
                   className="text-faint hover:text-dim flex w-full items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition hover:bg-white/[0.04] active:scale-[0.96]"
                 >
@@ -131,6 +134,7 @@ export function LoginView() {
               </div>
             ) : (
               <button
+                type="button"
                 onClick={signIn}
                 disabled={isLoading}
                 className="bg-signal hover:bg-signal-dim flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-primary-foreground shadow-[0_0_24px_rgba(34,197,94,0.18)] transition hover:shadow-[0_0_32px_rgba(34,197,94,0.28)] active:scale-[0.96] disabled:opacity-60"

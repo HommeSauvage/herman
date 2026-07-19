@@ -1,9 +1,7 @@
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-
-import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 import { git } from "../../src/bun/rewind-core.js";
 import {
   createSessionWorktree,
@@ -11,9 +9,13 @@ import {
   initProjectRepo,
   removeSessionWorktree,
 } from "../../src/bun/worktree.js";
+import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 
 const createdDirs: string[] = [];
-const createdWorktrees: Array<{ folderPath: string; worktree: { branch: string; baseBranch: string; mainFolderPath: string } }> = [];
+const createdWorktrees: Array<{
+  folderPath: string;
+  worktree: { branch: string; baseBranch: string; mainFolderPath: string };
+}> = [];
 
 function makeProject(name: string): string {
   const dir = createTestTempDir(`herman-${name}-`);
@@ -43,7 +45,10 @@ afterEach(async () => {
 describe("worktree helpers", () => {
   it("initializes a repo and creates initial commit", async () => {
     const project = makeProject("init");
-    writeFileSync(join(project, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }),
+    );
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
     const branch = await git("rev-parse --abbrev-ref HEAD", project);
@@ -52,7 +57,10 @@ describe("worktree helpers", () => {
 
   it("creates and removes a session worktree", async () => {
     const project = makeProject("worktree");
-    writeFileSync(join(project, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }),
+    );
     writeFileSync(join(project, ".env"), "HELLO=1\n");
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
@@ -73,7 +81,10 @@ describe("worktree helpers", () => {
 
   it("counts uncommitted changes in the draft copy", async () => {
     const project = makeProject("uncommitted");
-    writeFileSync(join(project, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }),
+    );
     writeFileSync(join(project, "index.txt"), "hello\n");
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
@@ -92,7 +103,10 @@ describe("worktree helpers", () => {
 
   it("uses triple-dot so unrelated main-only commits are not counted", async () => {
     const project = makeProject("triple-dot");
-    writeFileSync(join(project, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }),
+    );
     writeFileSync(join(project, "index.txt"), "hello\n");
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
@@ -114,7 +128,10 @@ describe("worktree helpers", () => {
 
   it("reports zero unsaved changes after draft work is merged into main", async () => {
     const project = makeProject("merged");
-    writeFileSync(join(project, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }),
+    );
     writeFileSync(join(project, "index.txt"), "hello\n");
     mkdirSync(join(project, "node_modules"), { recursive: true });
     await initProjectRepo(project);
@@ -123,7 +140,10 @@ describe("worktree helpers", () => {
     createdWorktrees.push(created);
     writeFileSync(join(created.folderPath, "index.txt"), "updated\n");
     await git("add index.txt", created.folderPath);
-    await git('-c user.email=herman@local -c user.name=Herman commit -m "Session changes"', created.folderPath);
+    await git(
+      '-c user.email=herman@local -c user.name=Herman commit -m "Session changes"',
+      created.folderPath,
+    );
 
     await git(`merge --no-ff "${created.worktree.branch}"`, project);
     await git(`merge "${created.worktree.baseBranch}"`, created.folderPath);

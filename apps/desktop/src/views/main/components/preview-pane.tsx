@@ -1,12 +1,13 @@
+import type { PreviewConsoleEntry } from "@herman/rpc/host-bridge";
 import { useCallback, useRef } from "react";
-
 import type { DevServer } from "../../../shared/herman-manifest.js";
 import type { SessionSetupState } from "../../../shared/rpc.js";
 import { usePreviewController } from "../hooks/use-preview-controller.js";
 import { usePreviewErrorToasts } from "../hooks/use-preview-error-toasts.js";
-import { useAgentStore } from "../lib/agent-store.js";
 import { useIsActiveTabWorking } from "../lib/agent-store/hooks.js";
+import { useAgentStore } from "../lib/agent-store.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
+import { reportPreviewConsoleEntry } from "../lib/preview-console-reporter.js";
 import {
   selectIsSaving,
   selectIsSynced,
@@ -15,12 +16,10 @@ import {
   selectShowRuntimeBanner,
   usePreviewStore,
 } from "../lib/preview-store.js";
-import { PreviewBrowserBar, PreviewToolbar } from "./preview/preview-toolbar.js";
 import { PreviewSaveErrorStrip } from "./preview/preview-save-error-strip.js";
 import { PreviewStage } from "./preview/preview-stage.js";
+import { PreviewBrowserBar, PreviewToolbar } from "./preview/preview-toolbar.js";
 import type { PreviewWebviewHandle } from "./preview-webview.js";
-import { reportPreviewConsoleEntry } from "../lib/preview-console-reporter.js";
-import type { PreviewConsoleEntry } from "@herman/rpc/host-bridge";
 
 type PreviewPaneProps = {
   folderPath: string;
@@ -32,8 +31,6 @@ type PreviewPaneProps = {
   onPublish?: () => void;
   /** True while RookieShell split divider is being dragged. */
   splitDragging?: boolean;
-  /** True while PublishDialog is open (parent owns this state). */
-  publishOpen?: boolean;
 };
 
 export function PreviewPane({
@@ -44,7 +41,6 @@ export function PreviewPane({
   setup,
   onPublish,
   splitDragging,
-  publishOpen,
 }: PreviewPaneProps) {
   usePreviewController({ folderPath, projectRoot, tabId, isWorktree, setupPhase: setup?.phase });
 
@@ -77,7 +73,7 @@ export function PreviewPane({
   const isTabWorking = useIsActiveTabWorking();
   const modelSelectorOpen = useAgentStore((s) => s.ui.modelSelectorOpen);
 
-  const overlayOpen = Boolean(publishOpen) || modelSelectorOpen;
+  const overlayOpen = modelSelectorOpen;
   const askDisabled = isTabWorking || !tabId;
   const showControls = Boolean(folderPath && folderPath.length >= 3);
   const baseUrl = server?.url;
@@ -85,12 +81,9 @@ export function PreviewPane({
   // Replace the fragile absolute-positioned error banner with Sonner toasts.
   usePreviewErrorToasts(runtimeErrors, showRuntimeBanner);
 
-  const handleOpenExternal = useCallback(
-    (url: string) => {
-      void desktopRpc.request.openExternal({ url });
-    },
-    [],
-  );
+  const handleOpenExternal = useCallback((url: string) => {
+    void desktopRpc.request.openExternal({ url });
+  }, []);
 
   const handleSwitchServer = useCallback(
     (target: DevServer) => void switchServer(target),

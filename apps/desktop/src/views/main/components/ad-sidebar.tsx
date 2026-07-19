@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { AdCampaign } from "../../../shared/agent-protocol.js";
-import { useImpression, type ImpressionState } from "../hooks/use-impression.js";
+import { type ImpressionState, useImpression } from "../hooks/use-impression.js";
 import { reportAdClick, reportImpression } from "../lib/agent-actions.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { useIsHermanProvider } from "../lib/model-utils.js";
@@ -85,10 +85,7 @@ export function AdSidebar() {
   if (!isHermanProvider) return null;
 
   return (
-    <div
-      ref={ref}
-      className="flex flex-col gap-2 border-b border-white/[0.06] px-3 py-2.5"
-    >
+    <div ref={ref} className="flex flex-col gap-2 border-b border-white/[0.06] px-3 py-2.5">
       <div className="flex items-center justify-between">
         <span className="text-ghost text-[10px] font-bold tracking-[0.12em] uppercase">
           Sponsored

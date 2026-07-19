@@ -1,10 +1,12 @@
-import { isAdPlacement } from "@herman/rpc/ads";
 import type { AdCampaign, AdEvent, AdPlacement } from "@herman/rpc/ads";
+import { isAdPlacement } from "@herman/rpc/ads";
 import type { ModelMetadata } from "./rpc.js";
 import {
+  tryParseGateEnvelope,
   tryParseInstallEnvelope,
   tryParseWizardEnvelope,
   type WizardAskEnvelope,
+  type WizardGateEnvelope,
   type WizardInstallEnvelope,
 } from "./wizard-protocol.js";
 
@@ -177,7 +179,8 @@ export type WizardSessionEvent =
   | {
       type: "wizard_phase";
       wizardSessionId: string;
-      phase: "planning" | "coding" | "qa" | "docs";
+      phase: "planning" | "design" | "coding" | "qa" | "docs";
+      milestone?: { index: number; total: number; title: string };
     }
   | {
       type: "wizard_complete";
@@ -236,6 +239,21 @@ export function tryParseInstallRequest(
   if (event.method !== "editor") return undefined;
   const prefill = typeof event.prefill === "string" ? event.prefill : undefined;
   const envelope = tryParseInstallEnvelope(prefill);
+  if (!envelope) return undefined;
+  return { requestId: event.id, envelope };
+}
+
+/**
+ * Same routing as tryParseWizardRequest, but for `herman_complete_wizard`
+ * gate round-trips (sentinel `__herman_gate__`).
+ */
+export function tryParseGateRequest(
+  event: AgentEvent,
+): { requestId: string; envelope: WizardGateEnvelope } | undefined {
+  if (event.type !== "extension_ui_request") return undefined;
+  if (event.method !== "editor") return undefined;
+  const prefill = typeof event.prefill === "string" ? event.prefill : undefined;
+  const envelope = tryParseGateEnvelope(prefill);
   if (!envelope) return undefined;
   return { requestId: event.id, envelope };
 }
@@ -364,9 +382,7 @@ function parseContextReport(event: Record<string, unknown>): AgentEvent | undefi
 
   const lastUsage = parseContextReportUsage(event.lastUsage);
   const currentTurnRaw = event.currentTurn;
-  let currentTurn:
-    | { output: number; startedAt: number; messageId?: string }
-    | undefined;
+  let currentTurn: { output: number; startedAt: number; messageId?: string } | undefined;
   if (currentTurnRaw && typeof currentTurnRaw === "object") {
     const ct = currentTurnRaw as Record<string, unknown>;
     if (typeof ct.output === "number" && typeof ct.startedAt === "number") {
@@ -442,7 +458,10 @@ function parseModelMetadata(value: unknown): ModelMetadataMap | undefined {
     const contextWindow = typeof m.contextWindow === "number" ? m.contextWindow : undefined;
     if (contextWindow === undefined || !Number.isFinite(contextWindow)) continue;
     const maxTokens = typeof m.maxTokens === "number" ? m.maxTokens : undefined;
-    output[key] = { contextWindow, ...(maxTokens !== undefined && Number.isFinite(maxTokens) ? { maxTokens } : {}) };
+    output[key] = {
+      contextWindow,
+      ...(maxTokens !== undefined && Number.isFinite(maxTokens) ? { maxTokens } : {}),
+    };
   }
   return Object.keys(output).length > 0 ? output : undefined;
 }

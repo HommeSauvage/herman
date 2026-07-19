@@ -73,6 +73,17 @@ servers:
     port: 8000
     portEnv: SERVER_PORT
     primary: true
+checks:
+  - id: pint
+    label: PHP formatting & static checks
+    run: vendor/bin/pint --test
+  - id: types
+    label: Frontend type check
+    run: bunx tsc --noEmit
+  - id: tests
+    label: Test suite
+    run: php artisan test --compact
+    timeout: 600
 ---
 
 ## Stack
@@ -125,3 +136,12 @@ Initial setup:
 - When creating models, always create factories and seeders alongside them
 - Run `vendor/bin/pint --format agent` after modifying PHP files
 - Do not create documentation files unless explicitly asked
+
+### Quality bar (non-negotiable for rookie projects)
+
+- Every list/table view links to a **detail view**. Never truncate content without a way to see all of it (e.g. a comments admin column must open a full comment page with approve/reject actions — not just a truncated cell).
+- Content editing uses a proper editor component (rich text or markdown with preview) — **never** a bare textarea expecting raw HTML.
+- Every screen handles **empty**, **loading**, and **error** states. Seed data must make every page look real on first boot (no "lorem ipsum" placeholders left for the user).
+- Destructive actions confirm; forms validate with human-readable messages.
+- Admin pages get the same design care as public pages — polish, spacing, and clarity matter everywhere.
+- The starter ships a **Notes** reference module as a concrete quality-bar example (list → detail → markdown editor → delete confirm). If the product does not need Notes, delete the whole module early (see starter `AGENTS.md`); do not leave orphan routes or half-removed UI.

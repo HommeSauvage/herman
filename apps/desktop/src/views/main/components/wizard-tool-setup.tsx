@@ -8,25 +8,24 @@
  * a "skip" path. Manual tools (e.g. Docker) get a guided link + re-check.
  */
 
-import { motion } from "motion/react";
+import { cn } from "@herman/ui/lib/utils";
 import {
+  AlertCircle,
   ArrowRight,
   Check,
-  Loader2,
-  AlertCircle,
   ExternalLink,
   LaptopMinimalCheck,
+  Loader2,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { cn } from "@herman/ui/lib/utils";
-
 import type { RequirementCheckResult } from "../../../shared/herman-manifest.js";
-import { getToolEntry, currentToolPlatform, getStrategy } from "../../../shared/tool-registry.js";
+import { currentToolPlatform, getStrategy, getToolEntry } from "../../../shared/tool-registry.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useToolchainInstall } from "../lib/use-toolchain-install.js";
-import { ContentWidth, SignalButton } from "./ui/index.js";
 import { ProgressLog } from "./progress-log.js";
+import { ContentWidth, SignalButton } from "./ui/index.js";
 
 type Phase = "checking" | "ready" | "needs-install" | "installing" | "failed";
 
@@ -117,7 +116,10 @@ export function WizardToolSetup({
           </div>
         )}
 
-        {(phase === "needs-install" || phase === "installing" || phase === "failed" || phase === "ready") && (
+        {(phase === "needs-install" ||
+          phase === "installing" ||
+          phase === "failed" ||
+          phase === "ready") && (
           <>
             <div className="divide-y divide-white/[0.06] rounded-2xl border border-white/[0.08] bg-white/[0.02]">
               {missing.map((req) => {
@@ -183,8 +185,8 @@ export function WizardToolSetup({
 
             {optionalMissing.length > 0 && phase === "needs-install" && (
               <p className="text-ghost mt-3 text-[11px] leading-relaxed">
-                Optional and skipped for now:{" "}
-                {optionalMissing.map((r) => r.label).join(", ")} — you can add them later.
+                Optional and skipped for now: {optionalMissing.map((r) => r.label).join(", ")} — you
+                can add them later.
               </p>
             )}
 

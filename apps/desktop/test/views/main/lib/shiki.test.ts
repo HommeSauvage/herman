@@ -5,7 +5,10 @@ import { getHighlighter } from "../../../../src/views/main/lib/shiki.js";
 describe("getHighlighter", () => {
   it("highlights typescript code", async () => {
     const highlighter = await getHighlighter();
-    const html = highlighter.codeToHtml("const x = 1;", { lang: "typescript", theme: "github-dark" });
+    const html = highlighter.codeToHtml("const x = 1;", {
+      lang: "typescript",
+      theme: "github-dark",
+    });
     expect(html.length).toBeGreaterThan(0);
     expect(html).toContain("const");
     expect(html).toContain("x");
@@ -22,7 +25,10 @@ describe("getHighlighter", () => {
 
   it("handles code with leading and trailing whitespace", async () => {
     const highlighter = await getHighlighter();
-    const html = highlighter.codeToHtml("  const y = 2;  ", { lang: "typescript", theme: "github-dark" });
+    const html = highlighter.codeToHtml("  const y = 2;  ", {
+      lang: "typescript",
+      theme: "github-dark",
+    });
     expect(html).toContain("const");
   });
 });

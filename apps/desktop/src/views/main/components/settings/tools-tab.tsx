@@ -4,10 +4,9 @@
  * rookies reach the same install engine through the gated flows instead.
  */
 
-import { Check, AlertCircle, Download, ExternalLink, Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-
 import { cn } from "@herman/ui/lib/utils";
+import { AlertCircle, Check, Download, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { ToolchainToolStatus } from "../../../../shared/tool-registry.js";
 import { desktopRpc } from "../../lib/desktop-rpc.js";

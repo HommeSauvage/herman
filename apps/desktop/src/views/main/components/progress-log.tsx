@@ -1,6 +1,5 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
-
 import { cn } from "@herman/ui/lib/utils";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { useAutoScroll } from "../hooks/use-auto-scroll.js";
 

@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
@@ -7,9 +7,9 @@ import { config } from "../env.js";
 import type { AgentCommand, AgentEvent } from "../shared/agent-protocol.js";
 import { parseAdEventFromNotify, parseHermanEventFromNotify } from "../shared/agent-protocol.js";
 import type { TabId } from "../shared/rpc.js";
-import { agentDir, hermanDir } from "./app-paths.js";
-import { awaitAgentConfigSynced, resolveWizardExtensionPath } from "./agent-config-sync.js";
+import { awaitAgentConfigSynced } from "./agent-config-sync.js";
 import { AgentProcess } from "./agent-process.js";
+import { agentDir, hermanDir } from "./app-paths.js";
 import { getActiveHostBridge } from "./host-bridge/server.js";
 import { deletePiSessionFile, resolvePiSessionResumeArg } from "./pi-session.js";
 
@@ -22,7 +22,6 @@ export class AgentBridge {
   private messageBuffer: AgentEvent[] = [];
   private pendingAttachEvents: AgentEvent[] = [];
   private folderPath?: string;
-  private agentDir?: string;
   private piSessionId?: string;
   private rendererAttached = false;
 
@@ -43,7 +42,10 @@ export class AgentBridge {
     return this.state;
   }
 
-  async start(folderPath?: string, opts?: { piSessionId?: string; mode?: string; extensions?: string[] }) {
+  async start(
+    folderPath?: string,
+    opts?: { piSessionId?: string; mode?: string; extensions?: string[] },
+  ) {
     this.folderPath = folderPath || undefined;
     this.piSessionId = opts?.piSessionId;
     if (this.process) {

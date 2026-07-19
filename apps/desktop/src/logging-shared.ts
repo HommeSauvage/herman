@@ -1,10 +1,4 @@
-import {
-  configure,
-  getConsoleSink,
-  type LogLevel,
-  type Logger,
-  type Sink,
-} from "@logtape/logtape";
+import { configure, getConsoleSink, type Logger, type LogLevel, type Sink } from "@logtape/logtape";
 import { getPrettyFormatter } from "@logtape/pretty";
 import { redactByField } from "@logtape/redaction";
 
@@ -80,7 +74,7 @@ export function logStorageError(
   });
 }
 
-type RpcHandler = (params: any) => any;
+type RpcHandler = (params: unknown) => unknown;
 
 export function wrapRpcHandlers<T extends Record<string, RpcHandler>>(
   logger: Logger,
@@ -88,7 +82,7 @@ export function wrapRpcHandlers<T extends Record<string, RpcHandler>>(
 ): T {
   const wrapped = {} as T;
   for (const [method, handler] of Object.entries(handlers)) {
-    wrapped[method as keyof T] = (async (params: any) => {
+    wrapped[method as keyof T] = (async (params: unknown) => {
       const startMs = Date.now();
       logger.trace("RPC request", { method, params });
       try {

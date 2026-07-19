@@ -30,7 +30,6 @@ export const ComposerInput = memo(function ComposerInput({
       onKeyDown={onKeyDown}
       placeholder="Ask Herman anything… (@ for files)"
       rows={1}
-      autoFocus
       className="text-text placeholder:text-ghost max-h-40 min-h-[44px] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm focus:outline-none"
     />
   );

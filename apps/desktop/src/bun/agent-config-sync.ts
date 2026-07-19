@@ -1,10 +1,11 @@
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { getLogger } from "@logtape/logtape";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
 
 import { agentDir, skillsDir } from "./app-paths.js";
 import { writeFileAtomically } from "./fs-utils.js";
+import { seedCoolifyOpsSkill } from "./publishing/skill-seed.js";
 
 const logger = getLogger(["herman-desktop", "agent-config"]);
 
@@ -13,7 +14,14 @@ const logger = getLogger(["herman-desktop", "agent-config"]);
  * the agent settings and installs them into the shared agent dir's
  * npm/node_modules. Sources must use pi's protocol prefixes (npm:, git:).
  */
-const BUNDLED_EXTENSIONS = ["npm:@bacnh85/pi-fff", "npm:pi-goal", "npm:@hypabolic/pi-hypa", "npm:pi-mcp-adapter"];
+const BUNDLED_EXTENSIONS = [
+  "npm:@bacnh85/pi-fff",
+  "npm:pi-goal",
+  "npm:@hypabolic/pi-hypa",
+  "npm:pi-mcp-adapter",
+  "npm:pi-web-access",
+  "npm:pi-subagents",
+];
 
 const SUPPORTED_BUNDLED_PREFIXES = ["npm:", "git:"];
 
@@ -68,7 +76,9 @@ function writeAgentConfigFile(path: string, data: Record<string, unknown>): void
 async function loadCredentials(): Promise<Record<string, unknown>> {
   const { loadCredentials: load } = await import("./credentials.js");
   const credentials = await load();
-  void import("./credentials.js").then((m) => m.refreshAllOAuthCredentials?.().catch(() => undefined));
+  void import("./credentials.js").then((m) =>
+    m.refreshAllOAuthCredentials?.().catch(() => undefined),
+  );
   const authJson: Record<string, unknown> = {};
   for (const [providerId, credential] of Object.entries(credentials)) {
     if (credential.type === "apiKey") {
@@ -146,10 +156,14 @@ async function runSync(): Promise<void> {
   const existingPackages = Array.isArray(merged.packages)
     ? (merged.packages as string[])
     : Array.isArray((existingSettings as { packages?: unknown }).packages)
-      ? ((existingSettings as { packages: string[] }).packages)
+      ? (existingSettings as { packages: string[] }).packages
       : [];
   merged.packages = syncBundledPackages(existingPackages);
   writeAgentConfigFile(settingsPath, merged);
+
+  // Seed bundled skills (coolify-ops) into the skills dir. Part of the sync
+  // so agent spawns (which await this sync) always see the seeded skill.
+  await seedCoolifyOpsSkill();
 
   // Install missing bundled extensions once. After the first successful sync
   // this is a cheap existence check. Using a neutral cwd (the app dir) since

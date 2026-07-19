@@ -13,15 +13,12 @@ import type { PendingAttachment } from "../../../shared/rpc.js";
  *  can quote it back if it needs to ask the user to clarify which file
  *  it should look at.
  */
-export function formatAttachmentsForPrompt(
-  text: string,
-  attachments: PendingAttachment[],
-): string {
+export function formatAttachmentsForPrompt(text: string, attachments: PendingAttachment[]): string {
   if (attachments.length === 0) return text;
 
   const trimmedText = text.trimEnd();
-  const lines = attachments.map((attachment, index) =>
-    `attachment ${index + 1}: ${attachment.path}`,
+  const lines = attachments.map(
+    (attachment, index) => `attachment ${index + 1}: ${attachment.path}`,
   );
   const block = lines.join("\n");
 

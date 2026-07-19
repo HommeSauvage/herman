@@ -72,8 +72,7 @@ export async function waitForReady(opts: WaitForReadyOpts): Promise<void> {
     }
 
     try {
-      const probeSignal =
-        opts.signal ?? AbortSignal.timeout(Math.min(pollMs * 5, 2_000));
+      const probeSignal = opts.signal ?? AbortSignal.timeout(Math.min(pollMs * 5, 2_000));
       const result = await opts.probe(opts.url, probeSignal);
       if (isHttpReachable(result)) return;
     } catch {
@@ -104,10 +103,7 @@ export async function waitForReady(opts: WaitForReadyOpts): Promise<void> {
   throw new Error(`Preview server did not become ready at ${opts.url}`);
 }
 
-export async function httpProbe(
-  url: string,
-  signal?: AbortSignal,
-): Promise<PreviewProbeResult> {
+export async function httpProbe(url: string, signal?: AbortSignal): Promise<PreviewProbeResult> {
   try {
     const response = await fetch(url, {
       signal: signal ?? AbortSignal.timeout(1_000),

@@ -18,8 +18,7 @@ export function AttachmentList({ attachments, onRemove, removeLabel }: Attachmen
   if (attachments.length === 0) return null;
 
   return (
-    <div
-      role="list"
+    <ul
       aria-label="Attached files"
       className="flex max-h-32 w-full flex-wrap gap-1.5 overflow-y-auto px-1 pb-1"
     >
@@ -42,6 +41,6 @@ export function AttachmentList({ attachments, onRemove, removeLabel }: Attachmen
           </motion.div>
         ))}
       </AnimatePresence>
-    </div>
+    </ul>
   );
 }

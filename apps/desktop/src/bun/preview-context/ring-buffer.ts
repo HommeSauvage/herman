@@ -24,7 +24,8 @@ export class RingBuffer<T> {
     if (this.len === 0) return [];
     const result: T[] = [];
     for (let i = 0; i < this.len; i++) {
-      result.push(this.buf[(this.head + i) % this.capacity]!);
+      const item = this.buf[(this.head + i) % this.capacity];
+      if (item !== undefined) result.push(item);
     }
     return result;
   }

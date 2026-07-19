@@ -40,7 +40,7 @@ export function getProjectColor(folderPath: string): string {
 
 export function truncateTitle(content: string): string {
   if (content.length <= 24) return content;
-  return content.slice(0, 24).trimEnd() + "…";
+  return `${content.slice(0, 24).trimEnd()}…`;
 }
 
 export function hasUserOrAssistantMessage(messages: { role: string }[]): boolean {

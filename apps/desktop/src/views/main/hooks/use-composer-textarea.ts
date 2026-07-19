@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { TabId } from "../../../shared/rpc.js";
-import { adjustTextareaHeight } from "../lib/composer-textarea-height.js";
 import { useAgentStore, useComposerValue } from "../lib/agent-store.js";
+import { adjustTextareaHeight } from "../lib/composer-textarea-height.js";
 import type { SlashCommandItem } from "./use-slash-command.js";
 
 /** Regex patterns for trigger detection. */
@@ -63,9 +63,7 @@ export function useComposerTextarea({
 
   // --- State -----------------------------------------------------------
 
-  const [hasText, setHasText] = useState(
-    () => (composerValue ?? "").trim().length > 0,
-  );
+  const [hasText, setHasText] = useState(() => (composerValue ?? "").trim().length > 0);
   const hasTextRef = useRef(hasText);
   const draftValueRef = useRef(composerValue ?? "");
   const lastStoreValueRef = useRef<string | undefined>(undefined);
@@ -169,10 +167,9 @@ export function useComposerTextarea({
       const match = before.match(MENTION_TRIGGER);
       if (!match) return;
 
-      const mentionStart = match.index! + match[1].length;
+      const mentionStart = (match.index ?? 0) + match[1].length;
       const replacement = `@${filePath} `;
-      const nextValue =
-        value.slice(0, mentionStart) + replacement + value.slice(cursor);
+      const nextValue = value.slice(0, mentionStart) + replacement + value.slice(cursor);
 
       textarea.value = nextValue;
       draftValueRef.current = nextValue;
@@ -217,7 +214,7 @@ export function useComposerTextarea({
       // @mention trigger
       const match = before.match(MENTION_TRIGGER);
       if (match) {
-        mentionRef.current.onInput(match[2]!);
+        mentionRef.current.onInput(match[2] as string);
       } else if (mentionRef.current.open) {
         mentionRef.current.close();
       }

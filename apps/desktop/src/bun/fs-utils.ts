@@ -1,6 +1,6 @@
-import { getLogger } from "@logtape/logtape";
 import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getLogger } from "@logtape/logtape";
 
 import { logStorageError } from "../logging-shared.js";
 

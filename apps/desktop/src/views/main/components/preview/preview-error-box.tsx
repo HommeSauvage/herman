@@ -38,6 +38,7 @@ export function PreviewErrorBox({
             </SignalButton>
             {onRetry && (
               <button
+                type="button"
                 onClick={onRetry}
                 className="text-ghost hover:text-dim rounded-lg border border-white/8 px-3 py-2 text-xs transition hover:bg-white/4"
               >

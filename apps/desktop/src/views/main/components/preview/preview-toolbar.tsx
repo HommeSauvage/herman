@@ -1,15 +1,24 @@
 import { cn } from "@herman/ui/lib/utils";
-import { ArrowLeft, ExternalLink, Loader2, Monitor, RefreshCw, Rocket, Smartphone, Tablet } from "lucide-react";
+import {
+  ArrowLeft,
+  ExternalLink,
+  Loader2,
+  Monitor,
+  RefreshCw,
+  Rocket,
+  Smartphone,
+  Tablet,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { DevServer } from "../../../../shared/herman-manifest.js";
+import { DEVICE_WIDTHS, type DeviceMode } from "../../lib/preview-store.js";
 import {
   buildUrlWithPath,
   formatOriginDisplay,
   getPathSuffix,
   isSameOrigin,
 } from "../../lib/preview-url.js";
-import { DEVICE_WIDTHS, type DeviceMode } from "../../lib/preview-store.js";
 import { PreviewSaveButton } from "./preview-save-button.js";
 
 const DEVICE_ICONS: Record<DeviceMode, React.ElementType> = {

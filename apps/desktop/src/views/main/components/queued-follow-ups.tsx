@@ -1,6 +1,6 @@
-import { AnimatePresence, motion } from "motion/react";
-import { Pencil, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/tooltip";
+import { Pencil, X } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 
 import type { QueuedFollowUp } from "../../../shared/rpc.js";
 

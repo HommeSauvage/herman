@@ -29,7 +29,12 @@ function getMessageId(message: unknown): number | string | undefined {
 }
 
 function emitMessage<N extends MessageName>(name: N, payload: WebviewMessages[N]) {
-  messageListeners.get(name)?.forEach((handler) => handler(payload));
+  const handlers = messageListeners.get(name);
+  if (handlers) {
+    for (const handler of handlers) {
+      handler(payload);
+    }
+  }
 }
 
 function messageHandler<N extends MessageName>(name: N) {
@@ -154,7 +159,7 @@ export const desktopRpc = {
     handler: (payload: WebviewMessages[N]) => void,
   ) {
     if (!messageListeners.has(name)) messageListeners.set(name, new Set());
-    messageListeners.get(name)!.add(handler as (payload: unknown) => void);
+    messageListeners.get(name)?.add(handler as (payload: unknown) => void);
   },
   removeMessageListener<N extends MessageName>(
     name: N,

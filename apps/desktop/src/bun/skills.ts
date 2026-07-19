@@ -1,11 +1,19 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
 
 import type { SkillSearchResult } from "../shared/rpc.js";
 import { skillsDir } from "./app-paths.js";
-import { parseFrontmatter, type Frontmatter } from "./frontmatter.js";
+import { parseFrontmatter } from "./frontmatter.js";
 
 const logger = getLogger(["herman-desktop", "skills"]);
 
@@ -68,7 +76,7 @@ function scanSkillsDir(
   const skills: SkillInfo[] = [];
   if (!existsSync(dir)) return skills;
 
-  let entries;
+  let entries: import("fs").Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch {
@@ -194,7 +202,8 @@ export function removeSkill(name: string): boolean {
  * Strip ANSI escape codes from a string.
  */
 function stripAnsi(str: string): string {
-  return str.replace(/\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+  const ESC = String.fromCharCode(27);
+  return str.replace(new RegExp(`${ESC}(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])`, "g"), "");
 }
 
 /**
@@ -202,10 +211,7 @@ function stripAnsi(str: string): string {
  * Converts terminal output into structured results.
  */
 export async function searchSkills(query: string): Promise<SkillSearchResult[]> {
-  const proc = Bun.spawn(
-    ["bun", "x", "skills", "find", query],
-    { stdout: "pipe", stderr: "pipe" },
-  );
+  const proc = Bun.spawn(["bun", "x", "skills", "find", query], { stdout: "pipe", stderr: "pipe" });
 
   const [exitCode, stdout, stderr] = await Promise.all([
     proc.exited,
@@ -247,7 +253,9 @@ export async function searchSkills(query: string): Promise<SkillSearchResult[]> 
  * supported. `npx` is converted to `bun x` on the fly and the skill is
  * installed globally so Herman can discover it in ~/.agents/skills.
  */
-export async function installSkillFromCommand(command: string): Promise<{ path: string; name: string }> {
+export async function installSkillFromCommand(
+  command: string,
+): Promise<{ path: string; name: string }> {
   const tokens = command.trim().split(/\s+/);
   if (tokens.length < 4) {
     throw new Error("Invalid command. Expected: npx skills add <package>");
@@ -266,10 +274,10 @@ export async function installSkillFromCommand(command: string): Promise<{ path: 
     throw new Error("Missing package argument");
   }
 
-  const proc = Bun.spawn(
-    ["bun", "x", "skills", "add", packageArg, "-g", "-y"],
-    { stdout: "pipe", stderr: "pipe" },
-  );
+  const proc = Bun.spawn(["bun", "x", "skills", "add", packageArg, "-g", "-y"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
   const [exitCode, stdout, stderr] = await Promise.all([
     proc.exited,

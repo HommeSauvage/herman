@@ -14,7 +14,7 @@
     },
     "extends": {
       "type": "string",
-      "description": "Id of another curated Herman manifest to inherit from. Ordered arrays (setup, env.files, servers) are replaced wholesale by the child when re-declared."
+      "description": "Id of another curated Herman manifest to inherit from. Ordered arrays (setup, env.files, servers, checks) are replaced wholesale by the child when re-declared."
     },
     "name": { "type": "string" },
     "description": { "type": "string" },
@@ -166,6 +166,21 @@
             ],
             "description": "Env var name(s) set on this server's spawn environment to its resolved port (e.g. SERVER_PORT)."
           }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "description": "Host-enforced verification commands run by the wizard coding/QA gates before a phase advances.",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "run"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "run": { "type": "string", "description": "Shell command, run via `sh -c` in the project root." },
+          "timeout": { "type": "number", "description": "Seconds (default 300, hard cap 900)." }
         }
       }
     }

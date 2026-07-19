@@ -67,38 +67,40 @@ export function deriveStatus(
 }
 
 export function StatusBar() {
-  const { label, isActive, isCrashed, isRetrying, currentModel, folderPath, projectRoot } = useAgentStore(
-    useShallow((s) => {
-      const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
-      if (!tab) {
+  const { label, isActive, isCrashed, isRetrying, currentModel, folderPath, projectRoot } =
+    useAgentStore(
+      useShallow((s) => {
+        const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
+        if (!tab) {
+          return {
+            label: "Idle",
+            isActive: false,
+            isCrashed: false,
+            isRetrying: false,
+            currentModel: undefined as string | undefined,
+            folderPath: undefined as string | undefined,
+            projectRoot: undefined as string | undefined,
+          };
+        }
+        const status = deriveStatus(
+          tab.messages,
+          tab.isThinking,
+          tab.connectionState,
+          tab.connectionError,
+          tab.retryState,
+        );
         return {
-          label: "Idle",
-          isActive: false,
-          isCrashed: false,
-          isRetrying: false,
-          currentModel: undefined as string | undefined,
-          folderPath: undefined as string | undefined,
-          projectRoot: undefined as string | undefined,
+          label: formatStatusLabel(status),
+          isActive:
+            status.kind === "tool" || status.kind === "writing" || status.kind === "thinking",
+          isCrashed: status.kind === "crashed",
+          isRetrying: status.kind === "retrying",
+          currentModel: tab.currentModel,
+          folderPath: tab.folderPath,
+          projectRoot: tab.projectRoot,
         };
-      }
-      const status = deriveStatus(
-        tab.messages,
-        tab.isThinking,
-        tab.connectionState,
-        tab.connectionError,
-        tab.retryState,
-      );
-      return {
-        label: formatStatusLabel(status),
-        isActive: status.kind === "tool" || status.kind === "writing" || status.kind === "thinking",
-        isCrashed: status.kind === "crashed",
-        isRetrying: status.kind === "retrying",
-        currentModel: tab.currentModel,
-        folderPath: tab.folderPath,
-        projectRoot: tab.projectRoot,
-      };
-    }),
-  );
+      }),
+    );
   const setModelSelectorOpen = useAgentStore((s) => s.setModelSelectorOpen);
 
   const colorClass = isCrashed
@@ -150,6 +152,7 @@ export function StatusBar() {
           <TooltipTrigger
             render={
               <button
+                type="button"
                 aria-label="Change model"
                 onClick={() => setModelSelectorOpen(true)}
                 className="text-ghost hover:text-text truncate transition"

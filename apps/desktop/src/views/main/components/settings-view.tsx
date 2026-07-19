@@ -1,5 +1,13 @@
 import { cn } from "@herman/ui/lib/utils";
-import { ArrowLeft, Cpu, Layers, Puzzle, SlidersHorizontal, TriangleAlert, Wrench } from "lucide-react";
+import {
+  ArrowLeft,
+  Cpu,
+  Layers,
+  Puzzle,
+  SlidersHorizontal,
+  TriangleAlert,
+  Wrench,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAgentStore } from "../lib/agent-store.js";
@@ -53,10 +61,7 @@ export function SettingsView() {
 
   return (
     <div className="flex h-full w-full">
-      <nav
-        role="tablist"
-        className="bg-surface/40 flex w-14 shrink-0 flex-col items-center border-r border-white/[0.06] p-2 transition min-[501px]:w-52 min-[501px]:items-stretch min-[501px]:p-3"
-      >
+      <nav className="bg-surface/40 flex w-14 shrink-0 flex-col items-center border-r border-white/[0.06] p-2 transition min-[501px]:w-52 min-[501px]:items-stretch min-[501px]:p-3">
         <h2 className="text-ghost mb-2 hidden px-2 text-[10px] font-bold tracking-[0.12em] uppercase min-[501px]:block">
           Settings
         </h2>
@@ -64,6 +69,7 @@ export function SettingsView() {
           const Icon = tab.icon;
           return (
             <button
+              type="button"
               key={tab.id}
               role="tab"
               aria-selected={activeTab === tab.id}
@@ -84,6 +90,7 @@ export function SettingsView() {
 
         <div className="mt-auto" />
         <button
+          type="button"
           onClick={() => setView("home")}
           aria-label="Back to home"
           className="text-dim hover:text-text flex w-full items-center justify-center rounded-lg px-0 py-2 text-sm transition hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-white/20 focus-visible:outline-none min-[501px]:justify-start min-[501px]:gap-2 min-[501px]:px-2 min-[501px]:text-left"

@@ -1,39 +1,22 @@
-/**
- * RewindManager — checkpoint integration for the revert feature.
- *
- * pi-rewind (installed as a pi-agent extension) creates git checkpoints
- * automatically at turn boundaries.  This manager loads those checkpoints
- * from the git ref store and maps them to message positions so the
- * desktop UI can restore files on revert.
- *
- * When multiple Herman tabs work on the same git repo concurrently, each
- * tab's pi agent gets its own session UUID.  pi-rewind tags every
- * checkpoint with that UUID.  RewindManager reads the pi session UUID
- * deterministically from the agent's session storage on disk so that
- * diffs and reverts are always scoped to a single tab.
- */
-
-import { randomUUIDv7 } from "bun";
-import { readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import { getLogger } from "@logtape/logtape";
+import { randomUUIDv7 } from "bun";
 
 import type { FileDiff, Message, TabId } from "../shared/rpc.js";
 import { readPiSessionId as readPiSessionIdFromFile } from "./pi-session.js";
 import {
-  ZEROS,
-  EMPTY_TREE,
-  isGitRepo,
+  type CheckpointData,
   createCheckpoint,
-  restoreCheckpoint,
-  diffCheckpoints,
   deleteCheckpoint,
+  diffCheckpoints,
+  EMPTY_TREE,
+  git,
+  isGitRepo,
   loadAllCheckpoints,
   loadCheckpointFromRef,
-  git,
-  parseUnifiedDiff,
-  type CheckpointData,
   type ParsedFileDiff,
+  parseUnifiedDiff,
+  restoreCheckpoint,
+  ZEROS,
 } from "./rewind-core.js";
 
 const logger = getLogger(["herman-desktop", "rewind-manager"]);
@@ -177,9 +160,7 @@ export class RewindManager {
     }
 
     try {
-      const all = state.sessionId
-        ? await loadAllCheckpoints(state.repoRoot, state.sessionId)
-        : [];
+      const all = state.sessionId ? await loadAllCheckpoints(state.repoRoot, state.sessionId) : [];
       const { checkpoints, byTurn } = this.indexCheckpoints(all);
       state.checkpoints = checkpoints;
       state.byTurn = byTurn;
@@ -384,10 +365,10 @@ export class RewindManager {
     const state = this.states.get(tabId);
     if (!state?.gitAvailable || state.checkpoints.length === 0) return [];
 
-    const last = state.checkpoints[state.checkpoints.length - 1]!;
-    const prev = state.checkpoints.length >= 2
-      ? state.checkpoints[state.checkpoints.length - 2]
-      : undefined;
+    const last = state.checkpoints[state.checkpoints.length - 1];
+    if (!last) return [];
+    const prev =
+      state.checkpoints.length >= 2 ? state.checkpoints[state.checkpoints.length - 2] : undefined;
 
     return this.diffTrees(
       state.repoRoot,
@@ -402,7 +383,8 @@ export class RewindManager {
     const state = this.states.get(tabId);
     if (!state?.gitAvailable || state.checkpoints.length === 0) return [];
 
-    const last = state.checkpoints[state.checkpoints.length - 1]!;
+    const last = state.checkpoints[state.checkpoints.length - 1];
+    if (!last) return [];
     return this.diffTrees(state.repoRoot, this.baselineRef(state), last.worktreeTreeSha);
   }
 
@@ -439,15 +421,9 @@ export class RewindManager {
    * Run `git diff` between two refs (or working tree if `to` is empty),
    * then parse into structured FileDiff objects with patches.
    */
-  private async diffTrees(
-    root: string,
-    from: string,
-    to: string,
-  ): Promise<FileDiff[]> {
+  private async diffTrees(root: string, from: string, to: string): Promise<FileDiff[]> {
     try {
-      const args = to
-        ? `diff --unified=3 ${from} ${to}`
-        : `diff --unified=3 ${from}`;
+      const args = to ? `diff --unified=3 ${from} ${to}` : `diff --unified=3 ${from}`;
       const diffText = await git(args, root);
       if (!diffText) return [];
 

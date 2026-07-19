@@ -16,26 +16,25 @@ import {
 import { spawnPreviewChild } from "./preview-process.js";
 import { httpProbe, waitForReady as waitForReadyImpl } from "./preview-readiness.js";
 import {
+  type PortReservation,
   PREVIEW_READY_POLL_MS,
   PREVIEW_READY_TIMEOUT_MS,
-  type PortReservation,
   type PreviewStartRequest,
   type PreviewStartResponse,
 } from "./types.js";
 
+export { folderScope, tabScope, wizardScope } from "../../shared/preview.js";
+export type { PortReservation, PreviewStartRequest, PreviewStartResponse };
 export {
-  PREVIEW_READY_POLL_MS,
-  PREVIEW_READY_TIMEOUT_MS,
-  probeUrlForPortImpl as probeUrlForPort,
-  findFreePortImpl as findFreePort,
   buildExportEnvImpl as buildExportEnv,
   displayUrlForPort,
+  findFreePortImpl as findFreePort,
   PortRegistry,
+  PREVIEW_READY_POLL_MS,
+  PREVIEW_READY_TIMEOUT_MS,
   previewPortRegistry,
+  probeUrlForPortImpl as probeUrlForPort,
 };
-
-export { tabScope, folderScope, wizardScope } from "../../shared/preview.js";
-export type { PreviewStartResponse, PreviewStartRequest, PortReservation };
 
 export type EnsurePreviewOpts = {
   servers?: DevServer[];
@@ -66,9 +65,7 @@ const manager = new PreviewManager({
   emitLine: (line) => lineHandler?.(line),
 });
 
-export function setPreviewStatusHandler(
-  handler: (snapshot: PreviewServerSnapshot) => void,
-): void {
+export function setPreviewStatusHandler(handler: (snapshot: PreviewServerSnapshot) => void): void {
   statusHandler = handler;
 }
 
@@ -122,10 +119,7 @@ export async function stopAllDevServers(): Promise<void> {
   await manager.stopAll();
 }
 
-export function getDevServerStatus(
-  scope: string,
-  serverId?: string,
-): PreviewFleetSnapshot {
+export function getDevServerStatus(scope: string, serverId?: string): PreviewFleetSnapshot {
   return manager.getStatus(scope, serverId);
 }
 

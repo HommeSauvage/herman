@@ -1,12 +1,12 @@
-import { getLogger } from "@logtape/logtape";
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { getLogger } from "@logtape/logtape";
 
 import type { AgentEvent } from "../shared/agent-protocol.js";
 import { AgentBridge } from "./agent-bridge.js";
-import { deletePiSessionFile } from "./pi-session.js";
 import { extractMessagesFromAgentPayload } from "./pi-messages.js";
+import { deletePiSessionFile } from "./pi-session.js";
 
 const logger = getLogger(["herman-desktop", "headless-agent"]);
 
@@ -26,7 +26,6 @@ function extractTextFromMessage(message: Record<string, unknown> | undefined): s
     if (part && typeof part === "object") {
       const p = part as Record<string, unknown>;
       if (typeof p.text === "string") parts.push(p.text);
-      else if (p.type === "text" && typeof p.text === "string") parts.push(p.text);
     }
   }
   return parts.join("");
@@ -128,16 +127,15 @@ export async function runHeadlessAgentPrompt(opts: {
       settle?.();
     }
 
-    await Promise.race([
-      done,
-      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-    ]);
+    await Promise.race([done, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
 
     if (!assistantText.trim()) {
       try {
         const response = await bridge.sendCommand({ type: "get_messages" });
         if (response.success && response.data && typeof response.data === "object") {
-          const messages = extractMessagesFromAgentPayload(response.data as Record<string, unknown>);
+          const messages = extractMessagesFromAgentPayload(
+            response.data as Record<string, unknown>,
+          );
           if (messages) {
             for (let i = messages.length - 1; i >= 0; i--) {
               const msg = messages[i];

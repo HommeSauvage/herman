@@ -2,19 +2,19 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
+import { mergeAgentSettings } from "../../src/bun/agent-config-sync.js";
 import {
   extractMessagesFromAgentPayload,
   normalizeContentText,
   normalizePiMessage,
 } from "../../src/bun/pi-messages.js";
-import { mergeAgentSettings } from "../../src/bun/agent-config-sync.js";
-import { hasPiSessionFile, readPiSessionFilePath, resolvePiSessionFile, resolvePiSessionResumeArg } from "../../src/bun/pi-session.js";
+import {
+  hasPiSessionFile,
+  readPiSessionFilePath,
+  resolvePiSessionFile,
+  resolvePiSessionResumeArg,
+} from "../../src/bun/pi-session.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
 
 let tempDir: string;
 

@@ -1,7 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { config } from "../env.js";
-import { createHostBridgeClient, HostBridgeRequestError, HostBridgeUnavailableError } from "../host-bridge/client.js";
+import {
+  createHostBridgeClient,
+  HostBridgeRequestError,
+  HostBridgeUnavailableError,
+} from "../host-bridge/client.js";
 import { formatPreviewStateBlock } from "../prompts/preview-state.js";
 
 const SESSION_INFO_UNAVAILABLE =
@@ -22,7 +26,8 @@ export default function previewContextExtension(pi: ExtensionAPI) {
     label: "Get Session Info",
     description:
       "Fetch the current Herman session's live project path, worktree, and preview URL/port from the desktop host. Call this before answering how to open or visit the site, or whenever you need the real localhost URL — preferred ports in herman.yaml/README may differ at runtime.",
-    promptSnippet: "Get live preview URL, port, and project/worktree details for this Herman session",
+    promptSnippet:
+      "Get live preview URL, port, and project/worktree details for this Herman session",
     promptGuidelines: [
       "Call herman_get_session_info before giving the user any localhost link or telling them how to open the preview.",
       "Use the returned preview.primaryUrl (or a ready server url) — never invent ports from the manifest or docs.",
@@ -35,7 +40,7 @@ export default function previewContextExtension(pi: ExtensionAPI) {
       additionalProperties: false,
     } as never,
 
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx: ExtensionContext) {
       if (!client.isAvailable()) {
         return {
           content: [{ type: "text", text: SESSION_INFO_UNAVAILABLE }],
@@ -88,7 +93,8 @@ export default function previewContextExtension(pi: ExtensionAPI) {
         environment: {
           type: "string",
           enum: ["console", "server"],
-          description: "'console' = browser console of the preview pane; 'server' = dev server terminal output",
+          description:
+            "'console' = browser console of the preview pane; 'server' = dev server terminal output",
         },
         maxLinesBeforeAfter: {
           type: "number",
@@ -107,7 +113,7 @@ export default function previewContextExtension(pi: ExtensionAPI) {
       additionalProperties: false,
     } as never,
 
-    async execute(_toolCallId, rawParams, _signal, _onUpdate, ctx: ExtensionContext) {
+    async execute(_toolCallId, rawParams, _signal, _onUpdate, _ctx: ExtensionContext) {
       const params = rawParams as Record<string, unknown>;
       if (!client.isAvailable()) {
         return {
@@ -121,19 +127,27 @@ export default function previewContextExtension(pi: ExtensionAPI) {
           environment: params.environment as "console" | "server",
           ...(params.serverId ? { serverId: params.serverId as string } : {}),
           ...(params.maxEntries != null ? { maxEntries: params.maxEntries as number } : {}),
-          ...(params.maxLinesBeforeAfter != null ? { maxLinesBeforeAfter: params.maxLinesBeforeAfter as number } : {}),
+          ...(params.maxLinesBeforeAfter != null
+            ? { maxLinesBeforeAfter: params.maxLinesBeforeAfter as number }
+            : {}),
         };
 
         const result = await client.getPreviewLogs(config.tabId, query);
 
-        const phaseLabel = result.phase === "ready" ? "ready"
-          : result.phase === "failed" ? "failed"
-          : result.phase === "starting" ? "starting"
-          : result.phase === "installing" ? "installing"
-          : "not running";
+        const phaseLabel =
+          result.phase === "ready"
+            ? "ready"
+            : result.phase === "failed"
+              ? "failed"
+              : result.phase === "starting"
+                ? "starting"
+                : result.phase === "installing"
+                  ? "installing"
+                  : "not running";
         let header = `Preview: ${phaseLabel}`;
         if (result.url) header += ` — ${result.url}`;
-        if (result.currentUrl && result.currentUrl !== result.url) header += ` · viewing ${result.currentUrl}`;
+        if (result.currentUrl && result.currentUrl !== result.url)
+          header += ` · viewing ${result.currentUrl}`;
 
         // Service already includes the dropped-entries footer in result.text.
         const text = `${header}\n\n${result.text}`;
@@ -150,16 +164,22 @@ export default function previewContextExtension(pi: ExtensionAPI) {
           };
         }
         if (err instanceof HostBridgeRequestError) {
-          const unavailableText = err.code === "tab_not_found"
-            ? "No preview tab is active. Open a project to see preview logs."
-            : `Could not fetch preview logs from Herman Desktop (${err.code}). Do not invent errors or log output.`;
+          const unavailableText =
+            err.code === "tab_not_found"
+              ? "No preview tab is active. Open a project to see preview logs."
+              : `Could not fetch preview logs from Herman Desktop (${err.code}). Do not invent errors or log output.`;
           return {
             content: [{ type: "text", text: unavailableText }],
             details: { error: err.code },
           };
         }
         return {
-          content: [{ type: "text", text: "Could not fetch preview logs from Herman Desktop. Do not invent errors or log output." }],
+          content: [
+            {
+              type: "text",
+              text: "Could not fetch preview logs from Herman Desktop. Do not invent errors or log output.",
+            },
+          ],
           details: { error: "unknown" },
         };
       }
@@ -167,7 +187,7 @@ export default function previewContextExtension(pi: ExtensionAPI) {
   });
 
   // ── before_agent_start: inject preview state block (rookie only) ──
-  pi.on("before_agent_start", async (event, ctx) => {
+  pi.on("before_agent_start", async (event, _ctx) => {
     if (config.mode !== "rookie") return;
     if (!client.isAvailable()) return;
 
@@ -178,7 +198,7 @@ export default function previewContextExtension(pi: ExtensionAPI) {
       const block = formatPreviewStateBlock(state);
       if (!block) return;
 
-      return { systemPrompt: event.systemPrompt + "\n\n" + block };
+      return { systemPrompt: `${event.systemPrompt}\n\n${block}` };
     } catch {
       // Silently skip on any error.
       return;

@@ -91,7 +91,10 @@ export function readPiSessionId(piSessionId?: string): string | undefined {
  * Returns the session file path when an explicit piSessionId matches
  * a file on disk. Returns undefined otherwise (fresh session).
  */
-export function resolvePiSessionResumeArg(agentDir: string, piSessionId?: string): string | undefined {
+export function resolvePiSessionResumeArg(
+  agentDir: string,
+  piSessionId?: string,
+): string | undefined {
   if (!piSessionId) return undefined;
 
   const sessionsDir = join(agentDir, "sessions");

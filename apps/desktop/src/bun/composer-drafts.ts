@@ -1,11 +1,10 @@
-import { getLogger } from "@logtape/logtape";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
-
+import { getLogger } from "@logtape/logtape";
+import { logStorageError } from "../logging-shared.js";
 import type { TabId } from "../shared/tab-utils.js";
 import { draftsDir as appDraftsDir } from "./app-paths.js";
 import { ensureDir } from "./fs-utils.js";
-import { logStorageError } from "../logging-shared.js";
 
 const logger = getLogger(["herman-desktop", "storage"]);
 

@@ -1,17 +1,13 @@
+import type { PreviewConsoleEntry } from "@herman/rpc/host-bridge";
 import {
+  type CSSProperties,
   forwardRef,
   useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
-  type CSSProperties,
 } from "react";
-
-import {
-  PREVIEW_CONSOLE_PRELOAD,
-  parsePreviewHostMessage,
-} from "../lib/preview-webview-bridge.js";
-import type { PreviewConsoleEntry } from "@herman/rpc/host-bridge";
+import { PREVIEW_CONSOLE_PRELOAD, parsePreviewHostMessage } from "../lib/preview-webview-bridge.js";
 
 const PREVIEW_NAV_RULES = [
   "^*",

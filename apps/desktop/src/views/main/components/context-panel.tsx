@@ -2,14 +2,9 @@ import { Badge } from "@herman/ui/components/badge";
 import { Separator } from "@herman/ui/components/separator";
 import { cn } from "@herman/ui/lib/utils";
 import { useShallow } from "zustand/react/shallow";
-
-import { ContextPanelCard } from "./context-panel-card.js";
-
-import {
-  formatCost,
-  formatTokenCount,
-} from "../../../shared/context-stats.js";
+import { formatCost, formatTokenCount } from "../../../shared/context-stats.js";
 import { useAgentStore } from "../lib/agent-store.js";
+import { ContextPanelCard } from "./context-panel-card.js";
 
 function StatRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -26,7 +21,9 @@ export function ContextPanel() {
       const tab = s.activeTabId ? s.tabs[s.activeTabId] : undefined;
       const stats = tab?.contextStats;
       const currentModel = tab?.currentModel;
-      const [providerId, modelId] = currentModel ? currentModel.split("/", 2) : [undefined, undefined];
+      const [providerId, modelId] = currentModel
+        ? currentModel.split("/", 2)
+        : [undefined, undefined];
       return {
         stats,
         modelId: modelId ?? currentModel,
@@ -56,9 +53,7 @@ export function ContextPanel() {
   return (
     <div className="flex h-full flex-col overflow-hidden" data-component="context-panel">
       <div className="flex items-center gap-2 border-b border-white/[0.06] px-3 py-2.5">
-        <h3 className="text-ghost text-[10px] font-bold tracking-[0.12em] uppercase">
-          Context
-        </h3>
+        <h3 className="text-ghost text-[10px] font-bold tracking-[0.12em] uppercase">Context</h3>
         <Badge
           variant="outline"
           className={
@@ -82,18 +77,14 @@ export function ContextPanel() {
             <div
               className={cn(
                 "h-full rounded-full transition-all duration-500",
-                isCritical
-                  ? "bg-red-500"
-                  : isHigh
-                    ? "bg-amber-500"
-                    : "bg-signal",
+                isCritical ? "bg-red-500" : isHigh ? "bg-amber-500" : "bg-signal",
               )}
               style={{ width: `${Math.min(percentage, 100)}%` }}
             />
           </div>
           <div className="mt-2 text-faint text-[10px]">
-            Estimated from the latest assistant message usage plus character-count
-            heuristics for newer messages.
+            Estimated from the latest assistant message usage plus character-count heuristics for
+            newer messages.
           </div>
         </ContextPanelCard>
 

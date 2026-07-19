@@ -9,11 +9,21 @@ export const HOST_BRIDGE_ROUTES = {
   sessionInfo: (tabId: string) => `/v1/tabs/${encodeURIComponent(tabId)}/session-info`,
   previewState: (tabId: string) => `/v1/tabs/${encodeURIComponent(tabId)}/preview/state`,
   previewLogs: (tabId: string) => `/v1/tabs/${encodeURIComponent(tabId)}/preview/logs`,
+  browserGoto: (tabId: string) => `/v1/tabs/${encodeURIComponent(tabId)}/browser/goto`,
+  browserScreenshot: (tabId: string) => `/v1/tabs/${encodeURIComponent(tabId)}/browser/screenshot`,
+  browserAct: (tabId: string) => `/v1/tabs/${encodeURIComponent(tabId)}/browser/act`,
+  publishingConfig: (tabId: string) => `/v1/tabs/${encodeURIComponent(tabId)}/publishing/config`,
 } as const;
 
 export type HostBridgeErrorCode =
-  | "unauthorized" | "not_found" | "bad_request"
-  | "tab_not_found" | "no_preview" | "internal";
+  | "unauthorized"
+  | "not_found"
+  | "bad_request"
+  | "tab_not_found"
+  | "no_preview"
+  | "browser_unavailable"
+  | "no_publishing_config"
+  | "internal";
 
 export type HostBridgeErrorBody = { error: string; code: HostBridgeErrorCode };
 
@@ -113,16 +123,97 @@ export type HostBridgePreviewLogs = {
  *  renderer → bun. Also the console ring element. */
 export type PreviewConsoleEntry = {
   level: "error" | "warn" | "info" | "log" | "debug";
-  message: string;   // ≤ 2000 chars
-  stack?: string;    // ≤ 2000 chars
+  message: string; // ≤ 2000 chars
+  stack?: string; // ≤ 2000 chars
   url: string;
   ts: number;
+};
+
+/** Result of a headless browser navigation (load + settle). */
+export type BrowserGotoResult = {
+  ok: boolean;
+  status?: number;
+  url: string;
+  pageErrors: string[];
+  consoleErrors: string[];
+};
+
+/** One step in a headless browser interaction sequence. */
+export type BrowserActionStep =
+  | { action: "click"; selector: string }
+  | { action: "fill"; selector: string; text: string }
+  | { action: "press"; key: string }
+  | { action: "scroll"; y: number };
+
+/** POST /v1/tabs/:tabId/browser/goto — body: `{ url?: string; path?: string }`. */
+export type HostBridgeBrowserGoto = BrowserGotoResult & { available: boolean };
+
+/** GET /v1/tabs/:tabId/browser/screenshot */
+export type HostBridgeBrowserScreenshot = {
+  available: boolean;
+  data?: string;
+  mediaType?: "image/jpeg";
+  url?: string;
+};
+
+/** POST /v1/tabs/:tabId/browser/act — body: `{ steps: BrowserActionStep[] }`. */
+export type HostBridgeBrowserAct = {
+  available: boolean;
+  ok: boolean;
+  error?: string;
+  url?: string;
+};
+
+/** Mirrors apps/desktop/src/shared/publishing.ts PublishingStatus (kept as a
+ *  literal union here because @herman/rpc must stay desktop-independent). */
+export type HostBridgePublishingStatus =
+  | "none"
+  | "server_ready"
+  | "coolify_installed"
+  | "project_created"
+  | "deployed";
+
+/**
+ * GET /v1/tabs/:tabId/publishing/config — the full publishing configuration
+ * for the tab's project, INCLUDING the Coolify API token. The agent runs
+ * locally as the user and needs the token to drive the Coolify CLI; the
+ * desktop strips it only from renderer-facing views.
+ */
+export type HostBridgePublishingConfig = {
+  version: 1;
+  projectPath: string;
+  serverIp?: string;
+  sshKeyPath?: string;
+  sshPublicKey?: string;
+  coolifyUrl?: string;
+  coolifyApiToken?: string;
+  coolifyProjectId?: string;
+  coolifyProjectName?: string;
+  coolifyApplicationId?: string;
+  domain?: string;
+  status: HostBridgePublishingStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/**
+ * POST /v1/tabs/:tabId/publishing/config — agent write-back after deploying.
+ * Only deployment results are writable by the agent (connection fields are
+ * owned by the Publishing screen). Field semantics: absent = unchanged,
+ * null = clear, string = set. `status` can only advance in the pipeline.
+ */
+export type HostBridgePublishingUpdate = {
+  coolifyProjectId?: string | null;
+  coolifyProjectName?: string | null;
+  coolifyApplicationId?: string | null;
+  domain?: string | null;
+  status?: HostBridgePublishingStatus;
 };
 
 /** Defaults shared by both sides (client fills them; host clamps them). */
 export const PREVIEW_LOGS_DEFAULT_MAX_ENTRIES = 50;
 export const PREVIEW_LOGS_MAX_ENTRIES = 200;
-export const PREVIEW_LOGS_DEFAULT_CONTEXT = 25;   // == ERROR_CONTEXT_LINES precedent
+export const PREVIEW_LOGS_DEFAULT_CONTEXT = 25; // == ERROR_CONTEXT_LINES precedent
 export const PREVIEW_LOGS_MAX_CONTEXT = 100;
 export const PREVIEW_TOOL_TEXT_MAX_CHARS = 12_000; // matches preview-errors.ts MAX_FORMATTED_ERRORS_CHARS
 export const RECENT_ERRORS_WINDOW_MS = 5 * 60_000;

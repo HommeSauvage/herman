@@ -87,12 +87,7 @@ describe("mergeCatalogModels", () => {
       custom: { openai: ["gpt-4o"], anthropic: ["claude"] },
       hermanEnabled: true,
     });
-    expect(merged).toEqual([
-      "herman/glm",
-      "herman/kimi",
-      "anthropic/claude",
-      "openai/gpt-4o",
-    ]);
+    expect(merged).toEqual(["herman/glm", "herman/kimi", "anthropic/claude", "openai/gpt-4o"]);
   });
 
   it("drops herman models entirely when the provider is disabled", () => {

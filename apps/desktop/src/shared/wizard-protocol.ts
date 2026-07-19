@@ -104,7 +104,10 @@ export const DEFAULT_VISUAL_TONE_QUESTION: WizardAskQuestion = {
   ],
 };
 
-const CORE_WIZARD_QUESTION_IDS = new Set<string>([PROJECT_NAME_QUESTION_ID, VISUAL_TONE_QUESTION_ID]);
+const CORE_WIZARD_QUESTION_IDS = new Set<string>([
+  PROJECT_NAME_QUESTION_ID,
+  VISUAL_TONE_QUESTION_ID,
+]);
 
 /** Order a wizard batch: projectName first, template-specific questions in the middle, visualTone last. */
 export function orderWizardQuestionBatch(
@@ -140,7 +143,10 @@ export function ensureCoreWizardQuestions(questions: WizardAskQuestion[]): Wizar
 
 /** @deprecated Use orderWizardQuestionBatch / ensureCoreWizardQuestions */
 export function ensureProjectNameFirst(questions: WizardAskQuestion[]): WizardAskQuestion[] {
-  return orderWizardQuestionBatch(questions, { includeProjectName: true, includeVisualTone: false });
+  return orderWizardQuestionBatch(questions, {
+    includeProjectName: true,
+    includeVisualTone: false,
+  });
 }
 
 export function encodeWizardEnvelope(envelope: WizardAskEnvelope): string {
@@ -252,6 +258,89 @@ export function tryParseInstallEnvelope(
     if (obj.version !== INSTALL_PROTOCOL_VERSION) return undefined;
     if (typeof obj.toolId !== "string" || typeof obj.label !== "string") return undefined;
     return obj as unknown as WizardInstallEnvelope;
+  } catch {
+    return undefined;
+  }
+}
+
+// ── Host-enforced phase gates (herman_complete_wizard) ───────────────────────
+//
+// The coding/QA completion tool blocks on a ctx.ui.editor() round-trip carrying
+// a gate envelope. The host runs wizard-verify and replies with pass/fail so
+// the pi-goal loop can continue on failure. Uses the editor channel (no
+// timeout) rather than the host-bridge HTTP API (1.5–3s timeouts).
+
+export const GATE_SENTINEL = "__herman_gate__" as const;
+export const GATE_PROTOCOL_VERSION = 1;
+
+export type WizardGateEnvelope = {
+  __herman_gate__: true;
+  version: 1;
+  /** Hint only — the host uses its own phase state, never trusts this. */
+  phase: "coding" | "qa" | "docs" | "planning" | "design" | "unknown";
+  projectPath: string;
+  summary?: string;
+};
+
+export type WizardGateResponse = {
+  passed: boolean;
+  /** Machine-generated failure/warning report, markdown, shown to the model. */
+  report: string;
+  /** True when the host gave up gating (rejection cap) and force-passed. */
+  forced?: boolean;
+};
+
+export function encodeGateEnvelope(envelope: WizardGateEnvelope): string {
+  return JSON.stringify(envelope);
+}
+
+/** Detect + parse a gate envelope from an `editor` request's prefill. */
+export function tryParseGateEnvelope(prefill: string | undefined): WizardGateEnvelope | undefined {
+  if (!prefill) return undefined;
+  const trimmed = prefill.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const obj = parsed as Record<string, unknown>;
+    if (obj.__herman_gate__ !== true) return undefined;
+    if (obj.version !== GATE_PROTOCOL_VERSION) return undefined;
+    if (typeof obj.projectPath !== "string") return undefined;
+    return {
+      __herman_gate__: true,
+      version: 1,
+      phase:
+        obj.phase === "coding" ||
+        obj.phase === "qa" ||
+        obj.phase === "docs" ||
+        obj.phase === "planning" ||
+        obj.phase === "design"
+          ? obj.phase
+          : "unknown",
+      projectPath: obj.projectPath,
+      ...(typeof obj.summary === "string" ? { summary: obj.summary } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function encodeGateResponse(response: WizardGateResponse): string {
+  return JSON.stringify(response);
+}
+
+export function parseGateResponse(value: string | undefined): WizardGateResponse | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const obj = parsed as Record<string, unknown>;
+    if (typeof obj.passed !== "boolean") return undefined;
+    return {
+      passed: obj.passed,
+      report: typeof obj.report === "string" ? obj.report : "",
+      ...(obj.forced === true ? { forced: true } : {}),
+    };
   } catch {
     return undefined;
   }

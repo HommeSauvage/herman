@@ -2,13 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
 import { readSessionSnapshot } from "../../src/bun/session-snapshot.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
 
 let tempDir: string;
 
@@ -37,7 +32,7 @@ describe("readSessionSnapshot", () => {
     const file = join(sessionsDir, `2026-07-09T00-00-00-000Z_${sessionId}.jsonl`);
     writeFileSync(
       file,
-      [
+      `${[
         JSON.stringify({
           type: "session",
           version: 3,
@@ -63,10 +58,21 @@ describe("readSessionSnapshot", () => {
             content: "hi",
             provider: "anthropic",
             model: "claude-sonnet-4.6",
-            usage: { input: 100, output: 20, cacheRead: 5, cacheWrite: 0, cost: { total_prompt: 0.001, cost_completion: 0.002, cost_total: 0.003, total: 0.003 } },
+            usage: {
+              input: 100,
+              output: 20,
+              cacheRead: 5,
+              cacheWrite: 0,
+              cost: {
+                total_prompt: 0.001,
+                cost_completion: 0.002,
+                cost_total: 0.003,
+                total: 0.003,
+              },
+            },
           },
         }),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
 
     const snapshot = readSessionSnapshot(tabId, sessionId);
@@ -95,7 +101,7 @@ describe("readSessionSnapshot", () => {
     const newer = join(sessionsDir, "2026-07-09T00-00-00-000Z_empty-new.jsonl");
     writeFileSync(
       older,
-      [
+      `${[
         JSON.stringify({
           type: "session",
           version: 3,
@@ -110,17 +116,17 @@ describe("readSessionSnapshot", () => {
           timestamp: "2026-07-08T00:00:01.000Z",
           message: { id: "u1", role: "user", content: "from persisted session" },
         }),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
     writeFileSync(
       newer,
-      JSON.stringify({
+      `${JSON.stringify({
         type: "session",
         version: 3,
         id: "empty-new",
         timestamp: "2026-07-09T00:00:00.000Z",
         cwd: "/project",
-      }) + "\n",
+      })}\n`,
     );
 
     const snapshot = readSessionSnapshot(tabId, "sess-1");

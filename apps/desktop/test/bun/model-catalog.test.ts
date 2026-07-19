@@ -1,17 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
-import {
-  ModelCatalogService,
-  type ModelCatalogSnapshot,
-} from "../../src/bun/model-catalog.js";
+import { ModelCatalogService, type ModelCatalogSnapshot } from "../../src/bun/model-catalog.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
 
 const SERVER = "http://herman.test";
 
@@ -43,7 +35,8 @@ function mockFetch(sequence: FetchBehavior[]): {
   let index = 0;
   const fetchImpl = (async (url: unknown) => {
     calls.push(String(url));
-    const behavior = sequence[Math.min(index, sequence.length - 1)]!;
+    const behavior = sequence[Math.min(index, sequence.length - 1)];
+    if (!behavior) throw new Error("test precondition: empty sequence");
     index += 1;
     if ("throws" in behavior) throw new Error("network down");
     if (!behavior.ok) {
@@ -248,10 +241,9 @@ describe("ModelCatalogService.ingestAgentModels", () => {
   it("merges custom-provider models and persists them", () => {
     const service = createService();
 
-    service.ingestAgentModels(
-      ["herman/kimi", "openai/gpt-4o", "openai/gpt-4o-mini"],
-      { "openai/gpt-4o": { contextWindow: 128_000 } },
-    );
+    service.ingestAgentModels(["herman/kimi", "openai/gpt-4o", "openai/gpt-4o-mini"], {
+      "openai/gpt-4o": { contextWindow: 128_000 },
+    });
     const snapshot = service.getSnapshot();
 
     // herman entries from agents are ignored — the server list owns herman.

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  TOOL_REGISTRY,
   getRequiredTier0Ids,
   getStrategy,
   getToolEntry,
   orderByDependency,
+  TOOL_REGISTRY,
 } from "../../src/shared/tool-registry.js";
 
 describe("tool registry", () => {
@@ -42,12 +42,14 @@ describe("tool registry", () => {
     for (const id of ["php", "composer", "node"]) {
       const entry = getToolEntry(id);
       expect(entry).toBeDefined();
-      expect(getStrategy(entry!, "macos")?.kind).toBe("brew-formula");
+      if (!entry) throw new Error("test precondition: expected tool entry");
+      expect(getStrategy(entry, "macos")?.kind).toBe("brew-formula");
     }
   });
 
   it("docker is manual everywhere (guided install, never silent)", () => {
-    const docker = getToolEntry("docker")!;
+    const docker = getToolEntry("docker");
+    if (!docker) throw new Error("test precondition: expected docker entry");
     for (const platform of ["macos", "windows", "linux"] as const) {
       expect(getStrategy(docker, platform)?.kind).toBe("manual");
     }

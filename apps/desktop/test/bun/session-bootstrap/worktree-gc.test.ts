@@ -2,8 +2,6 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import { createTestTempDir, removeTestTempDir } from "../../helpers/temp-dir.js";
 import { git } from "../../../src/bun/rewind-core.js";
 import { collectOrphanWorktrees } from "../../../src/bun/session-bootstrap/worktree-gc.js";
 import {
@@ -11,6 +9,7 @@ import {
   initProjectRepo,
   removeSessionWorktree,
 } from "../../../src/bun/worktree.js";
+import { createTestTempDir, removeTestTempDir } from "../../helpers/temp-dir.js";
 
 const dirs: string[] = [];
 let worktreesDir: string;
@@ -82,7 +81,10 @@ describe("collectOrphanWorktrees", () => {
     expect(report.removedWorktrees).toContain(orphan.folderPath);
 
     // The orphan's branch was deleted; the known session's branch remains.
-    const branches = await git(`branch --list 'herman/session/*' --format='%(refname:short)'`, project);
+    const branches = await git(
+      `branch --list 'herman/session/*' --format='%(refname:short)'`,
+      project,
+    );
     expect(branches).not.toContain("aaaaaaaa");
     expect(branches).toContain("bbbbbbbb");
 
@@ -115,7 +117,10 @@ describe("collectOrphanWorktrees", () => {
     });
 
     expect(report.deletedBranches).toEqual([]);
-    const branches = await git(`branch --list 'herman/session/*' --format='%(refname:short)'`, project);
+    const branches = await git(
+      `branch --list 'herman/session/*' --format='%(refname:short)'`,
+      project,
+    );
     expect(branches).toContain("dddddddd");
 
     await removeSessionWorktree({ folderPath: kept.folderPath, worktree: kept.worktree });

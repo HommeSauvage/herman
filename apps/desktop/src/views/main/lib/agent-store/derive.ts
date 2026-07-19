@@ -1,5 +1,5 @@
-import type { AgentState, Tab } from "./types.js";
 import { shallowEqual } from "./compare.js";
+import type { AgentState, Tab } from "./types.js";
 
 export function deriveSession(activeTab: Tab | undefined): AgentState["session"] {
   return {
@@ -41,5 +41,3 @@ export function rebuildDerived(
     ui: shallowEqual(ui, state.ui) ? state.ui : ui,
   };
 }
-
-

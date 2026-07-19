@@ -1,18 +1,13 @@
-import { motion } from "motion/react";
 import { getLogger } from "@logtape/logtape";
+import { motion } from "motion/react";
 import { useCallback, useMemo, useState } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { toast } from "sonner";
-
-import type { Message } from "../../../shared/rpc.js";
-import type { TabId } from "../../../shared/rpc.js";
+import { useShallow } from "zustand/react/shallow";
+import type { Message, TabId } from "../../../shared/rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
 import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useIsHermanProvider } from "../lib/model-utils.js";
-import {
-  computeRenderItems,
-  useStableRenderItems,
-} from "../lib/render-items.js";
+import { computeRenderItems, useStableRenderItems } from "../lib/render-items.js";
 import { ContextToolGroup } from "./context-tool-group.js";
 import { MessageItem } from "./message-item.js";
 import { NativeAdMessage } from "./native-ad-message.js";
@@ -34,14 +29,10 @@ export function MessageList({
   revertEnabled?: boolean;
 }) {
   const revertMessageId = useAgentStore(
-    useShallow((s) =>
-      tabId ? s.tabs[tabId]?.revertMessageId : undefined,
-    ),
+    useShallow((s) => (tabId ? s.tabs[tabId]?.revertMessageId : undefined)),
   );
   const nativeAds = useAgentStore(
-    useShallow((s) =>
-      tabId ? (s.tabs[tabId]?.nativeAds ?? []) : [],
-    ),
+    useShallow((s) => (tabId ? (s.tabs[tabId]?.nativeAds ?? []) : [])),
   );
   const isHermanProvider = useIsHermanProvider();
 
@@ -51,7 +42,9 @@ export function MessageList({
       const tab = s.tabs[tabId];
       return {
         showThinking: tab?.showThinking ?? false,
-        thinkingMessages: tab?.showThinking ? tab?.thinkingMessages ?? EMPTY_THINKING : EMPTY_THINKING,
+        thinkingMessages: tab?.showThinking
+          ? (tab?.thinkingMessages ?? EMPTY_THINKING)
+          : EMPTY_THINKING,
       };
     }),
   );
@@ -95,7 +88,7 @@ export function MessageList({
         const messageIndex = tab.messages.findIndex((m) => m.id === messageId);
         if (messageIndex === -1) return;
         const targetMessage = tab.messages[messageIndex];
-        if (!targetMessage || targetMessage.role !== "user") return;
+        if (targetMessage?.role !== "user") return;
 
         state.revertTab(tabId, messageId);
         state.setComposerValue(tabId, targetMessage.content);
@@ -135,7 +128,7 @@ export function MessageList({
       const messageIndex = tab.messages.findIndex((m) => m.id === messageId);
       if (messageIndex === -1) return;
       const targetMessage = tab.messages[messageIndex];
-      if (!targetMessage || targetMessage.role !== "user") return;
+      if (targetMessage?.role !== "user") return;
       const preview = targetMessage.content.split("\n")[0] ?? targetMessage.content;
       setPendingUndo({
         messageId,

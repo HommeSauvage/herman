@@ -1,11 +1,10 @@
-import { getLogger } from "@logtape/logtape";
 import { Database } from "bun:sqlite";
-
-import { dbPath } from "./app-paths.js";
-import { migrations } from "./persistence/migrations/index.js";
 import { dirname } from "node:path";
-import { ensureDir } from "./fs-utils.js";
+import { getLogger } from "@logtape/logtape";
 import { logStorageError } from "../logging-shared.js";
+import { dbPath } from "./app-paths.js";
+import { ensureDir } from "./fs-utils.js";
+import { migrations } from "./persistence/migrations/index.js";
 
 const logger = getLogger(["herman-desktop", "storage"]);
 
@@ -33,6 +32,16 @@ export function getDb(): Database {
   }
 
   return _db;
+}
+
+/** Test-only hook: close the singleton so a new HERMAN_APP_DIR takes effect. */
+export function __resetDbForTests(): void {
+  try {
+    _db?.close();
+  } catch {
+    // already closed
+  }
+  _db = undefined;
 }
 
 function runMigrations(db: Database): void {

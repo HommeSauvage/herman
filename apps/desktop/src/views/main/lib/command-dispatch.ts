@@ -2,7 +2,7 @@ import { useEffect } from "react";
 
 import { activateTab, closeTab, createTab, openProject } from "./agent-actions.js";
 import { useAgentStore } from "./agent-store.js";
-import { resolveShortcutCommand, type CommandId } from "./commands.js";
+import { type CommandId, resolveShortcutCommand } from "./commands.js";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -15,7 +15,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 function resolveTabIndexFromCommand(command: CommandId): number | null {
   const match = command.match(/^tab\.activate\.(\d)$/);
   if (!match) return null;
-  return Number.parseInt(match[1]!, 10) - 1;
+  return Number.parseInt(match[1] as string, 10) - 1;
 }
 
 function activateTabByIndex(index: number): void {

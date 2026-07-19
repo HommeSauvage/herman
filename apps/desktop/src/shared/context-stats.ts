@@ -8,8 +8,6 @@
  * the live stream.
  */
 
-import type { ContextStats } from "./rpc.js";
-
 export type { ContextStats } from "./rpc.js";
 
 /** Format a token count with k/M suffixes (e.g. 12345 -> "12.3k"). */

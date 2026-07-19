@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAdEventFromNotify, parseHermanEventFromNotify } from "../../src/shared/agent-protocol.js";
+import {
+  parseAdEventFromNotify,
+  parseHermanEventFromNotify,
+} from "../../src/shared/agent-protocol.js";
 
 describe("parseAdEventFromNotify", () => {
   const validCampaign = {
@@ -88,7 +91,6 @@ describe("parseAdEventFromNotify", () => {
     expect(event?.campaign).not.toHaveProperty("extra");
   });
 });
-
 
 describe("parseHermanEventFromNotify", () => {
   it("parses models_sync with model metadata", () => {

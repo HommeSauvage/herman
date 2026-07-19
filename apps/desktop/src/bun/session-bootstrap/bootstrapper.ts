@@ -1,7 +1,6 @@
 import { getLogger } from "@logtape/logtape";
 
-import type {
-  ProjectManifestView} from "../../shared/herman-manifest.js";
+import type { ProjectManifestView } from "../../shared/herman-manifest.js";
 import type { PreviewServerLogLine } from "../../shared/preview.js";
 import { tabScope } from "../../shared/preview.js";
 import type {
@@ -13,20 +12,17 @@ import type {
   TabId,
 } from "../../shared/rpc.js";
 import { getProjectName } from "../../shared/tab-utils.js";
+import type { PortRegistry, PortReservation } from "../preview/port-registry.js";
 import { readProjectManifest } from "../project-manifest.js";
 import { isGitRepo } from "../rewind-core.js";
-import { planHash, resolveSetupPlan, type ResolvedSetupPlan } from "../setup-plan.js";
-import {
-  createSessionWorktree,
-  ensureSessionWorktree,
-} from "../worktree.js";
-import type { PortRegistry, PortReservation } from "../preview/port-registry.js";
+import { planHash, type ResolvedSetupPlan, resolveSetupPlan } from "../setup-plan.js";
+import { createSessionWorktree, ensureSessionWorktree } from "../worktree.js";
 import {
   ENV_BASE_STEP_ID,
   ENV_GENERATE_STEP_ID,
   SETUP_SERVER_ID,
-  WorkspaceSetupRunner,
   type SessionBindingValues,
+  WorkspaceSetupRunner,
 } from "./setup-runner.js";
 
 const logger = getLogger(["herman-desktop", "session-bootstrap"]);
@@ -153,7 +149,8 @@ export class SessionBootstrapper {
 
   private pump(): void {
     while (this.active < MAX_CONCURRENT_SETUPS && this.queue.length > 0) {
-      const job = this.queue.shift()!;
+      const job = this.queue.shift();
+      if (!job) break;
       this.active++;
       void this.runPipeline(job.tabId, job.intent)
         .catch((error) => {
@@ -181,9 +178,7 @@ export class SessionBootstrapper {
     // ── 1. plan: isolation (persisted wins — never upgrade direct→worktree) ──
     let isolation = persisted?.isolation;
     if (!isolation) {
-      isolation = tab.worktree
-        ? "worktree"
-        : await resolveIsolationPolicy(mode, projectRoot);
+      isolation = tab.worktree ? "worktree" : await resolveIsolationPolicy(mode, projectRoot);
       this.deps.patchPersisted(tabId, { isolation });
     }
 
@@ -272,7 +267,9 @@ export class SessionBootstrapper {
         const running = steps.find((s) => s.status === "running");
         this.setSetup(tabId, {
           phase: "pending",
-          ...(running ? { step: running.id, label: running.label } : { label: "Setting up your workspace…" }),
+          ...(running
+            ? { step: running.id, label: running.label }
+            : { label: "Setting up your workspace…" }),
           steps,
         });
       },
@@ -288,7 +285,12 @@ export class SessionBootstrapper {
       },
     });
 
-    const result = await runner.run({ workspace: folderPath, mainRoot: projectRoot, plan, bindings });
+    const result = await runner.run({
+      workspace: folderPath,
+      mainRoot: projectRoot,
+      plan,
+      bindings,
+    });
     if (!this.deps.isTabOpen(tabId)) return;
 
     if (!result.ok) {

@@ -16,9 +16,7 @@ export function lastTurnHadError(tab: Tab): boolean {
     if (!message) continue;
     if (message.role === "assistant") {
       return (
-        message.stopReason === "error" ||
-        message.stopReason === "aborted" ||
-        !!message.errorMessage
+        message.stopReason === "error" || message.stopReason === "aborted" || !!message.errorMessage
       );
     }
     if (message.role === "user") break;

@@ -102,6 +102,19 @@ export const DevServerSchema = z.object({
   portEnv: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
 });
 
+/**
+ * Host-enforced verification commands run by the wizard coding/QA gates
+ * (`wizard-verify.ts`) before a phase is allowed to advance.
+ */
+export const CheckCommandSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  /** Shell command, run via `sh -c` in the project root. */
+  run: z.string(),
+  /** Seconds (default 300, hard cap 900). */
+  timeout: z.number().optional(),
+});
+
 /** Normalize a string-or-list manifest field to a trimmed non-empty string list. */
 export function normalizeStringList(value: string | string[] | undefined): string[] {
   if (value == null) return [];
@@ -126,6 +139,7 @@ const manifestRuntimeFields = {
   env: EnvConfigV2Schema.optional(),
   setup: z.array(SetupStepSchema).optional(),
   servers: z.array(DevServerSchema).optional(),
+  checks: z.array(CheckCommandSchema).optional(),
 };
 
 /**
@@ -196,9 +210,7 @@ export function migrateV1Manifest(raw: unknown): unknown {
   const dev = input.dev as { install?: string; servers?: unknown } | undefined;
   if (dev && typeof dev === "object") {
     if (typeof dev.install === "string" && dev.install.trim() && out.setup == null) {
-      out.setup = [
-        { id: "install", label: "Running project setup", run: dev.install },
-      ];
+      out.setup = [{ id: "install", label: "Running project setup", run: dev.install }];
     }
     if (dev.servers != null && out.servers == null) {
       out.servers = dev.servers;
@@ -241,11 +253,7 @@ export function migrateV1Manifest(raw: unknown): unknown {
 
 /** True when a raw parsed YAML/frontmatter object declares schema version 1. */
 export function isV1Manifest(raw: unknown): boolean {
-  return (
-    Boolean(raw) &&
-    typeof raw === "object" &&
-    (raw as { version?: unknown }).version === 1
-  );
+  return Boolean(raw) && typeof raw === "object" && (raw as { version?: unknown }).version === 1;
 }
 
 // ── Inferred types ─────────────────────────────────────────────────────────
@@ -257,6 +265,7 @@ export type EnvFile = z.infer<typeof EnvFileSchema>;
 export type EnvConfigV2 = z.infer<typeof EnvConfigV2Schema>;
 export type SetupStep = z.infer<typeof SetupStepSchema>;
 export type DevServer = z.infer<typeof DevServerSchema>;
+export type CheckCommand = z.infer<typeof CheckCommandSchema>;
 export type HermanFrontmatter = z.infer<typeof HermanFrontmatterSchema>;
 export type HermanYaml = z.infer<typeof HermanYamlSchema>;
 
@@ -327,6 +336,8 @@ export type ProjectManifestView = {
   setup?: SetupStep[];
   /** Environment files provisioned before setup steps run. */
   env?: EnvConfigV2;
+  /** Host-enforced verification commands for wizard coding/QA gates. */
+  checks?: CheckCommand[];
   guidance?: string;
   requirements?: Requirement[];
   name?: string;

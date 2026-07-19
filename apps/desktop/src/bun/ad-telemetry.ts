@@ -1,7 +1,6 @@
 import { getLogger } from "@logtape/logtape";
-
-import { loadState } from "./session.js";
 import { reportWindowFocus } from "./herman-api.js";
+import { loadState } from "./session.js";
 
 const logger = getLogger(["herman-desktop", "ad-telemetry"]);
 

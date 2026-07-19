@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import type { TabId } from "../../../shared/rpc.js";
-import { notifyAgentFinished, lastTurnHadError } from "../lib/agent-notifications.js";
+import { lastTurnHadError, notifyAgentFinished } from "../lib/agent-notifications.js";
 import { useAgentStore } from "../lib/agent-store.js";
 
 /** Debounce period: agent must be idle this long before we notify. */
@@ -79,7 +79,12 @@ export function useAgentFinishedNotifications() {
         // Only fire when the agent transitions from working to truly idle.
         // This skips transient false→true→false cycles during auto-retry,
         // crashes, and aborts.
-        if (prevTab.isThinking && !tab.isThinking && isAgentTrulyDone(tab) && !lastTurnHadError(tab)) {
+        if (
+          prevTab.isThinking &&
+          !tab.isThinking &&
+          isAgentTrulyDone(tab) &&
+          !lastTurnHadError(tab)
+        ) {
           // Use thinkingStartedAt as the dedup key.  It is now always set
           // when isThinking becomes true (see applyAgentEvent:agent_start).
           const turnKey = prevTab.thinkingStartedAt;
@@ -99,7 +104,12 @@ export function useAgentFinishedNotifications() {
               // Re-check: the agent may have started another turn while we
               // were waiting.  Fetch the latest tab state from the store.
               const latest = useAgentStore.getState().tabs[tabId];
-              if (!latest || latest.isThinking || !isAgentTrulyDone(latest) || lastTurnHadError(latest)) {
+              if (
+                !latest ||
+                latest.isThinking ||
+                !isAgentTrulyDone(latest) ||
+                lastTurnHadError(latest)
+              ) {
                 return;
               }
 

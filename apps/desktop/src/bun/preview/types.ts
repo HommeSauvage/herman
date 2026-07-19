@@ -2,7 +2,6 @@ import type { Subprocess } from "bun";
 
 import type { DevServer } from "../../shared/herman-manifest.js";
 import type {
-  PreviewFleetSnapshot,
   PreviewLogEvent,
   PreviewPhase,
   PreviewServerLogLine,
@@ -160,10 +159,6 @@ export function fleetScopeKey(scope: string): string {
   return `${scope}::*`;
 }
 
-export function scopeKeyFor(
-  scope: string,
-  serverId: string | undefined,
-  all: boolean,
-): string {
+export function scopeKeyFor(scope: string, serverId: string | undefined, all: boolean): string {
   return all ? fleetScopeKey(scope) : previewKey(scope, serverId ?? "web");
 }

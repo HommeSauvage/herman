@@ -1,15 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-
-import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   HERMAN_DOCS_DIR,
-  STATIC_ROOKIE_DOCS,
   listProjectDocs,
+  STATIC_ROOKIE_DOCS,
   seedStaticRookieDocs,
   validateDocsOutputs,
 } from "../../src/bun/rookie-docs.js";
+import { createTestTempDir, removeTestTempDir } from "../helpers/temp-dir.js";
 
 let tempDir: string;
 

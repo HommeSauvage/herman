@@ -1,9 +1,3 @@
-import { ChevronDown, HelpCircle, RotateCcw, Trash2, Undo2 } from "lucide-react";
-import { getLogger } from "@logtape/logtape";
-import { motion, AnimatePresence } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
-
 import { Button } from "@herman/ui/components/button";
 import {
   Dialog,
@@ -13,15 +7,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@herman/ui/components/dialog";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@herman/ui/components/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/tooltip";
+import { getLogger } from "@logtape/logtape";
+import { ChevronDown, HelpCircle, RotateCcw, Trash2, Undo2 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import type { Message } from "../../../shared/rpc.js";
-import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
+import { desktopRpc } from "../lib/desktop-rpc.js";
 
 const logger = getLogger(["herman-desktop", "view", "revert-dock"]);
 
@@ -47,7 +42,9 @@ function previewText(message: Message): string {
 
 function countChangedFiles(diffSummary?: string): number {
   if (!diffSummary?.trim()) return 0;
-  return diffSummary.split("\n").filter((line) => line.startsWith("diff ") || line.startsWith("--- ")).length;
+  return diffSummary
+    .split("\n")
+    .filter((line) => line.startsWith("diff ") || line.startsWith("--- ")).length;
 }
 
 export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: RevertDockProps) {
@@ -77,7 +74,8 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
 
   const total = revertedUserMessages.length;
   const label = total === 1 ? "Undo in progress" : `Undo in progress (${total} messages)`;
-  const preview = previewText(revertedUserMessages[0]!);
+  const firstMsg = revertedUserMessages[0];
+  const preview = firstMsg ? previewText(firstMsg) : "";
   const disabled = !!restoring || committing;
   const fileCount = countChangedFiles(diffSummary);
 
@@ -125,12 +123,14 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
         let nextUser: Message | undefined;
         for (let i = clickedIdx + 1; i < messages.length; i++) {
           if (messages[i]?.role === "user") {
-            nextUser = messages[i]!;
+            nextUser = messages[i] as Message;
             break;
           }
         }
 
-        await desktopRpc.request.abortAgent({ tabId }).catch((error) => logAbortFailure(tabId, error));
+        await desktopRpc.request
+          .abortAgent({ tabId })
+          .catch((error) => logAbortFailure(tabId, error));
         const store = useAgentStore.getState();
 
         if (nextUser && nextUser.role === "user") {
@@ -181,7 +181,9 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
 
     const snapshot = snapshotRevertState();
     try {
-      await desktopRpc.request.abortAgent({ tabId }).catch((error) => logAbortFailure(tabId, error));
+      await desktopRpc.request
+        .abortAgent({ tabId })
+        .catch((error) => logAbortFailure(tabId, error));
       const store = useAgentStore.getState();
       store.unrevertTab(tabId);
       store.setComposerValue(tabId, "");
@@ -212,7 +214,9 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
 
     const snapshot = snapshotRevertState();
     try {
-      await desktopRpc.request.abortAgent({ tabId }).catch((error) => logAbortFailure(tabId, error));
+      await desktopRpc.request
+        .abortAgent({ tabId })
+        .catch((error) => logAbortFailure(tabId, error));
       const store = useAgentStore.getState();
 
       const tab = store.tabs[tabId];
@@ -287,14 +291,12 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
               className="overflow-hidden"
             >
               <div className="max-h-48 overflow-y-auto px-3 pb-2">
-                {error && (
-                  <p className="text-red-400 mb-2 text-xs leading-relaxed">{error}</p>
-                )}
+                {error && <p className="text-red-400 mb-2 text-xs leading-relaxed">{error}</p>}
 
                 {fileCount > 0 && (
                   <p className="text-dim mb-2 text-xs leading-relaxed">
-                    {fileCount} {fileCount === 1 ? "file was" : "files were"} rolled back in
-                    this session&apos;s preview copy.
+                    {fileCount} {fileCount === 1 ? "file was" : "files were"} rolled back in this
+                    session&apos;s preview copy.
                   </p>
                 )}
 
@@ -368,8 +370,8 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
                     <HelpCircle size={13} />
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
-                    Send an edited question below to confirm the undo, or use
-                    &ldquo;Keep my messages &amp; files&rdquo; to go back.
+                    Send an edited question below to confirm the undo, or use &ldquo;Keep my
+                    messages &amp; files&rdquo; to go back.
                   </TooltipContent>
                 </Tooltip>
 
@@ -396,9 +398,8 @@ export function RevertDock({ tabId, revertMessageId, messages, diffSummary }: Re
           <DialogHeader>
             <DialogTitle>Remove these messages permanently?</DialogTitle>
             <DialogDescription className="text-left leading-relaxed">
-              This will permanently delete {total} hidden{" "}
-              {total === 1 ? "message" : "messages"}. Your rolled-back files
-              will stay as they are now.
+              This will permanently delete {total} hidden {total === 1 ? "message" : "messages"}.
+              Your rolled-back files will stay as they are now.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

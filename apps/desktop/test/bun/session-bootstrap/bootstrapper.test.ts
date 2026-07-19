@@ -3,19 +3,18 @@ import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import { createTestTempDir, removeTestTempDir } from "../../helpers/temp-dir.js";
-import { git } from "../../../src/bun/rewind-core.js";
-import { readProjectManifest } from "../../../src/bun/project-manifest.js";
 import { PortRegistry } from "../../../src/bun/preview/port-registry.js";
-import { parseEnvContent } from "../../../src/bun/session-bootstrap/setup-runner.js";
+import { readProjectManifest } from "../../../src/bun/project-manifest.js";
+import { git } from "../../../src/bun/rewind-core.js";
 import {
   SessionBootstrapper,
   type SessionStateChangedPayload,
 } from "../../../src/bun/session-bootstrap/bootstrapper.js";
+import { parseEnvContent } from "../../../src/bun/session-bootstrap/setup-runner.js";
+import { initProjectRepo } from "../../../src/bun/worktree.js";
 import { tabScope } from "../../../src/shared/preview.js";
 import type { PersistedSession, Tab } from "../../../src/shared/rpc.js";
-import { initProjectRepo } from "../../../src/bun/worktree.js";
+import { createTestTempDir, removeTestTempDir } from "../../helpers/temp-dir.js";
 
 const dirs: string[] = [];
 let binDir: string;
@@ -138,7 +137,8 @@ function makeHarness(opts?: { mode?: "rookie" | "normal"; failPreview?: boolean 
         scope,
         folderPath,
         servers: previewOpts.servers?.length ?? 0,
-        reservedPorts: previewOpts.reservedPorts as Harness["previewStarts"][number]["reservedPorts"],
+        reservedPorts:
+          previewOpts.reservedPorts as Harness["previewStarts"][number]["reservedPorts"],
       });
     },
     readManifest: (folderPath, projectRoot) => readProjectManifest(folderPath, projectRoot),
@@ -272,7 +272,8 @@ describe("SessionBootstrapper (Laravel fixture, shimmed toolchain)", () => {
 
     await harness.bootstrapper.bootstrap(tab.id, { kind: "create" });
 
-    const readyTab = harness.tabs.get(tab.id)!;
+    const readyTab = harness.tabs.get(tab.id);
+    if (!readyTab) throw new Error("test precondition: expected tab");
     // Isolated workspace created (never the main tree).
     expect(readyTab.folderPath).toBe(join(worktreesDir, tab.id));
     expect(readyTab.folderPath).not.toBe(project);
@@ -307,7 +308,8 @@ describe("SessionBootstrapper (Laravel fixture, shimmed toolchain)", () => {
     // Preview auto-started per tab, on the worktree, with the SAME port the
     // env file got (pre-reserved before setup ran).
     expect(harness.previewStarts).toHaveLength(1);
-    const preview = harness.previewStarts[0]!;
+    const preview = harness.previewStarts[0];
+    if (!preview) throw new Error("test precondition: expected preview start");
     expect(preview.scope).toBe(tabScope(tab.id));
     expect(preview.folderPath).toBe(readyTab.folderPath);
     expect(preview.folderPath).not.toBe(project);
@@ -316,7 +318,8 @@ describe("SessionBootstrapper (Laravel fixture, shimmed toolchain)", () => {
 
     // Bug A regression: every emitted state carries the full payload
     // (setup + folderPath + worktree) — nothing is dropped in forwarding.
-    const readyState = harness.states[readyIdx]!;
+    const readyState = harness.states[readyIdx];
+    if (!readyState) throw new Error("test precondition: expected ready state");
     expect(readyState.worktree).toEqual(readyTab.worktree);
     expect(readyState.folderPath).toBe(readyTab.folderPath);
 
@@ -325,14 +328,25 @@ describe("SessionBootstrapper (Laravel fixture, shimmed toolchain)", () => {
       .filter((s) => s.setup.phase === "pending" && s.setup.steps)
       .flatMap((s) => (s.setup.phase === "pending" ? (s.setup.steps ?? []) : []));
     const seenStepIds = new Set(pendingSteps.map((s) => s.id));
-    for (const id of ["herman:env-base", "php-deps", "database", "js-deps", "herman:env-generate"]) {
+    for (const id of [
+      "herman:env-base",
+      "php-deps",
+      "database",
+      "js-deps",
+      "herman:env-generate",
+    ]) {
       expect(seenStepIds.has(id)).toBe(true);
     }
     // Setup output streamed into the preview-context ring under serverId "setup".
-    expect(harness.serverLines.some((l) => l.serverId === "setup" && l.line.includes("composer install done"))).toBe(true);
+    expect(
+      harness.serverLines.some(
+        (l) => l.serverId === "setup" && l.line.includes("composer install done"),
+      ),
+    ).toBe(true);
 
     // Session persisted with the plan hash + completion time.
-    const persisted = harness.sessions.get(tab.id)!;
+    const persisted = harness.sessions.get(tab.id);
+    if (!persisted) throw new Error("test precondition: expected session");
     expect(persisted.setupCompletedAt).toBeTruthy();
     expect(persisted.setupPlanHash).toBeTruthy();
 
@@ -348,8 +362,8 @@ describe("SessionBootstrapper (Laravel fixture, shimmed toolchain)", () => {
     const tab = registerTab(harness, project);
 
     await harness.bootstrapper.bootstrap(tab.id, { kind: "create" });
-
-    const readyTab = harness.tabs.get(tab.id)!;
+    const readyTab = harness.tabs.get(tab.id);
+    if (!readyTab) throw new Error("test precondition: expected tab");
     expect(readyTab.setup.phase).toBe("ready");
     const env = parseEnvContent(readFileSync(join(readyTab.folderPath, ".env"), "utf-8"));
     const serverPort = Number(env.get("SERVER_PORT"));
@@ -363,17 +377,21 @@ describe("SessionBootstrapper (Laravel fixture, shimmed toolchain)", () => {
     const tab = registerTab(harness, project);
 
     await harness.bootstrapper.bootstrap(tab.id, { kind: "create" });
-    const readyTab = harness.tabs.get(tab.id)!;
+    const readyTab = harness.tabs.get(tab.id);
+    if (!readyTab) throw new Error("test precondition: expected tab");
     expect(readyTab.setup.phase).toBe("ready");
 
     // Simulate a crash + restart: new bootstrapper instance, same on-disk state.
     const harness2 = makeHarness();
     harness2.tabs.set(tab.id, { ...readyTab, setup: { phase: "pending", label: "Checking…" } });
-    harness2.sessions.set(tab.id, harness.sessions.get(tab.id)!);
+    const existingSession = harness.sessions.get(tab.id);
+    if (!existingSession) throw new Error("test precondition: expected session");
+    harness2.sessions.set(tab.id, existingSession);
 
     await harness2.bootstrapper.bootstrap(tab.id, { kind: "repair" });
 
-    const repaired = harness2.tabs.get(tab.id)!;
+    const repaired = harness2.tabs.get(tab.id);
+    if (!repaired) throw new Error("test precondition: expected repaired tab");
     expect(repaired.setup.phase).toBe("ready");
     // Setup steps were stamp-skipped: vendor/ was not re-created (mtime unchanged is hard
     // to assert — instead assert no second composer install line streamed).
@@ -407,7 +425,8 @@ exit 0
 
     await harness.bootstrapper.bootstrap(tab.id, { kind: "create" });
 
-    const failedTab = harness.tabs.get(tab.id)!;
+    const failedTab = harness.tabs.get(tab.id);
+    if (!failedTab) throw new Error("test precondition: expected tab");
     expect(failedTab.setup.phase).toBe("error");
     if (failedTab.setup.phase === "error") {
       expect(failedTab.setup.step).toBe("database");
@@ -435,7 +454,8 @@ exit 0
     );
     const retry = await harness.bootstrapper.retry(tab.id);
     expect(retry.ok).toBe(true);
-    const retried = harness.tabs.get(tab.id)!;
+    const retried = harness.tabs.get(tab.id);
+    if (!retried) throw new Error("test precondition: expected tab");
     expect(retried.setup.phase).toBe("ready");
     expect(existsSync(join(retried.folderPath, "database", "database.sqlite"))).toBe(true);
     expect(harness.previewStarts).toHaveLength(1);
@@ -446,14 +466,16 @@ exit 0
     const harness = makeHarness({ mode: "normal" });
     const tab = registerTab(harness, project);
     harness.tabs.set(tab.id, { ...tab, setup: { phase: "none" } });
-    harness.sessions.set(tab.id, { ...harness.sessions.get(tab.id)!, isolation: "direct" });
+    const directSession = harness.sessions.get(tab.id);
+    if (!directSession) throw new Error("test precondition: expected session");
+    harness.sessions.set(tab.id, { ...directSession, isolation: "direct" });
 
     await harness.bootstrapper.bootstrap(tab.id, { kind: "create" });
 
-    expect(harness.tabs.get(tab.id)!.setup.phase).toBe("none");
+    expect(harness.tabs.get(tab.id)?.setup.phase).toBe("none");
     expect(harness.agentStarts).toEqual([tab.id]);
     expect(harness.previewStarts).toHaveLength(0);
     // No worktree was created for a direct session.
-    expect(harness.tabs.get(tab.id)!.folderPath).toBe(project);
+    expect(harness.tabs.get(tab.id)?.folderPath).toBe(project);
   });
 });

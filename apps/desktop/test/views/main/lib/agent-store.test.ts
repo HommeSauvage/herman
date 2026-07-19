@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { AdCampaign } from "../../../../src/shared/agent-protocol.js";
 import type { TabId } from "../../../../src/shared/tab-utils.js";
-import { isTabWorking, useAgentStore, type Tab } from "../../../../src/views/main/lib/agent-store.js";
+import {
+  isTabWorking,
+  type Tab,
+  useAgentStore,
+} from "../../../../src/views/main/lib/agent-store.js";
 
 function nativeAdsFor(id: TabId): AdCampaign[] {
   return useAgentStore.getState().tabs[id]?.nativeAds ?? [];
@@ -769,7 +773,7 @@ describe("queued messages", () => {
     const id = useAgentStore.getState().createTab("/project");
     useAgentStore.getState().queueMessage(id, "keep");
     useAgentStore.getState().queueMessage(id, "remove");
-    const removeId = useAgentStore.getState().tabs[id].queuedMessages[1]!.id;
+    const removeId = useAgentStore.getState().tabs[id].queuedMessages[1]?.id;
     useAgentStore.getState().removeQueuedMessage(id, removeId);
     expect(useAgentStore.getState().tabs[id].queuedMessages).toHaveLength(1);
     expect(useAgentStore.getState().tabs[id].queuedMessages[0]?.text).toBe("keep");
@@ -778,7 +782,7 @@ describe("queued messages", () => {
   it("edits a queued message by id", () => {
     const id = useAgentStore.getState().createTab("/project");
     useAgentStore.getState().queueMessage(id, "original");
-    const editId = useAgentStore.getState().tabs[id].queuedMessages[0]!.id;
+    const editId = useAgentStore.getState().tabs[id].queuedMessages[0]?.id;
     useAgentStore.getState().editQueuedMessage(id, editId, "edited");
     expect(useAgentStore.getState().tabs[id].queuedMessages[0]?.text).toBe("edited");
   });
@@ -1013,13 +1017,12 @@ describe("native ads", () => {
   });
 });
 
-
 describe("context stats", () => {
   it("initializes context stats from the current model on tab create", () => {
     const id = useAgentStore.getState().createTab("/project");
-    useAgentStore.getState().setModels(id, "anthropic/claude-sonnet-4.6", [
-      "anthropic/claude-sonnet-4.6",
-    ]);
+    useAgentStore
+      .getState()
+      .setModels(id, "anthropic/claude-sonnet-4.6", ["anthropic/claude-sonnet-4.6"]);
     useAgentStore.getState().appendUserMessage(id, "hello");
     useAgentStore.getState().startAssistantMessage(id);
     useAgentStore.getState().appendAssistantDelta(id, "Hi there");
@@ -1117,11 +1120,9 @@ describe("context stats", () => {
 
   it("applyMessagesHydration replaces the tab message snapshot authoritatively", () => {
     const id = useAgentStore.getState().createTab("/project");
-    useAgentStore.getState().applyMessagesHydration(
-      id,
-      "success",
-      [{ id: "m1", role: "user", content: "hello" }],
-    );
+    useAgentStore
+      .getState()
+      .applyMessagesHydration(id, "success", [{ id: "m1", role: "user", content: "hello" }]);
 
     const tab = useAgentStore.getState().tabs[id];
     expect(tab?.messages).toEqual([{ id: "m1", role: "user", content: "hello" }]);
@@ -1153,9 +1154,7 @@ describe("modelCatalog", () => {
       currentModel: "herman/kimi",
     });
 
-    expect(useAgentStore.getState().modelCatalog.availableModels).toEqual([
-      "herman/authoritative",
-    ]);
+    expect(useAgentStore.getState().modelCatalog.availableModels).toEqual(["herman/authoritative"]);
     // ...while the tab itself still tracks its agent's registry.
     expect(useAgentStore.getState().tabs[id]?.availableModels).toEqual([
       "herman/kimi",
@@ -1204,18 +1203,12 @@ describe("modelCatalog", () => {
   it("does not wipe a populated catalog with an empty payload", () => {
     useAgentStore.getState().setModelCatalog(["herman/a", "herman/b"]);
     useAgentStore.getState().setModelCatalog([]);
-    expect(useAgentStore.getState().modelCatalog.availableModels).toEqual([
-      "herman/a",
-      "herman/b",
-    ]);
+    expect(useAgentStore.getState().modelCatalog.availableModels).toEqual(["herman/a", "herman/b"]);
   });
 
   it("merges when merge option is set", () => {
     useAgentStore.getState().setModelCatalog(["herman/a"]);
     useAgentStore.getState().setModelCatalog(["herman/b"], { merge: true });
-    expect(useAgentStore.getState().modelCatalog.availableModels).toEqual([
-      "herman/a",
-      "herman/b",
-    ]);
+    expect(useAgentStore.getState().modelCatalog.availableModels).toEqual(["herman/a", "herman/b"]);
   });
 });

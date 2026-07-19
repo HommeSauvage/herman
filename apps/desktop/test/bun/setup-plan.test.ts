@@ -70,10 +70,17 @@ describe("buildSetupGoal", () => {
           ],
         },
         setup: [
-          { id: "php-deps", label: "Installing PHP dependencies", run: "composer install", skip_if: "vendor/autoload.php" },
+          {
+            id: "php-deps",
+            label: "Installing PHP dependencies",
+            run: "composer install",
+            skip_if: "vendor/autoload.php",
+          },
           { id: "seed", label: "Seeding the database", run: "php artisan db:seed", optional: true },
         ],
-        servers: [{ id: "web", label: "Website", command: "composer run dev", port: 8000, primary: true }],
+        servers: [
+          { id: "web", label: "Website", command: "composer run dev", port: 8000, primary: true },
+        ],
       }),
     );
 

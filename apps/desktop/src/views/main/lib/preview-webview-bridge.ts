@@ -33,12 +33,12 @@ export function serializeConsoleArg(value: unknown): string {
   function stringify(v: unknown, ancestors: Set<object>): string {
     if (v instanceof Error) return v.stack || v.message || String(v);
     if (typeof v === "string") return JSON.stringify(v);
-    if (typeof v === "function") return "[Function: " + (v.name || "anonymous") + "]";
+    if (typeof v === "function") return `[Function: ${v.name || "anonymous"}]`;
     if (typeof v === "symbol") return v.toString();
-    if (typeof v === "bigint") return v.toString() + "n";
+    if (typeof v === "bigint") return `${v.toString()}n`;
     if (v === null || v === undefined) return String(v);
     if (typeof v !== "object") {
-      var primitiveJson = JSON.stringify(v);
+      const primitiveJson = JSON.stringify(v);
       return primitiveJson === undefined ? String(v) : primitiveJson;
     }
 
@@ -46,7 +46,7 @@ export function serializeConsoleArg(value: unknown): string {
     // circular — the same object reachable via two sibling keys is fine.
     if (ancestors.has(v)) return '"[Circular]"';
 
-    var withToJSON = v as { toJSON?: () => unknown };
+    const withToJSON = v as { toJSON?: () => unknown };
     if (typeof withToJSON.toJSON === "function") {
       return stringify(withToJSON.toJSON.call(v), ancestors);
     }
@@ -54,20 +54,18 @@ export function serializeConsoleArg(value: unknown): string {
     ancestors.add(v);
     try {
       if (Array.isArray(v)) {
-        var items = v.map(function (item) {
-          return stringify(item, ancestors);
-        });
-        return "[" + items.join(",") + "]";
+        const items = v.map((item) => stringify(item, ancestors));
+        return `[${items.join(",")}]`;
       }
-      var entries = [];
-      var keys = Object.keys(v);
-      for (var i = 0; i < keys.length; i++) {
-        var key = keys[i]!;
-        var val = (v as Record<string, unknown>)[key];
+      const entries: string[] = [];
+      const keys = Object.keys(v);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i] as string;
+        const val = (v as Record<string, unknown>)[key];
         if (val === undefined || typeof val === "function" || typeof val === "symbol") continue;
-        entries.push(JSON.stringify(key) + ":" + stringify(val, ancestors));
+        entries.push(`${JSON.stringify(key)}:${stringify(val, ancestors)}`);
       }
-      return "{" + entries.join(",") + "}";
+      return `{${entries.join(",")}}`;
     } finally {
       ancestors.delete(v);
     }
@@ -163,12 +161,20 @@ export function parsePreviewHostMessage(input: unknown): PreviewHostMessage | nu
 
   if (detail.type !== "preview-console") return null;
   const level = detail.level;
-  if (level !== "error" && level !== "warn" && level !== "info" && level !== "log" && level !== "debug") return null;
+  if (
+    level !== "error" &&
+    level !== "warn" &&
+    level !== "info" &&
+    level !== "log" &&
+    level !== "debug"
+  )
+    return null;
   if (typeof detail.message !== "string") return null;
   if (detail.message.trim().length === 0) return null;
 
   const message = detail.message.slice(0, MAX_MESSAGE_CHARS);
-  const stack = typeof detail.stack === "string" ? detail.stack.slice(0, MAX_MESSAGE_CHARS) : undefined;
+  const stack =
+    typeof detail.stack === "string" ? detail.stack.slice(0, MAX_MESSAGE_CHARS) : undefined;
   const url = typeof detail.url === "string" ? detail.url : undefined;
   const ts = typeof detail.ts === "number" ? detail.ts : undefined;
 

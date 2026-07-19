@@ -74,9 +74,7 @@ describe("parsePreviewHostMessage", () => {
     expect(
       parsePreviewHostMessage({ type: "preview-console", level: "error", message: null }),
     ).toBeNull();
-    expect(
-      parsePreviewHostMessage({ type: "preview-console", level: "error" }),
-    ).toBeNull();
+    expect(parsePreviewHostMessage({ type: "preview-console", level: "error" })).toBeNull();
   });
 
   it("rejects an empty or whitespace-only message", () => {

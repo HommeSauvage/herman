@@ -1,9 +1,18 @@
-import { Sparkles, Loader2 } from "lucide-react";
 import { getLogger } from "@logtape/logtape";
+import { Loader2, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Toaster } from "sonner";
 
-import type { DesktopSettings, ModelCatalogSnapshot, PersistedSession, Session, SessionSetupState, SessionWorktree, Tab, TabId } from "../../shared/rpc.js";
+import type {
+  DesktopSettings,
+  ModelCatalogSnapshot,
+  PersistedSession,
+  Session,
+  SessionSetupState,
+  SessionWorktree,
+  Tab,
+  TabId,
+} from "../../shared/rpc.js";
 import { ErrorBoundary } from "./components/error-boundary.js";
 import { LoginView } from "./components/login-view.js";
 import { ModeChoiceView } from "./components/mode-choice-view.js";
@@ -14,7 +23,7 @@ import { ToolchainSetup } from "./components/toolchain-setup.js";
 import { UpdateBanner } from "./components/update-banner.js";
 import { useAgentFinishedNotifications } from "./hooks/use-agent-finished-notifications.js";
 import { useAgentStream } from "./hooks/use-agent-stream.js";
-import { useAppStore, useAgentStore } from "./lib/agent-store.js";
+import { useAgentStore, useAppStore } from "./lib/agent-store.js";
 import { useCommandShortcuts } from "./lib/command-dispatch.js";
 import { desktopRpc } from "./lib/desktop-rpc.js";
 
@@ -37,7 +46,7 @@ function AppContent() {
   const handleProjectOpened = useAgentStore((s) => s.handleProjectOpened);
   const setSettings = useAgentStore((s) => s.setSettings);
   const setView = useAgentStore((s) => s.setView);
-  const tabCount = useAgentStore((s) => Object.keys(s.tabs).length);
+  const _tabCount = useAgentStore((s) => Object.keys(s.tabs).length);
   const [isLoading, setIsLoading] = useState(true);
   const [showModeChoice, setShowModeChoice] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -49,92 +58,97 @@ function AppContent() {
 
   const initApp = useCallback(async () => {
     try {
-        const [currentSession, settings] = await Promise.all([
-          desktopRpc.request.getSession(),
-          desktopRpc.request.getSettings(),
-        ]);
-        setSession(currentSession);
-        setSettings(settings);
-        // Seed the shared model catalog from the main process (disk-cached,
-        // so it's instant even offline) before tabs restore.
-        const catalog = await desktopRpc.request.getModelCatalog().catch(() => undefined);
-        if (catalog) {
-          useAgentStore.getState().applyModelCatalog(catalog);
-        }
-        const { tabs, activeTabId } = await desktopRpc.request.getTabs();
-        const { projects, sessions } = await desktopRpc.request.getProjectsAndSessions();
-        restoreTabs(tabs, activeTabId, projects, sessions);
-
-        // One-time toolchain gate (git / Homebrew / bun on macOS): nothing
-        // works without these, so it takes priority over everything else.
-        // Only surfaces when something required is actually missing.
-        if (currentSession) {
-          const toolchain = await desktopRpc.request.getToolchainStatus().catch(() => null);
-          if (toolchain) {
-            const missingRequired = toolchain.required.some(
-              (id) => !toolchain.tools.find((t) => t.id === id)?.installed,
-            );
-            if (missingRequired) {
-              setShowToolchainSetup(true);
-              setIsLoading(false);
-              return;
-            }
-          }
-        }
-
-        // Interrupted wizard takes priority over empty-projects onboarding.
-        const recovery = await desktopRpc.request.getWizardRecovery().catch(() => null);
-        if (recovery && currentSession && settings.mode === "rookie") {
-          if (recovery.live) {
-            useAgentStore.getState().patchWizard({
-              sessionId: recovery.sessionId,
-              selectedTemplateId: recovery.templateId,
-              description: recovery.description ?? "",
-              progressLines: recovery.progressLines,
-              projectPath: recovery.projectPath ?? null,
-              wizardError: recovery.uiStep === "error" ? recovery.lastError ?? null : null,
-              recoveryMode: false,
-              recoveryBlocked: false,
-              step: recovery.uiStep ?? "working",
-              pendingRequestId: recovery.pendingRequestId ?? null,
-              envelope: recovery.envelope ?? null,
-              retryAttempt: recovery.retryAttempt ?? 0,
-            });
-          } else {
-            useAgentStore.getState().hydrateWizardFromRecovery({
-              sessionId: recovery.sessionId,
-              templateId: recovery.templateId,
-              description: recovery.description,
-              progressLines: recovery.progressLines,
-              projectPath: recovery.projectPath ?? null,
-              wizardError: recovery.lastError ?? recovery.blockedReason ?? null,
-              recoveryBlocked: !recovery.resumable,
-              preferredModel: recovery.preferredModel,
-            });
-          }
-          useAgentStore.getState().setOnboardingVisible(true);
-          setShowOnboarding(true);
-        } else if (currentSession && settings.mode === undefined) {
-          // First launch — show mode choice
-          setShowModeChoice(true);
-        } else if (currentSession && settings.mode === "rookie" && tabs.length === 0 && projects.length === 0) {
-          // Rookie mode with no existing projects — show onboarding
-          useAgentStore.getState().setOnboardingVisible(true);
-          setShowOnboarding(true);
-        }
-        logger.info("Renderer init complete", {
-          hasSession: Boolean(currentSession),
-          tabCount: tabs.length,
-          mode: settings.mode,
-          wizardRecovery: Boolean(recovery),
-        });
-      } catch (error) {
-        logger.error("Renderer init failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      } finally {
-        setIsLoading(false);
+      const [currentSession, settings] = await Promise.all([
+        desktopRpc.request.getSession(),
+        desktopRpc.request.getSettings(),
+      ]);
+      setSession(currentSession);
+      setSettings(settings);
+      // Seed the shared model catalog from the main process (disk-cached,
+      // so it's instant even offline) before tabs restore.
+      const catalog = await desktopRpc.request.getModelCatalog().catch(() => undefined);
+      if (catalog) {
+        useAgentStore.getState().applyModelCatalog(catalog);
       }
+      const { tabs, activeTabId } = await desktopRpc.request.getTabs();
+      const { projects, sessions } = await desktopRpc.request.getProjectsAndSessions();
+      restoreTabs(tabs, activeTabId, projects, sessions);
+
+      // One-time toolchain gate (git / Homebrew / bun on macOS): nothing
+      // works without these, so it takes priority over everything else.
+      // Only surfaces when something required is actually missing.
+      if (currentSession) {
+        const toolchain = await desktopRpc.request.getToolchainStatus().catch(() => null);
+        if (toolchain) {
+          const missingRequired = toolchain.required.some(
+            (id) => !toolchain.tools.find((t) => t.id === id)?.installed,
+          );
+          if (missingRequired) {
+            setShowToolchainSetup(true);
+            setIsLoading(false);
+            return;
+          }
+        }
+      }
+
+      // Interrupted wizard takes priority over empty-projects onboarding.
+      const recovery = await desktopRpc.request.getWizardRecovery().catch(() => null);
+      if (recovery && currentSession && settings.mode === "rookie") {
+        if (recovery.live) {
+          useAgentStore.getState().patchWizard({
+            sessionId: recovery.sessionId,
+            selectedTemplateId: recovery.templateId,
+            description: recovery.description ?? "",
+            progressLines: recovery.progressLines,
+            projectPath: recovery.projectPath ?? null,
+            wizardError: recovery.uiStep === "error" ? (recovery.lastError ?? null) : null,
+            recoveryMode: false,
+            recoveryBlocked: false,
+            step: recovery.uiStep ?? "working",
+            pendingRequestId: recovery.pendingRequestId ?? null,
+            envelope: recovery.envelope ?? null,
+            retryAttempt: recovery.retryAttempt ?? 0,
+          });
+        } else {
+          useAgentStore.getState().hydrateWizardFromRecovery({
+            sessionId: recovery.sessionId,
+            templateId: recovery.templateId,
+            description: recovery.description,
+            progressLines: recovery.progressLines,
+            projectPath: recovery.projectPath ?? null,
+            wizardError: recovery.lastError ?? recovery.blockedReason ?? null,
+            recoveryBlocked: !recovery.resumable,
+            preferredModel: recovery.preferredModel,
+          });
+        }
+        useAgentStore.getState().setOnboardingVisible(true);
+        setShowOnboarding(true);
+      } else if (currentSession && settings.mode === undefined) {
+        // First launch — show mode choice
+        setShowModeChoice(true);
+      } else if (
+        currentSession &&
+        settings.mode === "rookie" &&
+        tabs.length === 0 &&
+        projects.length === 0
+      ) {
+        // Rookie mode with no existing projects — show onboarding
+        useAgentStore.getState().setOnboardingVisible(true);
+        setShowOnboarding(true);
+      }
+      logger.info("Renderer init complete", {
+        hasSession: Boolean(currentSession),
+        tabCount: tabs.length,
+        mode: settings.mode,
+        wizardRecovery: Boolean(recovery),
+      });
+    } catch (error) {
+      logger.error("Renderer init failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsLoading(false);
+    }
   }, [setSession, setSettings, restoreTabs]);
 
   useEffect(() => {
@@ -200,7 +214,6 @@ function AppContent() {
       useAgentStore.getState().updateTab(tabId, { currentModel });
     const onSettingsChanged = (next: DesktopSettings) => setSettings(next);
     const onProjectOpened = ({
-      folderPath,
       projectRoot,
       projects,
     }: {

@@ -7,11 +7,12 @@ export function AdCard({ campaign, onClick }: { campaign: AdCampaign; onClick?: 
   const [iconError, setIconError] = useState(false);
 
   const accentStyle = campaign.accentColor
-    ? ({ ["--ad-accent"]: campaign.accentColor } as React.CSSProperties)
+    ? ({ "--ad-accent": campaign.accentColor } as React.CSSProperties)
     : undefined;
 
   return (
     <button
+      type="button"
       onClick={onClick}
       style={accentStyle}
       className="group bg-surface w-full overflow-hidden rounded-2xl border border-white/[0.06] text-left transition hover:border-[var(--ad-accent,var(--color-signal))]/25 hover:bg-[var(--ad-accent,var(--color-signal))]/5 hover:shadow-[0_0_20px_rgba(34,197,94,0.08)] active:scale-[0.98]"

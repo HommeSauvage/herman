@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PromptTemplateInfo, SkillInfo } from "../../../shared/rpc.js";
-import { desktopRpc } from "../lib/desktop-rpc.js";
 import { useAgentStore } from "../lib/agent-store.js";
+import { desktopRpc } from "../lib/desktop-rpc.js";
 
 export type SlashCommandItem =
   | { type: "command"; id: string; label: string; description: string; shortcut?: string }
   | { type: "skill"; id: string; label: string; description: string; skillName: string }
-  | { type: "prompt-template"; id: string; label: string; description: string; argumentHint?: string; templateName: string };
+  | {
+      type: "prompt-template";
+      id: string;
+      label: string;
+      description: string;
+      argumentHint?: string;
+      templateName: string;
+    };
 
 const BUILTIN_COMMANDS: SlashCommandItem[] = [
   {
@@ -93,11 +100,11 @@ export function useSlashCommand() {
   });
 
   // Dynamic skills loaded from the filesystem / agent
-  const [availableSkills, setAvailableSkills] = useState<SlashCommandItem[]>([]);
+  const [_availableSkills, setAvailableSkills] = useState<SlashCommandItem[]>([]);
   const availableSkillsRef = useRef<SlashCommandItem[]>([]);
 
   // Dynamic prompt templates loaded from pi's prompt directories
-  const [availableTemplates, setAvailableTemplates] = useState<SlashCommandItem[]>([]);
+  const [_availableTemplates, setAvailableTemplates] = useState<SlashCommandItem[]>([]);
   const availableTemplatesRef = useRef<SlashCommandItem[]>([]);
 
   const openRef = useRef(false);
@@ -217,7 +224,7 @@ export function useSlashCommand() {
       const sectionLen = (sectionIndex: number): number =>
         sectionIndex === 0 ? commandsLen : sectionIndex === 1 ? skillsLen : templatesLen;
 
-      let { activeSectionIndex, activeItemIndex } = s;
+      const { activeSectionIndex, activeItemIndex } = s;
 
       // Move within current section if possible
       const currentSectionLen = sectionLen(activeSectionIndex);
@@ -272,7 +279,13 @@ export function useSlashCommand() {
           ? state.skills
           : state.templates;
     return section[state.activeItemIndex] ?? null;
-  }, [state.activeSectionIndex, state.activeItemIndex, state.commands, state.skills, state.templates]);
+  }, [
+    state.activeSectionIndex,
+    state.activeItemIndex,
+    state.commands,
+    state.skills,
+    state.templates,
+  ]);
 
   const setActiveHover = useCallback((sectionIndex: number, itemIndex: number) => {
     setState((s) => {

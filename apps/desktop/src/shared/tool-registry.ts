@@ -161,6 +161,32 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
       linux: { kind: "manual", url: "https://docs.docker.com/engine/install/" },
     },
   },
+  {
+    id: "browser-chromium",
+    label: "Preview browser",
+    why: "Lets Herman open and check your website during setup so it can catch problems before you see them.",
+    tier: 2,
+    // Prefer a managed Playwright Chromium under ~/.herman/browsers; system Chrome is a runtime fallback.
+    check:
+      'test -d "$HOME/.herman/browsers" && find "$HOME/.herman/browsers" -type f -name chrome -o -name chromium -o -name "chrome-*" 2>/dev/null | head -1 | grep -q .',
+    platforms: {
+      macos: {
+        kind: "curl-sh",
+        command:
+          'mkdir -p "$HOME/.herman/browsers" && PLAYWRIGHT_BROWSERS_PATH="$HOME/.herman/browsers" bunx playwright-core install chromium',
+      },
+      linux: {
+        kind: "curl-sh",
+        command:
+          'mkdir -p "$HOME/.herman/browsers" && PLAYWRIGHT_BROWSERS_PATH="$HOME/.herman/browsers" bunx playwright-core install chromium',
+      },
+      windows: {
+        kind: "curl-sh",
+        command:
+          'mkdir -p "$HOME/.herman/browsers" && PLAYWRIGHT_BROWSERS_PATH="$HOME/.herman/browsers" bunx playwright-core install chromium',
+      },
+    },
+  },
 ];
 
 const byId = new Map(TOOL_REGISTRY.map((t) => [t.id, t]));
@@ -175,7 +201,10 @@ export function currentToolPlatform(): ToolPlatform {
   return "macos";
 }
 
-export function getStrategy(entry: ToolRegistryEntry, platform: ToolPlatform): ToolStrategy | undefined {
+export function getStrategy(
+  entry: ToolRegistryEntry,
+  platform: ToolPlatform,
+): ToolStrategy | undefined {
   return entry.platforms[platform];
 }
 
@@ -200,7 +229,8 @@ export function orderByDependency(toolIds: string[]): string[] {
   while (remaining.length > 0) {
     const before = remaining.length;
     for (let i = 0; i < remaining.length; i++) {
-      const id = remaining[i]!;
+      const id = remaining[i];
+      if (!id) continue;
       const deps = byId.get(id)?.dependsOn ?? [];
       if (deps.every((d) => done.has(d) || !toolIds.includes(d))) {
         ordered.push(id);

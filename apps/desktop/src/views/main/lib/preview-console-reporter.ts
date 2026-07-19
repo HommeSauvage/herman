@@ -48,10 +48,7 @@ function rateLimited(batcher: TabBatcher): boolean {
   return false;
 }
 
-function dedupeConsecutive(
-  batcher: TabBatcher,
-  entry: PreviewConsoleEntry,
-): boolean {
+function dedupeConsecutive(batcher: TabBatcher, entry: PreviewConsoleEntry): boolean {
   const last = batcher.entries[batcher.entries.length - 1];
   if (last && last.level === entry.level && last.message === entry.message) {
     return true;
@@ -99,10 +96,6 @@ export function reportPreviewConsoleEntry(
   }
 }
 
-export function reportPreviewNavigation(
-  tabId: string,
-  folderPath: string,
-  url: string,
-): void {
+export function reportPreviewNavigation(tabId: string, folderPath: string, url: string): void {
   void desktopRpc.send.previewNavigated({ tabId, folderPath, url });
 }

@@ -1,16 +1,16 @@
 import {
-  FileText,
+  Bot,
   FilePen,
-  Pencil,
-  Terminal,
-  Search,
+  FileText,
   Folder,
   Globe,
-  Bot,
-  ListChecks,
   HelpCircle,
-  Wrench,
+  ListChecks,
   type LucideIcon,
+  Pencil,
+  Search,
+  Terminal,
+  Wrench,
 } from "lucide-react";
 
 type ToolInfo = {
@@ -64,14 +64,14 @@ export function getToolInfo(toolName: string, args: unknown): ToolInfo {
       return {
         icon: FilePen,
         title: "Write",
-        subtitle: argString(args, "path") ? basename(argString(args, "path")!) : undefined,
+        subtitle: argString(args, "path") ? basename(argString(args, "path") as string) : undefined,
         gerund: "Writing",
       };
     case "edit":
       return {
         icon: Pencil,
         title: "Edit",
-        subtitle: argString(args, "path") ? basename(argString(args, "path")!) : undefined,
+        subtitle: argString(args, "path") ? basename(argString(args, "path") as string) : undefined,
         gerund: "Editing",
       };
     case "apply_patch": {
@@ -134,7 +134,7 @@ export function getToolInfo(toolName: string, args: unknown): ToolInfo {
       const description = argString(args, "description");
       return {
         icon: Bot,
-        title: type ? type[0]!.toUpperCase() + type.slice(1) : "Task",
+        title: type ? type[0]?.toUpperCase() + type.slice(1) : "Task",
         subtitle: description,
         gerund: "Delegating",
       };

@@ -1,14 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import { join } from "node:path";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
 import { loadWindowState, saveWindowState } from "../../src/bun/window-state.js";
-import { windowStatePath } from "../../src/bun/app-paths.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
 
 let appDir: string;
 

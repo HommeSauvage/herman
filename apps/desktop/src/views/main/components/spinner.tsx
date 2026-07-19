@@ -21,8 +21,10 @@ export function Spinner({ className, style }: { className?: string; style?: Reac
       className={cn("text-current", className)}
       style={style}
       fill="currentColor"
-      aria-hidden
+      role="img"
+      aria-label="Loading"
     >
+      <title>Loading</title>
       {squares.map((square) => (
         <rect
           key={square.id}

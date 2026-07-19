@@ -65,7 +65,7 @@ function loadTemplatesFromDir(
   const templates: PromptTemplateInfo[] = [];
   if (!existsSync(dir)) return templates;
 
-  let entries;
+  let entries: import("fs").Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch {

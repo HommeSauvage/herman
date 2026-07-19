@@ -1,6 +1,5 @@
-import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
 
@@ -9,12 +8,8 @@ import type {
   ParsedHermanManifest,
   ResolvedManifest,
 } from "../shared/herman-manifest.js";
-import {
-  mergeFrontmatter,
-  mergeSections,
-  parseHermanMd,
-  serializeHermanMd,
-} from "./herman-md.js";
+import { bundledAssetDir } from "./app-paths.js";
+import { mergeFrontmatter, mergeSections, parseHermanMd, serializeHermanMd } from "./herman-md.js";
 
 const logger = getLogger(["herman-desktop", "template-registry"]);
 
@@ -22,13 +17,9 @@ const MAX_EXTENDS_DEPTH = 5;
 
 /**
  * Resolves the curated templates directory.
- * Production: app/bun/index.js → ../templates
- * Local dev: apps/desktop/src/bun → ../../templates
  */
 export function getTemplatesDir(): string {
-  const bundledPath = resolve(import.meta.dir, "..", "templates");
-  if (existsSync(bundledPath)) return bundledPath;
-  return resolve(import.meta.dir, "..", "..", "templates");
+  return bundledAssetDir("templates");
 }
 
 let cache: Map<string, ParsedHermanManifest> | null = null;
@@ -115,11 +106,12 @@ export async function resolveTemplateManifest(id: string): Promise<ResolvedManif
     depth += 1;
   }
 
-  let frontmatter = chain[0]!.frontmatter;
-  let sections = chain[0]!.sections;
+  let frontmatter = chain[0]?.frontmatter;
+  let sections = chain[0]?.sections;
 
   for (let i = 1; i < chain.length; i++) {
-    const next = chain[i]!;
+    const next = chain[i];
+    if (!next) continue;
     frontmatter = mergeFrontmatter(frontmatter, next.frontmatter);
     sections = mergeSections(sections, next.sections);
   }

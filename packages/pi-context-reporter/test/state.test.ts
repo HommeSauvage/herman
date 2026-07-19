@@ -57,8 +57,24 @@ describe("ContextState", () => {
     const state = new ContextState();
     state.setModel("anthropic/claude-sonnet-4.6", 200_000);
     state.setContextAnchor(50_000);
-    state.onMessageEnd(usage({ input: 100, output: 50, cacheRead: 25, cost: { total: 0.01, input: 0.005, output: 0.005, cacheRead: 0, cacheWrite: 0 } }), "m1");
-    state.onMessageEnd(usage({ input: 200, output: 100, cacheRead: 50, cost: { total: 0.02, input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0 } }), "m2");
+    state.onMessageEnd(
+      usage({
+        input: 100,
+        output: 50,
+        cacheRead: 25,
+        cost: { total: 0.01, input: 0.005, output: 0.005, cacheRead: 0, cacheWrite: 0 },
+      }),
+      "m1",
+    );
+    state.onMessageEnd(
+      usage({
+        input: 200,
+        output: 100,
+        cacheRead: 50,
+        cost: { total: 0.02, input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0 },
+      }),
+      "m2",
+    );
     const snap = state.snapshot();
     // Anchor (50_000) is unchanged; currentTurn.output is the latest
     // usage.output (100), so the gauge shows 50_100.
@@ -140,7 +156,15 @@ describe("ContextState", () => {
     const state = new ContextState();
     state.setModel("anthropic/claude-sonnet-4.6", 200_000);
     state.setContextAnchor(50_000);
-    state.onMessageEnd(usage({ input: 100, output: 50, cacheRead: 25, cost: { total: 0.01, input: 0.005, output: 0.005, cacheRead: 0, cacheWrite: 0 } }), "m1");
+    state.onMessageEnd(
+      usage({
+        input: 100,
+        output: 50,
+        cacheRead: 25,
+        cost: { total: 0.01, input: 0.005, output: 0.005, cacheRead: 0, cacheWrite: 0 },
+      }),
+      "m1",
+    );
     const snap = state.snapshot();
     // After the first message_end, tokens = anchor (50_000) + currentTurn (50) = 50_050.
     expect(snap.context.tokens).toBe(50_050);
@@ -222,7 +246,10 @@ describe("ContextState", () => {
         message: {
           role: "assistant",
           usage: {
-            input: 500, output: 100, cacheRead: 0, cacheWrite: 0,
+            input: 500,
+            output: 100,
+            cacheRead: 0,
+            cacheWrite: 0,
             totalTokens: 600,
             cost: { input: 0.003, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.004 },
           },
@@ -234,9 +261,19 @@ describe("ContextState", () => {
         message: {
           role: "assistant",
           usage: {
-            input: 300, output: 80, cacheRead: 100, cacheWrite: 50,
-            reasoning: 20, totalTokens: 530,
-            cost: { input: 0.002, output: 0.001, cacheRead: 0.001, cacheWrite: 0.001, total: 0.005 },
+            input: 300,
+            output: 80,
+            cacheRead: 100,
+            cacheWrite: 50,
+            reasoning: 20,
+            totalTokens: 530,
+            cost: {
+              input: 0.002,
+              output: 0.001,
+              cacheRead: 0.001,
+              cacheWrite: 0.001,
+              total: 0.005,
+            },
           },
         },
       },
@@ -244,7 +281,7 @@ describe("ContextState", () => {
     ]);
 
     const snap = state.snapshot();
-    expect(snap.totals.input).toBe(800);  // 500 + 300
+    expect(snap.totals.input).toBe(800); // 500 + 300
     expect(snap.totals.output).toBe(180); // 100 + 80
     expect(snap.totals.cacheRead).toBe(100);
     expect(snap.totals.cacheWrite).toBe(50);
@@ -256,10 +293,16 @@ describe("ContextState", () => {
     const state = new ContextState();
     state.initFromBranch([
       { type: "message", message: { role: "assistant", usage: undefined } },
-      { type: "message", message: { role: "assistant", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } } },
       {
         type: "message",
-        message: { role: "assistant", usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } },
+        message: { role: "assistant", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+        },
       },
     ]);
     const snap = state.snapshot();
@@ -270,11 +313,23 @@ describe("ContextState", () => {
   test("initFromBranch is idempotent", () => {
     const state = new ContextState();
     state.initFromBranch([
-      { type: "message", message: { role: "assistant", usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } } } },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+        },
+      },
     ]);
     // Second call is a no-op.
     state.initFromBranch([
-      { type: "message", message: { role: "assistant", usage: { input: 9999, output: 9999, cacheRead: 0, cacheWrite: 0, cost: { total: 9999 } } } },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          usage: { input: 9999, output: 9999, cacheRead: 0, cacheWrite: 0, cost: { total: 9999 } },
+        },
+      },
     ]);
     const snap = state.snapshot();
     expect(snap.totals.input).toBe(100);
@@ -286,12 +341,26 @@ describe("ContextState", () => {
     const state = new ContextState();
     state.setModel("anthropic/claude-sonnet-4.6", 200_000);
     state.initFromBranch([
-      { type: "message", message: { role: "assistant", usage: { input: 500, output: 80, cacheRead: 0, cacheWrite: 0, cost: { total: 0.005 } } } },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          usage: { input: 500, output: 80, cacheRead: 0, cacheWrite: 0, cost: { total: 0.005 } },
+        },
+      },
     ]);
     // Live turn adds more.
-    state.onMessageEnd(usage({ input: 300, output: 50, cacheRead: 10, cost: { total: 0.003, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }), "live1");
+    state.onMessageEnd(
+      usage({
+        input: 300,
+        output: 50,
+        cacheRead: 10,
+        cost: { total: 0.003, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      }),
+      "live1",
+    );
     const snap = state.snapshot();
-    expect(snap.totals.input).toBe(800);  // 500 + 300
+    expect(snap.totals.input).toBe(800); // 500 + 300
     expect(snap.totals.output).toBe(130); // 80 + 50
     expect(snap.totals.cacheRead).toBe(10);
     expect(snap.totals.cost).toBeCloseTo(0.008, 5);

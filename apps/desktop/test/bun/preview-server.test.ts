@@ -1,11 +1,10 @@
-import { createServer } from "node:net";
-import { createServer as createHttpServer } from "node:http";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
+import { createServer } from "node:net";
 import { join } from "node:path";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-
-import { createTestTempDir } from "../helpers/temp-dir.js";
+import { allocatePorts } from "../../src/bun/preview/preview-ports.js";
 import {
   buildExportEnv,
   ensurePreviewStarted,
@@ -18,9 +17,9 @@ import {
   stopPreviewsForScope,
   waitForReady,
 } from "../../src/bun/preview-server.js";
-import { allocatePorts } from "../../src/bun/preview/preview-ports.js";
-import type { PreviewServerSnapshot } from "../../src/shared/preview.js";
 import type { DevServer } from "../../src/shared/herman-manifest.js";
+import type { PreviewServerSnapshot } from "../../src/shared/preview.js";
+import { createTestTempDir } from "../helpers/temp-dir.js";
 
 let server: ReturnType<typeof createServer> | undefined;
 const testPort = 45991;
@@ -28,13 +27,13 @@ const testPort = 45991;
 beforeAll(async () => {
   server = createServer();
   await new Promise<void>((resolve) => {
-    server!.listen(testPort, "127.0.0.1", () => resolve());
+    server?.listen(testPort, "127.0.0.1", () => resolve());
   });
 });
 
 afterAll(async () => {
   if (server) {
-    await new Promise<void>((resolve) => server!.close(() => resolve()));
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
   }
 });
 
@@ -206,13 +205,16 @@ createServer((_req, res) => { res.writeHead(200); res.end("ok"); }).listen(port,
       expect(result.starting).toBe(true);
       const readySnapshot = await ready;
 
-      await waitForReady(probeUrlForPort(readySnapshot.port!), 5_000);
-      const apiEnv = JSON.parse(
-        await Bun.file(join(dir, "api-env.json")).text(),
-      ) as Record<string, string>;
-      const webEnv = JSON.parse(
-        await Bun.file(join(dir, "web-env.json")).text(),
-      ) as Record<string, string>;
+      if (!readySnapshot.port) throw new Error("test precondition: expected port");
+      await waitForReady(probeUrlForPort(readySnapshot.port), 5_000);
+      const apiEnv = JSON.parse(await Bun.file(join(dir, "api-env.json")).text()) as Record<
+        string,
+        string
+      >;
+      const webEnv = JSON.parse(await Bun.file(join(dir, "web-env.json")).text()) as Record<
+        string,
+        string
+      >;
 
       expect(apiEnv.API_SERVER).toMatch(/^http:\/\/localhost:\d+$/);
       expect(apiEnv.API_URL).toBe(apiEnv.API_SERVER);

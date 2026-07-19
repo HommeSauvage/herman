@@ -1,8 +1,6 @@
 import type { PreviewConsoleEntry, PreviewLogEntry } from "@herman/rpc/host-bridge";
-import { PREVIEW_TOOL_TEXT_MAX_CHARS } from "@herman/rpc/host-bridge";
-
-import { looksLikeServerError } from "../preview/preview-log-filter.js";
 import type { PreviewServerLogLine } from "../../shared/preview.js";
+import { looksLikeServerError } from "../preview/preview-log-filter.js";
 
 function mergeErrorWindows(
   lines: { line: string; isError: boolean }[],
@@ -10,7 +8,7 @@ function mergeErrorWindows(
 ): Set<number> {
   const included = new Set<number>();
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i]!.isError) {
+    if (lines[i]?.isError) {
       const start = Math.max(0, i - maxLinesBeforeAfter);
       const end = Math.min(lines.length, i + maxLinesBeforeAfter + 1);
       for (let j = start; j < end; j++) {
@@ -56,7 +54,8 @@ export function formatServerLogText(
   const parts: string[] = [];
 
   for (const idx of sortedIndices) {
-    const e = enriched[idx]!;
+    const e = enriched[idx];
+    if (!e) continue;
     const entry: PreviewLogEntry = {
       ts: e.ts,
       source: e.source,
@@ -98,7 +97,8 @@ export function formatConsoleLogText(
   const parts: string[] = [];
 
   for (let i = 0; i < tail.length; i++) {
-    const c = tail[i]!;
+    const c = tail[i];
+    if (!c) continue;
     let line = `[${c.level}] ${c.message}`;
     if (c.url && c.url !== opts.currentUrl) {
       line += ` — ${c.url}`;
@@ -115,7 +115,12 @@ export function formatConsoleLogText(
     result.push(entry);
     parts.push(line);
     if (c.stack) {
-      parts.push(c.stack.split("\n").map((s) => `    ${s}`).join("\n"));
+      parts.push(
+        c.stack
+          .split("\n")
+          .map((s) => `    ${s}`)
+          .join("\n"),
+      );
     }
   }
 

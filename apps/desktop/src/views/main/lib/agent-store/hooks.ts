@@ -30,7 +30,11 @@ export function useComposerValue(): string {
   );
 }
 
-export function isTabWorking(tab: { isThinking: boolean; messages: { role: string; isStreaming?: boolean; status?: string }[] } | undefined): boolean {
+export function isTabWorking(
+  tab:
+    | { isThinking: boolean; messages: { role: string; isStreaming?: boolean; status?: string }[] }
+    | undefined,
+): boolean {
   if (!tab) return false;
   if (tab.isThinking) return true;
 
@@ -79,7 +83,14 @@ export function useTabSummaries() {
     return state.tabOrder
       .map((id) => {
         const tab = state.tabs[id];
-        return tab ? { id: tab.id, title: tab.title, folderPath: tab.folderPath, projectRoot: tab.projectRoot } : null;
+        return tab
+          ? {
+              id: tab.id,
+              title: tab.title,
+              folderPath: tab.folderPath,
+              projectRoot: tab.projectRoot,
+            }
+          : null;
       })
       .filter(Boolean) as { id: TabId; title: string; folderPath: string; projectRoot: string }[];
   }, [version]);

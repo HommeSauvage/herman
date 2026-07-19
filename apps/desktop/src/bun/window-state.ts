@@ -1,12 +1,11 @@
 import { dirname } from "node:path";
 
 import { getLogger } from "@logtape/logtape";
-
-import type { TabId, PersistedSession } from "../shared/rpc.js";
+import { logStorageError } from "../logging-shared.js";
+import type { PersistedSession, TabId } from "../shared/rpc.js";
 import { createTabId, getProjectColor, getProjectName } from "../shared/tab-utils.js";
 import { windowStatePath } from "./app-paths.js";
 import { ensureDir } from "./fs-utils.js";
-import { logStorageError } from "../logging-shared.js";
 
 const logger = getLogger(["herman-desktop", "storage"]);
 
@@ -112,7 +111,10 @@ function migrateSessionIsolation(state: WindowState): WindowState {
   const sessions = state.sessions.map((session) => {
     if (session.isolation) return session;
     changed = true;
-    return { ...session, isolation: session.worktree ? ("worktree" as const) : ("direct" as const) };
+    return {
+      ...session,
+      isolation: session.worktree ? ("worktree" as const) : ("direct" as const),
+    };
   });
   return changed ? { ...state, sessions } : state;
 }

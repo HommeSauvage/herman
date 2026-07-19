@@ -37,6 +37,7 @@ function ProjectRow({ projectRoot }: { projectRoot: string }) {
       )}
     >
       <button
+        type="button"
         onClick={() => {
           setSelectedProject(projectRoot);
           setView("home");
@@ -102,6 +103,7 @@ export function ProjectSidebar() {
 
       <div className="flex-1 overflow-y-auto px-2">
         <button
+          type="button"
           onClick={() => {
             setSelectedProject(null);
             setView("home");
@@ -132,6 +134,7 @@ export function ProjectSidebar() {
 
       <div className="border-t border-white/[0.06] p-2">
         <button
+          type="button"
           onClick={() => setView("settings")}
           className={cn(
             "text-dim hover:text-text flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs transition hover:bg-white/[0.04]",
@@ -145,6 +148,7 @@ export function ProjectSidebar() {
           <TooltipTrigger
             render={
               <button
+                type="button"
                 aria-label="Help (coming soon)"
                 onClick={() => {}}
                 className="text-dim hover:text-text flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs transition hover:bg-white/[0.04]"
@@ -158,6 +162,7 @@ export function ProjectSidebar() {
         </Tooltip>
         {hermanEnabled && (
           <button
+            type="button"
             onClick={() => void signOut()}
             className="text-dim flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs transition hover:bg-white/[0.04] hover:text-red-400"
           >

@@ -56,7 +56,10 @@ export function messagesEqualish(a: Message[], b: Message[]): boolean {
   return true;
 }
 
-export function contextStatsEqual(a: ContextStats | undefined, b: ContextStats | undefined): boolean {
+export function contextStatsEqual(
+  a: ContextStats | undefined,
+  b: ContextStats | undefined,
+): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
   return (

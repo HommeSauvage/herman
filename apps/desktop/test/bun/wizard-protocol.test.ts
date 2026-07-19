@@ -1,23 +1,30 @@
 import { describe, expect, it } from "vitest";
-
 import {
-  WIZARD_SENTINEL,
-  PROJECT_NAME_QUESTION_ID,
-  VISUAL_TONE_QUESTION_ID,
-  DEFAULT_PROJECT_NAME_QUESTION,
-  DEFAULT_VISUAL_TONE_QUESTION,
-  INSTALL_SENTINEL,
+  tryParseGateRequest,
+  tryParseInstallRequest,
+  tryParseWizardRequest,
+} from "../../src/shared/agent-protocol.js";
+import {
+  encodeGateEnvelope,
+  encodeGateResponse,
   encodeInstallEnvelope,
-  tryParseInstallEnvelope,
-  encodeWizardEnvelope,
-  tryParseWizardEnvelope,
   encodeWizardAnswers,
-  parseWizardAnswers,
+  encodeWizardEnvelope,
   ensureCoreWizardQuestions,
   ensureProjectNameFirst,
+  GATE_SENTINEL,
+  INSTALL_SENTINEL,
+  PROJECT_NAME_QUESTION_ID,
+  parseGateResponse,
+  parseWizardAnswers,
+  tryParseGateEnvelope,
+  tryParseInstallEnvelope,
+  tryParseWizardEnvelope,
+  VISUAL_TONE_QUESTION_ID,
+  WIZARD_SENTINEL,
   type WizardAskEnvelope,
+  type WizardGateEnvelope,
 } from "../../src/shared/wizard-protocol.js";
-import { tryParseInstallRequest, tryParseWizardRequest } from "../../src/shared/agent-protocol.js";
 
 describe("wizard-protocol", () => {
   it("round-trips an envelope through encode/parse", () => {
@@ -27,7 +34,12 @@ describe("wizard-protocol", () => {
       header: "Setup",
       questions: [
         { id: "projectName", prompt: "Name?", type: "text" },
-        { id: "env", prompt: "Which env?", type: "choice", options: [{ value: "dev", label: "Dev" }] },
+        {
+          id: "env",
+          prompt: "Which env?",
+          type: "choice",
+          options: [{ value: "dev", label: "Dev" }],
+        },
       ],
     };
     const encoded = encodeWizardEnvelope(envelope);
@@ -39,8 +51,16 @@ describe("wizard-protocol", () => {
     expect(tryParseWizardEnvelope(undefined)).toBeUndefined();
     expect(tryParseWizardEnvelope("just some text")).toBeUndefined();
     expect(tryParseWizardEnvelope(JSON.stringify({ foo: 1 }))).toBeUndefined();
-    expect(tryParseWizardEnvelope(JSON.stringify({ __herman_wizard__: false, version: 1, questions: [] }))).toBeUndefined();
-    expect(tryParseWizardEnvelope(JSON.stringify({ __herman_wizard__: true, version: 99, questions: [] }))).toBeUndefined();
+    expect(
+      tryParseWizardEnvelope(
+        JSON.stringify({ __herman_wizard__: false, version: 1, questions: [] }),
+      ),
+    ).toBeUndefined();
+    expect(
+      tryParseWizardEnvelope(
+        JSON.stringify({ __herman_wizard__: true, version: 99, questions: [] }),
+      ),
+    ).toBeUndefined();
   });
 
   it("round-trips answers", () => {
@@ -73,7 +93,12 @@ describe("wizard-protocol", () => {
   it("does not double-add core questions when present", () => {
     const qs = ensureCoreWizardQuestions([
       { id: "projectName", prompt: "Custom name?", type: "text" },
-      { id: "visualTone", prompt: "Custom tone?", type: "choice", options: [{ value: "a", label: "A" }] },
+      {
+        id: "visualTone",
+        prompt: "Custom tone?",
+        type: "choice",
+        options: [{ value: "a", label: "A" }],
+      },
       { id: "x", prompt: "X?", type: "text" },
     ]);
     expect(qs).toHaveLength(3);
@@ -153,10 +178,16 @@ describe("install request envelope", () => {
   it("rejects non-install payloads", () => {
     expect(tryParseInstallEnvelope(undefined)).toBeUndefined();
     expect(tryParseInstallEnvelope("not json")).toBeUndefined();
-    expect(tryParseInstallEnvelope('{"__herman_wizard__":true,"version":1,"questions":[]}')).toBeUndefined();
-    expect(tryParseInstallEnvelope('{"__herman_install__":true,"version":2,"toolId":"x","label":"y"}')).toBeUndefined();
+    expect(
+      tryParseInstallEnvelope('{"__herman_wizard__":true,"version":1,"questions":[]}'),
+    ).toBeUndefined();
+    expect(
+      tryParseInstallEnvelope('{"__herman_install__":true,"version":2,"toolId":"x","label":"y"}'),
+    ).toBeUndefined();
     // Missing required fields.
-    expect(tryParseInstallEnvelope('{"__herman_install__":true,"version":1,"toolId":"x"}')).toBeUndefined();
+    expect(
+      tryParseInstallEnvelope('{"__herman_install__":true,"version":1,"toolId":"x"}'),
+    ).toBeUndefined();
   });
 
   it("sentinel constant is stable on the wire", () => {
@@ -196,5 +227,59 @@ describe("install request envelope", () => {
         prefill: '{"__herman_wizard__":true,"version":1,"questions":[]}',
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("wizard gate protocol", () => {
+  it("round-trips a gate envelope", () => {
+    const envelope: WizardGateEnvelope = {
+      __herman_gate__: true,
+      version: 1,
+      phase: "coding",
+      projectPath: "/Users/test/Herman/blog",
+      summary: "done",
+    };
+    expect(tryParseGateEnvelope(encodeGateEnvelope(envelope))).toEqual(envelope);
+  });
+
+  it("rejects malformed gate envelopes", () => {
+    expect(tryParseGateEnvelope(undefined)).toBeUndefined();
+    expect(tryParseGateEnvelope("plain")).toBeUndefined();
+    expect(
+      tryParseGateEnvelope('{"__herman_install__":true,"version":1,"toolId":"x","label":"y"}'),
+    ).toBeUndefined();
+    expect(tryParseGateEnvelope('{"__herman_gate__":true,"version":1}')).toBeUndefined();
+  });
+
+  it("round-trips gate responses including forced", () => {
+    expect(parseGateResponse(encodeGateResponse({ passed: true, report: "" }))).toEqual({
+      passed: true,
+      report: "",
+    });
+    expect(
+      parseGateResponse(encodeGateResponse({ passed: true, report: "warn", forced: true })),
+    ).toEqual({ passed: true, report: "warn", forced: true });
+    expect(parseGateResponse(encodeGateResponse({ passed: false, report: "### fail" }))).toEqual({
+      passed: false,
+      report: "### fail",
+    });
+  });
+
+  it("tryParseGateRequest routes editor requests with gate envelopes", () => {
+    const envelope: WizardGateEnvelope = {
+      __herman_gate__: true,
+      version: 1,
+      phase: "qa",
+      projectPath: "/tmp/p",
+    };
+    const hit = tryParseGateRequest({
+      type: "extension_ui_request",
+      id: "req-gate-1",
+      method: "editor",
+      prefill: encodeGateEnvelope(envelope),
+    });
+    expect(hit?.requestId).toBe("req-gate-1");
+    expect(hit?.envelope.projectPath).toBe("/tmp/p");
+    expect(GATE_SENTINEL).toBe("__herman_gate__");
   });
 });

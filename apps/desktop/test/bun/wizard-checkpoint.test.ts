@@ -1,12 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   clearWizardCheckpoint,
   evaluateWizardCheckpoint,
@@ -14,6 +8,7 @@ import {
   saveWizardCheckpoint,
   type WizardCheckpoint,
 } from "../../src/bun/wizard-checkpoint.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
 
 let tempDir: string;
 
@@ -66,9 +61,7 @@ describe("wizard-checkpoint", () => {
   });
 
   it("evaluateWizardCheckpoint requires pi session id", () => {
-    const result = evaluateWizardCheckpoint(
-      baseCheckpoint({ capturedPiSessionId: undefined }),
-    );
+    const result = evaluateWizardCheckpoint(baseCheckpoint({ capturedPiSessionId: undefined }));
     expect(result.resumable).toBe(false);
     expect(result.reason).toMatch(/pi session/i);
   });
@@ -94,6 +87,44 @@ describe("wizard-checkpoint", () => {
       baseCheckpoint({ phase: "planning", projectPath: undefined }),
     );
     expect(result.resumable).toBe(true);
+  });
+
+  it("evaluateWizardCheckpoint requires project folder for design", () => {
+    const result = evaluateWizardCheckpoint(
+      baseCheckpoint({ phase: "design", projectPath: join(tempDir, "missing-design") }),
+    );
+    expect(result.resumable).toBe(false);
+    expect(result.reason).toMatch(/no longer exists/i);
+  });
+
+  it("evaluateWizardCheckpoint accepts design phase with existing project", () => {
+    const projectPath = join(tempDir, "design-blog");
+    mkdirSync(projectPath, { recursive: true });
+    const result = evaluateWizardCheckpoint(baseCheckpoint({ phase: "design", projectPath }));
+    expect(result.resumable).toBe(true);
+  });
+
+  it("round-trips design-phase fields", async () => {
+    const projectPath = join(tempDir, "design-fields");
+    mkdirSync(projectPath, { recursive: true });
+    await saveWizardCheckpoint(
+      baseCheckpoint({
+        phase: "design",
+        projectPath,
+        designPath: join(projectPath, "HERMAN_DESIGN.md"),
+        milestoneIndex: 1,
+        milestoneSummaries: ["milestone 0 done"],
+        gateWarnings: ["forced pass note"],
+      }),
+    );
+    const loaded = await loadWizardCheckpoint();
+    expect(loaded).toMatchObject({
+      phase: "design",
+      designPath: join(projectPath, "HERMAN_DESIGN.md"),
+      milestoneIndex: 1,
+      milestoneSummaries: ["milestone 0 done"],
+      gateWarnings: ["forced pass note"],
+    });
   });
 
   it("evaluateWizardCheckpoint accepts docs phase with existing project", () => {

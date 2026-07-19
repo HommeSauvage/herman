@@ -4,8 +4,9 @@ const isDev = Boolean(process.env.HERMAN_DESKTOP_DEV_URL);
 
 const copy: Record<string, string> = {
   "../../packages/agent/dist": "packages/agent/dist",
-  "templates": "templates",
+  templates: "templates",
   "rookie-docs": "rookie-docs",
+  "bundled-skills": "bundled-skills",
   "src/bun/wizard-extension": "wizard-extension",
 };
 

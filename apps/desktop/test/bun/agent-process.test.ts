@@ -48,8 +48,6 @@ class MockAgentRpcClient {
   exitListeners: Array<(code: number) => void> = [];
   _stderr = "";
 
-  constructor(_commandTimeout?: number) {}
-
   attach(_proc: unknown) {}
 
   async close() {
@@ -64,7 +62,7 @@ class MockAgentRpcClient {
     };
   }
 
-  onError(listener: (error: Error) => void) {
+  onError(_listener: (error: Error) => void) {
     return () => {}; // unused but needed for interface
   }
 

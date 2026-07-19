@@ -1,26 +1,34 @@
-import { useShallow } from "zustand/react/shallow";
-import { useState, useCallback, useEffect, useRef } from "react";
 import { cn } from "@herman/ui/lib/utils";
-import { LayoutGrid, Settings, Plus, Sparkles, GripVertical } from "lucide-react";
+import { LayoutGrid, Settings, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { useAgentStore } from "../lib/agent-store.js";
 import { ChatView } from "./chat-view.js";
 import { Composer } from "./composer.js";
 import { ErrorBoundary } from "./error-boundary.js";
-import { HomeView } from "./home-view.js";
-import { RookieHomeView } from "./rookie-home-view.js";
 import { ModelSelector } from "./model-selector.js";
 import { NewSessionView } from "./new-session-view.js";
 import { OnboardingWizard } from "./onboarding-wizard.js";
 import { PreviewPane } from "./preview-pane.js";
-import { PublishDialog } from "./publish-dialog.js";
+import { PublishingView } from "./publishing/index.js";
+import { RookieHomeView } from "./rookie-home-view.js";
 import { SettingsView } from "./settings-view.js";
 import { StatusBar } from "./status-bar.js";
 import { TabBar } from "./tab-bar.js";
 import { TabSwitcher } from "./tab-switcher.js";
 
 export function RookieShell() {
-  const { view, activeTabId, tabMessageCount, activeTabFolder, activeTabProjectRoot, activeTabWorktree, activeTabSetup, onboardingVisible } = useAgentStore(
+  const {
+    view,
+    activeTabId,
+    tabMessageCount,
+    activeTabFolder,
+    activeTabProjectRoot,
+    activeTabWorktree,
+    activeTabSetup,
+    onboardingVisible,
+  } = useAgentStore(
     useShallow((s) => ({
       view: s.ui.view,
       activeTabId: s.activeTabId,
@@ -35,18 +43,30 @@ export function RookieShell() {
   const setOnboardingVisible = useAgentStore((s) => s.setOnboardingVisible);
   const setView = useAgentStore((s) => s.setView);
 
-  // Safety net: if view is "session" but there's no valid active tab with a
-  // project, force-redirect to home.
+  // Safety net: if view requires a project tab ("session" / "publishing") but
+  // there's no valid active tab with a project, force-redirect to home.
   const hasValidTab = activeTabId != null && activeTabFolder;
   useEffect(() => {
-    if (view === "session" && !hasValidTab) {
+    if ((view === "session" || view === "publishing") && !hasValidTab) {
       setView("home");
     }
   }, [view, hasValidTab, setView]);
 
-  const [publishOpen, setPublishOpen] = useState(false);
-  const handleOpenPublish = useCallback(() => setPublishOpen(true), []);
-  const handleClosePublish = useCallback(() => setPublishOpen(false), []);
+  const handleOpenPublish = useCallback(() => setView("publishing"), [setView]);
+  const handleClosePublish = useCallback(() => setView("session"), [setView]);
+  const setComposerValue = useAgentStore((s) => s.setComposerValue);
+
+  // "Ask Herman to deploy": prefill the composer with a deploy prompt and
+  // return to the session so the user just hits send.
+  const handleDeploy = useCallback(() => {
+    if (activeTabId) {
+      setComposerValue(
+        activeTabId,
+        "Deploy my project to my server with Coolify. Walk me through anything you need from me.",
+      );
+    }
+    setView("session");
+  }, [activeTabId, setComposerValue, setView]);
 
   // Resizable split between chat and preview pane.
   // Ratio is persisted per tab via a ref-based map so switching tabs
@@ -85,20 +105,26 @@ export function RookieShell() {
     if (!dragState.current || !splitContainerRef.current) return;
     const dx = e.clientX - dragState.current.startX;
     const dpct = (dx / splitContainerRef.current.getBoundingClientRect().width) * 100;
-    const clamped = Math.min(MAX_CHAT_PCT, Math.max(MIN_CHAT_PCT, dragState.current.startRatio + dpct));
+    const clamped = Math.min(
+      MAX_CHAT_PCT,
+      Math.max(MIN_CHAT_PCT, dragState.current.startRatio + dpct),
+    );
     chatRatioRef.current = clamped;
     setChatRatio(clamped);
   }, []);
 
-  const handleSplitPointerUp = useCallback((e: React.PointerEvent) => {
-    if (!dragState.current) return;
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-    if (activeTabId) {
-      savedRatios.current.set(activeTabId, chatRatioRef.current);
-    }
-    dragState.current = null;
-    setIsDragging(false);
-  }, [activeTabId]);
+  const handleSplitPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragState.current) return;
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      if (activeTabId) {
+        savedRatios.current.set(activeTabId, chatRatioRef.current);
+      }
+      dragState.current = null;
+      setIsDragging(false);
+    },
+    [activeTabId],
+  );
 
   const hasActiveTab = activeTabId != null && activeTabFolder;
   const isEmptySession = tabMessageCount === 0;
@@ -124,11 +150,22 @@ export function RookieShell() {
       <TabSwitcher />
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* Settings takes full width, no sidebar */}
+        {/* Settings and Publishing take full width, no sidebar */}
         {view === "settings" ? (
           <div className="flex min-w-0 flex-1 overflow-hidden">
             <ErrorBoundary>
               <SettingsView />
+            </ErrorBoundary>
+          </div>
+        ) : view === "publishing" && activeTabFolder && activeTabProjectRoot ? (
+          <div className="flex min-w-0 flex-1 overflow-hidden">
+            <ErrorBoundary>
+              <PublishingView
+                projectPath={activeTabProjectRoot}
+                projectName={activeTabFolder.split("/").pop() ?? "Project"}
+                onBack={handleClosePublish}
+                onDeploy={handleDeploy}
+              />
             </ErrorBoundary>
           </div>
         ) : (
@@ -136,6 +173,7 @@ export function RookieShell() {
             {/* Thin navigation sidebar */}
             <nav className="bg-surface/40 flex w-14 shrink-0 flex-col items-center border-r border-white/[0.06] py-3 gap-1">
               <button
+                type="button"
                 onClick={() => setView("home")}
                 aria-label="Home"
                 className={cn(
@@ -149,6 +187,7 @@ export function RookieShell() {
               </button>
 
               <button
+                type="button"
                 onClick={() => setOnboardingVisible(true)}
                 aria-label="New project"
                 className="text-dim hover:text-text flex h-9 w-9 items-center justify-center rounded-lg transition hover:bg-white/[0.04]"
@@ -159,6 +198,7 @@ export function RookieShell() {
 
               <div className="mt-auto" />
               <button
+                type="button"
                 onClick={() => setView("settings")}
                 aria-label="Settings"
                 className="text-dim hover:text-text flex h-9 w-9 items-center justify-center rounded-lg transition hover:bg-white/[0.04]"
@@ -206,8 +246,7 @@ export function RookieShell() {
                 </div>
 
                 {/* Drag handle */}
-                <div
-                  role="separator"
+                <hr
                   tabIndex={-1}
                   aria-label="Resize panels"
                   aria-orientation="vertical"
@@ -222,12 +261,7 @@ export function RookieShell() {
                     "hover:after:bg-white/[0.14]",
                     isDragging && "after:bg-white/[0.2]",
                   )}
-                >
-                  <GripVertical
-                    size={12}
-                    className="text-ghost relative z-10 opacity-0 transition-opacity group-hover:opacity-60"
-                  />
-                </div>
+                />
 
                 {/* Preview side */}
                 <div className="flex flex-1 flex-col overflow-hidden">
@@ -239,7 +273,6 @@ export function RookieShell() {
                     setup={activeTabSetup}
                     onPublish={handleOpenPublish}
                     splitDragging={isDragging}
-                    publishOpen={publishOpen}
                   />
                 </div>
               </div>
@@ -250,13 +283,6 @@ export function RookieShell() {
 
       {/* Model selector — available in all modes */}
       <ModelSelector />
-
-      <PublishDialog
-        open={publishOpen}
-        onClose={handleClosePublish}
-        folderPath={activeTabFolder ?? ""}
-        projectName={activeTabFolder ? activeTabFolder.split("/").pop() : undefined}
-      />
     </div>
   );
 }

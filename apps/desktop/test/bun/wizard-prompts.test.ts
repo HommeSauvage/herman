@@ -1,19 +1,21 @@
-import { describe, expect, it } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { ResolvedManifest } from "../../src/shared/herman-manifest.js";
+import { describe, expect, it } from "vitest";
+import type { PlanMilestone } from "../../src/bun/wizard-plan.js";
 import {
   buildCodingGoal,
+  buildDesignGoal,
   buildDocsGoal,
   buildPlanningPrompt,
   buildQaGoal,
   DEFAULT_SETUP_GOAL,
   formatExportUrlContract,
   validatePlanningOutputs,
+  WIZARD_DESIGN_FILENAME,
   WIZARD_PLAN_FILENAME,
 } from "../../src/bun/wizard-session.js";
+import type { ResolvedManifest } from "../../src/shared/herman-manifest.js";
 
 function makeManifest(
   overrides: {
@@ -41,8 +43,20 @@ function makeManifest(
   };
 }
 
+function makeMilestone(overrides: Partial<PlanMilestone> = {}): PlanMilestone {
+  return {
+    index: 0,
+    title: "Foundation",
+    body: `## Milestone 1: Foundation
+- [ ] Install deps
+Acceptance: App boots
+`,
+    ...overrides,
+  };
+}
+
 describe("buildPlanningPrompt", () => {
-  it("instructs planning-only work and HERMAN_PLAN.md completion", () => {
+  it("instructs planning-only discovery digest and HERMAN_PLAN.md completion", () => {
     const prompt = buildPlanningPrompt(makeManifest(), "A cooking blog");
 
     expect(prompt).toContain("planning phase");
@@ -50,16 +64,32 @@ describe("buildPlanningPrompt", () => {
     expect(prompt).toContain("herman_complete_planning");
     expect(prompt).toContain(WIZARD_PLAN_FILENAME);
     expect(prompt).toContain("PLANNING ONLY");
+    expect(prompt).toContain("interview digest");
     expect(prompt).toContain("A cooking blog");
     expect(prompt).toContain("What topics do they write about?");
     expect(prompt).not.toContain("herman_complete_wizard");
     expect(prompt).not.toMatch(/Set up the project \(install deps/);
+    expect(prompt).toContain("Do NOT write a complete checkbox task list");
   });
 
   it("includes setup as plan context without requiring execution", () => {
     const prompt = buildPlanningPrompt(makeManifest(), "Blog");
     expect(prompt).toContain("Setup (context for the plan — do not execute yet)");
     expect(prompt).toContain("Install deps with bun install");
+  });
+});
+
+describe("buildDesignGoal", () => {
+  it("requires design file, milestone plan rewrite, and herman_complete_design", () => {
+    const goal = buildDesignGoal(makeManifest(), "/tmp/my-blog", "/tmp/my-blog/HERMAN_PLAN.md");
+    expect(goal).toContain("design phase");
+    expect(goal).toContain(WIZARD_DESIGN_FILENAME);
+    expect(goal).toContain("## Page inventory");
+    expect(goal).toContain("herman_complete_design");
+    expect(goal).toContain("Do NOT install");
+    expect(goal).toContain("Prefer simple content models.");
+    expect(goal).toContain("Notes");
+    expect(goal).not.toContain("herman_complete_wizard");
   });
 });
 
@@ -92,20 +122,26 @@ describe("formatExportUrlContract", () => {
 });
 
 describe("buildCodingGoal", () => {
-  it("includes framing, setup_goal, setup section, and tick-all-boxes rule in one goal", () => {
+  it("scopes to one milestone and requires herman_complete_wizard", () => {
     const goal = buildCodingGoal(
       makeManifest(),
       "/tmp/my-blog",
       "/tmp/my-blog/HERMAN_PLAN.md",
+      "/tmp/my-blog/HERMAN_DESIGN.md",
+      makeMilestone(),
+      0,
+      2,
+      [],
     );
     expect(goal).toContain("HERMAN WIZARD MODE");
     expect(goal).toContain("rookie");
     expect(goal).toContain("Do NOT call herman_wizard_ask");
     expect(goal).toContain("Homepage loads and posts list works");
-    expect(goal).toContain("all the checkboxes in the plan are ticked");
+    expect(goal).toContain("Milestone 1 of 2");
+    expect(goal).toContain("ONLY this milestone");
     expect(goal).toContain("/tmp/my-blog/HERMAN_PLAN.md");
+    expect(goal).toContain("/tmp/my-blog/HERMAN_DESIGN.md");
     expect(goal).toContain("Install deps with bun install");
-    expect(goal).toContain("AGENTS.md");
     expect(goal).toContain("herman_complete_wizard");
   });
 
@@ -114,6 +150,11 @@ describe("buildCodingGoal", () => {
       makeManifest({ frontmatter: { setup_goal: undefined } }),
       "/tmp/x",
       "/tmp/x/HERMAN_PLAN.md",
+      "/tmp/x/HERMAN_DESIGN.md",
+      makeMilestone(),
+      0,
+      1,
+      [],
     );
     expect(goal).toContain(DEFAULT_SETUP_GOAL);
   });
@@ -140,60 +181,92 @@ describe("buildCodingGoal", () => {
       }),
       "/tmp/x",
       "/tmp/x/HERMAN_PLAN.md",
+      "/tmp/x/HERMAN_DESIGN.md",
+      makeMilestone(),
+      0,
+      1,
+      [],
     );
     expect(goal).toContain("Preview URL env contract");
     expect(goal).toContain("API_SERVER");
   });
 
-  it("includes the generated workspace setup recipe from the resolved plan", () => {
-    const goal = buildCodingGoal(
-      makeManifest({
-        frontmatter: {
-          env: {
-            files: [
-              {
-                path: ".env",
-                from_example: ".env.example",
-                vars: { APP_KEY: { generate: "php artisan key:generate --show" } },
-              },
-            ],
-          },
-          setup: [
-            { id: "deps", label: "Installing dependencies", run: "composer install" },
+  it("includes the workspace setup recipe only on milestone 1", () => {
+    const manifest = makeManifest({
+      frontmatter: {
+        env: {
+          files: [
+            {
+              path: ".env",
+              from_example: ".env.example",
+              vars: { APP_KEY: { generate: "php artisan key:generate --show" } },
+            },
           ],
         },
-      }),
+        setup: [{ id: "deps", label: "Installing dependencies", run: "composer install" }],
+      },
+    });
+    const first = buildCodingGoal(
+      manifest,
       "/tmp/x",
       "/tmp/x/HERMAN_PLAN.md",
+      "/tmp/x/HERMAN_DESIGN.md",
+      makeMilestone(),
+      0,
+      2,
+      [],
     );
-    expect(goal).toContain("Workspace setup recipe");
-    expect(goal).toContain("composer install");
-    expect(goal).toContain(".env.example");
-    expect(goal).toContain("APP_KEY");
+    expect(first).toContain("Workspace setup recipe");
+    expect(first).toContain("composer install");
+    expect(first).toContain(".env.example");
+    expect(first).toContain("APP_KEY");
+
+    const second = buildCodingGoal(
+      manifest,
+      "/tmp/x",
+      "/tmp/x/HERMAN_PLAN.md",
+      "/tmp/x/HERMAN_DESIGN.md",
+      makeMilestone({ index: 1, title: "UI" }),
+      1,
+      2,
+      ["Foundation done"],
+    );
+    expect(second).not.toContain("Workspace setup recipe");
+    expect(second).toContain("Prior milestone summaries");
+    expect(second).toContain("Foundation done");
   });
 });
 
 describe("buildQaGoal", () => {
-  it("embeds the plan path and prior coding summary", () => {
-    const goal = buildQaGoal(
-      "/tmp/my-blog",
-      "/tmp/my-blog/HERMAN_PLAN.md",
-      "Installed deps and applied the blog name.",
-    );
+  it("embeds plan, design, routes, and prior milestone summaries", () => {
+    const goal = buildQaGoal({
+      projectPath: "/tmp/my-blog",
+      planPath: "/tmp/my-blog/HERMAN_PLAN.md",
+      designPath: "/tmp/my-blog/HERMAN_DESIGN.md",
+      milestoneSummaries: ["Installed deps and applied the blog name."],
+      gateWarnings: [],
+      previewUrl: "http://localhost:3000",
+      routes: ["/", "/posts"],
+    });
     expect(goal).toContain("Do NOT call herman_wizard_ask");
     expect(goal).toContain("/tmp/my-blog/HERMAN_PLAN.md");
+    expect(goal).toContain("/tmp/my-blog/HERMAN_DESIGN.md");
     expect(goal).toContain("Installed deps and applied the blog name.");
-    expect(goal).toContain("Start the server and navigate the website");
+    expect(goal).toContain("ALREADY RUNNING");
+    expect(goal).toContain("http://localhost:3000");
+    expect(goal).toContain("`/posts`");
     expect(goal).toContain("console errors");
     expect(goal).toContain("herman_complete_wizard");
   });
 
   it("includes exportUrlAs checklist when servers declare it", () => {
-    const goal = buildQaGoal(
-      "/tmp/x",
-      "/tmp/x/HERMAN_PLAN.md",
-      "done",
-      [
+    const goal = buildQaGoal({
+      projectPath: "/tmp/x",
+      planPath: "/tmp/x/HERMAN_PLAN.md",
+      designPath: "/tmp/x/HERMAN_DESIGN.md",
+      milestoneSummaries: ["done"],
+      gateWarnings: ["forced: lint skipped"],
+      servers: [
         {
           id: "api",
           label: "API",
@@ -201,10 +274,12 @@ describe("buildQaGoal", () => {
           exportUrlAs: ["API_SERVER", "API_URL"],
         },
       ],
-    );
+      routes: ["/"],
+    });
     expect(goal).toContain("exportUrlAs");
     expect(goal).toContain("API_SERVER");
     expect(goal).toContain("hardcoded");
+    expect(goal).toContain("forced: lint skipped");
   });
 });
 
@@ -239,7 +314,9 @@ describe("validatePlanningOutputs", () => {
     const dir = join(tmpdir(), `herman-wizard-validate-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
     try {
-      expect(validatePlanningOutputs(dir, join(dir, WIZARD_PLAN_FILENAME))).toMatch(/plan file not found/);
+      expect(validatePlanningOutputs(dir, join(dir, WIZARD_PLAN_FILENAME))).toMatch(
+        /plan file not found/,
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

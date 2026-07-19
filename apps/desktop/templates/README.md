@@ -67,11 +67,13 @@ Ongoing instructions injected into the agent system prompt for this project.
   read that file at runtime. `HERMAN.md` is only a fallback for older projects /
   optional upstream clones. v1 manifests are migrated on read (`dev.install` →
   one `setup` step, `dev.servers` → `servers`, `env.vars` → `env.files`).
-- Machine-critical fields (`env`, `setup`, `servers`, `requirements`, `source`)
+- Machine-critical fields (`env`, `setup`, `servers`, `checks`, `requirements`, `source`)
   stay in frontmatter. Agent-interpreted intent stays in Markdown sections.
-- **`extends` and arrays**: `setup`, `env.files`, and `servers` are replaced
+- **`extends` and arrays**: `setup`, `env.files`, `servers`, and `checks` are replaced
   wholesale by the child when re-declared (concat would be an ordering trap).
   `requirements` merge by `id`.
+- **`checks`**: host-enforced commands the wizard coding/QA gates run before a
+  phase advances (e.g. `vendor/bin/pint --test`, `bunx tsc --noEmit`).
 
 See `apps/desktop/schema/herman-frontmatter.v2.json` for the frontmatter schema.
 
@@ -104,6 +106,22 @@ Every new session workspace (git worktree) is prepared by the manifest recipe:
    `HERMAN_MAIN`, `HERMAN_BRANCH`, `HERMAN_TAB_ID`, `HERMAN_PRIMARY_PORT`,
    `HERMAN_PRIMARY_URL`, `HERMAN_PORT_<SERVERID>`, `HERMAN_URL_<SERVERID>`,
    `HERMAN_PROJECT_NAME`.
+
+## `checks` (wizard gates)
+
+```yaml
+checks:
+  - id: types
+    label: Frontend type check
+    run: bunx tsc --noEmit
+  - id: tests
+    label: Test suite
+    run: php artisan test --compact
+    timeout: 600   # seconds; default 300, cap 900
+```
+
+Herman runs these during the coding and QA completion gates. A non-zero exit
+rejects `herman_complete_wizard` and feeds the failure report back to the agent.
 
 ## `servers`, `portEnv` and `exportUrlAs`
 

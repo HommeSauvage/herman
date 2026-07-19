@@ -11,13 +11,16 @@ import type {
   PendingAttachment,
   PersistedSession,
   QueuedFollowUp,
+  Session,
   SessionSetupState,
   SessionWorktree,
-  Session,
   TabMessageHydrationStatus,
 } from "../../../../shared/rpc.js";
 import type { TabId } from "../../../../shared/tab-utils.js";
-import type { WizardAskEnvelope, WizardInstallEnvelope } from "../../../../shared/wizard-protocol.js";
+import type {
+  WizardAskEnvelope,
+  WizardInstallEnvelope,
+} from "../../../../shared/wizard-protocol.js";
 
 export type WizardStep =
   | "templates"
@@ -30,7 +33,7 @@ export type WizardStep =
   | "retrying"
   | "recovery";
 
-export type WizardPhaseId = "planning" | "coding" | "qa" | "docs";
+export type WizardPhaseId = "planning" | "design" | "coding" | "qa" | "docs";
 
 export const INITIAL_WIZARD_STATE = {
   active: false,
@@ -124,7 +127,7 @@ export type AgentState = {
     composerValue: string;
     modelSelectorOpen: boolean;
     selectedMessageId?: string;
-    view: "home" | "session" | "settings";
+    view: "home" | "session" | "settings" | "publishing";
     selectedProject: string | null;
     /** Currently active sidebar tab ("changes" | "context" | "ads") */
     sidebarTab: "changes" | "context" | "ads";
@@ -211,10 +214,7 @@ export type AgentActions = {
   reorderTabs: (order: TabId[]) => void;
   updateTab: (id: TabId, partial: Partial<Omit<Tab, "id">>) => boolean;
   renameTab: (id: TabId, title: string) => void;
-  setProjectForTab: (
-    id: TabId,
-    project: { folderPath: string; projectRoot?: string },
-  ) => void;
+  setProjectForTab: (id: TabId, project: { folderPath: string; projectRoot?: string }) => void;
   appendUserMessage: (tabId: TabId, content: string, messageId?: string) => string | undefined;
   startAssistantMessage: (tabId: TabId) => void;
   appendAssistantDelta: (tabId: TabId, delta: string) => void;
@@ -246,7 +246,7 @@ export type AgentActions = {
   addTab: (tab: Tab) => void;
   setProjects: (projects: string[]) => void;
   setSessions: (sessions: PersistedSession[]) => void;
-  setView: (view: "home" | "session" | "settings") => void;
+  setView: (view: "home" | "session" | "settings" | "publishing") => void;
   setSelectedProject: (folderPath: string | null) => void;
   setSettings: (settings: DesktopSettings) => void;
   handleProjectOpened: (projectRoot: string, projects: string[]) => void;

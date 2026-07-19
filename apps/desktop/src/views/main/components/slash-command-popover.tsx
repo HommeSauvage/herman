@@ -34,9 +34,7 @@ function SlashCommandRow({
       data-active={isActive ? "" : undefined}
       className={cn(
         "flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition",
-        isActive
-          ? "text-text bg-white/[0.06]"
-          : "text-dim hover:text-text hover:bg-white/[0.04]",
+        isActive ? "text-text bg-white/[0.06]" : "text-dim hover:text-text hover:bg-white/[0.04]",
       )}
       onClick={onSelect}
       onMouseMove={onHover}
@@ -89,6 +87,7 @@ export function SlashCommandPopover({
   const isEmpty = !hasCommands && !hasSkills && !hasTemplates;
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: popover container — prevents blur on mousedown
     <div
       className="bg-surface absolute inset-x-0 bottom-full z-20 mb-2 max-h-80 overflow-y-auto rounded-xl border border-white/[0.06] p-1.5 shadow-2xl"
       onMouseDown={(event) => event.preventDefault()}
@@ -133,9 +132,7 @@ export function SlashCommandPopover({
         </>
       )}
 
-      {hasSkills && hasTemplates && (
-        <div className="border-t border-white/[0.06] mx-1 my-1" />
-      )}
+      {hasSkills && hasTemplates && <div className="border-t border-white/[0.06] mx-1 my-1" />}
 
       {hasTemplates && (
         <>

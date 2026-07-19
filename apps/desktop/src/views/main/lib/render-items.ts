@@ -56,12 +56,12 @@ export function computeRenderItems(
     if (buffer.length === 1) {
       items.push({
         type: "message",
-        key: buffer[0]!.id,
-        message: buffer[0]!,
+        key: buffer[0]?.id,
+        message: buffer[0] as Message,
       });
     } else {
-      const firstId = buffer[0]!.id;
-      const lastId = buffer[buffer.length - 1]!.id;
+      const firstId = buffer[0]?.id;
+      const lastId = buffer[buffer.length - 1]?.id;
       items.push({
         type: "context-group",
         key: `${firstId}:${lastId}`,
@@ -85,8 +85,7 @@ export function computeRenderItems(
       continue;
     }
 
-    const hasVisibleThinking =
-      message.role === "assistant" && thinkingByParent.has(message.id);
+    const hasVisibleThinking = message.role === "assistant" && thinkingByParent.has(message.id);
 
     // Empty non-streaming assistant with no errors — usually skip it, but if
     // it owns visible thinking blocks, render those blocks instead.
@@ -150,14 +149,10 @@ export function isRenderItemUnchanged(a: RenderItem, b: RenderItem): boolean {
   if (a.type === "context-group" && b.type === "context-group") {
     if (a.tools.length !== b.tools.length) return false;
     for (let i = 0; i < a.tools.length; i++) {
-      const at = a.tools[i]!;
-      const bt = b.tools[i]!;
-      if (
-        at.id !== bt.id ||
-        at.status !== bt.status ||
-        at.output !== bt.output
-      )
-        return false;
+      const at = a.tools[i];
+      const bt = b.tools[i];
+      if (!at || !bt) return false;
+      if (at.id !== bt.id || at.status !== bt.status || at.output !== bt.output) return false;
     }
     return true;
   }
@@ -186,10 +181,7 @@ export function isRenderItemUnchanged(a: RenderItem, b: RenderItem): boolean {
   }
 
   if (am.role === "thinking" && bm.role === "thinking") {
-    return (
-      am.content === bm.content &&
-      am.isStreaming === bm.isStreaming
-    );
+    return am.content === bm.content && am.isStreaming === bm.isStreaming;
   }
 
   // User messages never change content after creation.
@@ -203,15 +195,13 @@ export function isRenderItemUnchanged(a: RenderItem, b: RenderItem): boolean {
 /**
  * Returns a new array reusing stable references from `prev` where unchanged.
  */
-export function stabilizeRenderItems(
-  prev: RenderItem[],
-  items: RenderItem[],
-): RenderItem[] {
+export function stabilizeRenderItems(prev: RenderItem[], items: RenderItem[]): RenderItem[] {
   const next: RenderItem[] = [];
   let anyChanged = false;
 
   for (let i = 0; i < items.length; i++) {
-    const item = items[i]!;
+    const item = items[i];
+    if (!item) continue;
     const existing = prev[i];
 
     if (existing && isRenderItemUnchanged(existing, item)) {

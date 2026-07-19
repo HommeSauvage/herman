@@ -4,7 +4,7 @@ import { cn } from "@herman/ui/lib/utils";
 import type * as React from "react";
 
 import { dispatchCommand } from "../lib/command-dispatch.js";
-import { getShortcutLabelForCommand, type CommandId } from "../lib/commands.js";
+import { type CommandId, getShortcutLabelForCommand } from "../lib/commands.js";
 
 interface CommandButtonProps extends React.ComponentProps<"button"> {
   command: CommandId;

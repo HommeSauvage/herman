@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { startDeviceActivation, checkDeviceActivation } from "../../src/bun/activation.js";
+import { checkDeviceActivation, startDeviceActivation } from "../../src/bun/activation.js";
 import { AgentBridge } from "../../src/bun/agent-bridge.js";
 import { saveSession } from "../../src/bun/session.js";
 
@@ -56,31 +56,27 @@ describe.skipIf(!runE2E)("device login e2e", () => {
     await bridge?.stop();
   });
 
-  it(
-    "completes device activation and starts the agent bridge",
-    async () => {
-      const code = await startDeviceActivation();
-      expect(code.userCode.length).toBeGreaterThan(0);
+  it("completes device activation and starts the agent bridge", async () => {
+    const code = await startDeviceActivation();
+    expect(code.userCode.length).toBeGreaterThan(0);
 
-      await approveViaBrowser(code);
-      const accessToken = await waitForAuthorization(code.deviceCode);
-      expect(accessToken.length).toBeGreaterThan(0);
+    await approveViaBrowser(code);
+    const accessToken = await waitForAuthorization(code.deviceCode);
+    expect(accessToken.length).toBeGreaterThan(0);
 
-      const projectPath = join(import.meta.dir, "../../../..");
-      await saveSession({ token: accessToken });
+    const projectPath = join(import.meta.dir, "../../../..");
+    await saveSession({ token: accessToken });
 
-      bridge = new AgentBridge(
-        "test-tab",
-        () => {},
-        () => {},
-        () => {},
-      );
+    bridge = new AgentBridge(
+      "test-tab",
+      () => {},
+      () => {},
+      () => {},
+    );
 
-      await bridge.start(projectPath);
-      await new Promise((r) => setTimeout(r, 5000));
+    await bridge.start(projectPath);
+    await new Promise((r) => setTimeout(r, 5000));
 
-      expect(bridge.state).toBeDefined();
-    },
-    120_000,
-  );
+    expect(bridge.state).toBeDefined();
+  }, 120_000);
 });

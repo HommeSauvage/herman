@@ -81,7 +81,10 @@ function assistantMessageId(message: unknown): string | undefined {
 function assistantEventDeltaChars(assistantMessageEvent: unknown): number {
   if (!isRecord(assistantMessageEvent)) return 0;
   const type = assistantMessageEvent.type;
-  if ((type === "text_delta" || type === "thinking_delta") && typeof assistantMessageEvent.delta === "string") {
+  if (
+    (type === "text_delta" || type === "thinking_delta") &&
+    typeof assistantMessageEvent.delta === "string"
+  ) {
     return numberOr(assistantMessageEvent.delta.length, 0);
   }
   return 0;

@@ -9,8 +9,7 @@ const desktopRoot = resolve(import.meta.dir, "../../..");
 export const E2E_PORT = Number(process.env.HERMAN_E2E_PORT ?? "8765");
 export const E2E_BASE_URL = `http://localhost:${E2E_PORT}`;
 
-const AGENT_PATH =
-  process.env.HERMAN_AGENT_PATH ?? resolve(repoRoot, "packages/agent/dist/cli.js");
+const AGENT_PATH = process.env.HERMAN_AGENT_PATH ?? resolve(repoRoot, "packages/agent/dist/cli.js");
 const SERVER_URL = process.env.HERMAN_SERVER_URL ?? "http://localhost:4000";
 const RENDERER_DIR = resolve(desktopRoot, "dist/renderer");
 

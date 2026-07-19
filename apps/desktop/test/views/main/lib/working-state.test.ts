@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-
-import type { Tab } from "../../../../src/views/main/lib/agent-store.js";
 import { deriveStatus } from "../../../../src/views/main/components/status-bar.js";
+import type { Tab } from "../../../../src/views/main/lib/agent-store.js";
 import { isTabWorking, useAgentStore } from "../../../../src/views/main/lib/agent-store.js";
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {

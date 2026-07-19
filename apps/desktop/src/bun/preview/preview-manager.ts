@@ -1,9 +1,9 @@
 import { getLogger } from "@logtape/logtape";
 
 import {
+  type DevServer,
   normalizeExportUrlAs,
   normalizePortEnv,
-  type DevServer,
 } from "../../shared/herman-manifest.js";
 import { appendStderrTail } from "./preview-log-filter.js";
 import { displayUrlForPort, probeUrlForPort } from "./preview-ports.js";
@@ -18,13 +18,8 @@ import {
   MAX_ERROR_MESSAGE_CHARS,
   MAX_LOG_LINE_CHARS,
   MAX_STDERR_CHARS,
-  PREVIEW_READY_TIMEOUT_MS,
-  previewKey,
-  scopeKeyFor,
-  toServerSnapshot,
-  toStartResponse,
   type PortReservation,
-  type PreviewChildProcess,
+  PREVIEW_READY_TIMEOUT_MS,
   type PreviewFleetSnapshot,
   type PreviewInstance,
   type PreviewManagerDeps,
@@ -32,7 +27,11 @@ import {
   type PreviewServerSnapshot,
   type PreviewStartRequest,
   type PreviewStartResponse,
+  previewKey,
   type StartFlight,
+  scopeKeyFor,
+  toServerSnapshot,
+  toStartResponse,
 } from "./types.js";
 
 const logger = getLogger(["herman-desktop", "preview", "manager"]);
@@ -57,9 +56,7 @@ export function looksLikeAddrInUse(stderrTail: string): boolean {
 
 /** Substitute {port} / {url} placeholders in a server command. */
 export function substituteCommandPort(command: string, port: number): string {
-  return command
-    .replaceAll("{port}", String(port))
-    .replaceAll("{url}", displayUrlForPort(port));
+  return command.replaceAll("{port}", String(port)).replaceAll("{url}", displayUrlForPort(port));
 }
 
 export class PreviewManager {
@@ -84,21 +81,17 @@ export class PreviewManager {
     this.scopeFolders.set(scope, folderPath);
     const all = Boolean(req.all || (req.servers && req.servers.length > 0));
     const serverId =
-      req.serverId ??
-      req.servers?.find((s) => s.primary)?.id ??
-      req.servers?.[0]?.id ??
-      "web";
+      req.serverId ?? req.servers?.find((s) => s.primary)?.id ?? req.servers?.[0]?.id ?? "web";
     const scopeKey = scopeKeyFor(scope, serverId, all);
 
     // Resume if already running / settling.
     const existingStatus = this.getStatus(scope, all ? undefined : serverId);
-    const primary = existingStatus.servers.find((s) => s.serverId === existingStatus.primaryServerId)
-      ?? existingStatus.servers[0];
+    const primary =
+      existingStatus.servers.find((s) => s.serverId === existingStatus.primaryServerId) ??
+      existingStatus.servers[0];
 
     if (all && req.servers?.length) {
-      const missing = req.servers.filter(
-        (s) => !this.previews.has(previewKey(scope, s.id)),
-      );
+      const missing = req.servers.filter((s) => !this.previews.has(previewKey(scope, s.id)));
       if (missing.length === 0 && primary && primary.phase === "ready") {
         return toStartResponse(primary, false);
       }
@@ -171,7 +164,14 @@ export class PreviewManager {
       try {
         if (abort.signal.aborted) return;
         if (all && req.servers?.length) {
-          await this.startFleet(scope, folderPath, req.servers, req.reservedPorts, req.readyTimeoutMs, flight);
+          await this.startFleet(
+            scope,
+            folderPath,
+            req.servers,
+            req.reservedPorts,
+            req.readyTimeoutMs,
+            flight,
+          );
         } else {
           await this.startSingle(
             scope,
@@ -288,9 +288,7 @@ export class PreviewManager {
   /** Stop every instance whose working directory is `folderPath` (any scope). */
   async stopFolder(folderPath: string): Promise<void> {
     const scopes = new Set(
-      [...this.previews.values()]
-        .filter((p) => p.folderPath === folderPath)
-        .map((p) => p.scope),
+      [...this.previews.values()].filter((p) => p.folderPath === folderPath).map((p) => p.scope),
     );
     for (const scope of scopes) {
       await this.stop(scope);
@@ -388,7 +386,12 @@ export class PreviewManager {
     flight: StartFlight,
   ): Promise<void> {
     if (servers.length === 0) {
-      await this.startSingle(scope, folderPath, { serverId: "web", primary: true, readyTimeoutMs }, flight);
+      await this.startSingle(
+        scope,
+        folderPath,
+        { serverId: "web", primary: true, readyTimeoutMs },
+        flight,
+      );
       return;
     }
 
@@ -411,7 +414,8 @@ export class PreviewManager {
     }
     if (flight.abort.signal.aborted) return;
 
-    const primary = servers.find((s) => s.primary) ?? servers[0]!;
+    const primary = servers.find((s) => s.primary) ?? servers[0];
+    if (!primary) return;
 
     // Per-server env builder: fleet-wide exportUrlAs (with this server's port
     // substituted when it respawns on a new port) + own portEnv.
@@ -728,7 +732,7 @@ export class PreviewManager {
     return instance;
   }
 
-  private watchExit(scope: string, instance: PreviewInstance, flight: StartFlight): void {
+  private watchExit(scope: string, instance: PreviewInstance, _flight: StartFlight): void {
     const key = previewKey(scope, instance.serverId);
     const generation = instance.generation;
     const wiring = instanceWiring.get(instance);

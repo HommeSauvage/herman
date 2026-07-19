@@ -1,19 +1,18 @@
-import { motion, AnimatePresence } from "motion/react";
-import { ArrowLeft, Sparkles, Plus, SquarePen, FolderOpen, Globe, Search } from "lucide-react";
-import { useMemo, useState, useCallback } from "react";
-
-import { getProjectName, getProjectColor, getProjectInitial } from "../../../shared/tab-utils.js";
+import { ArrowLeft, FolderOpen, Globe, Plus, Search, Sparkles, SquarePen } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useCallback, useMemo, useState } from "react";
 import type { PersistedSession } from "../../../shared/rpc.js";
+import { getProjectColor, getProjectInitial, getProjectName } from "../../../shared/tab-utils.js";
 import { createTab, openSession } from "../lib/agent-actions.js";
-import { useAgentStore, useActiveTabStable } from "../lib/agent-store.js";
+import { useActiveTabStable, useAgentStore } from "../lib/agent-store.js";
 import { filterSessions, groupSessionsByDate } from "../lib/home-utils.js";
 import {
   ContentWidth,
+  formatTimeAgo,
   SearchField,
   SessionDateGroups,
   SessionRow,
   SignalButton,
-  formatTimeAgo,
 } from "./ui/index.js";
 
 type ViewState = { mode: "projects" } | { mode: "sessions"; projectRoot: string };
@@ -120,6 +119,7 @@ function SessionList({
       <div className="border-b border-mist px-6 py-3">
         <ContentWidth size="page" className="flex items-center gap-3">
           <button
+            type="button"
             onClick={onBack}
             className="text-ghost hover:text-dim flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs transition hover:bg-fog"
           >
@@ -131,6 +131,7 @@ function SessionList({
             {getProjectName(projectRoot)}
           </div>
           <button
+            type="button"
             onClick={() => void createTab(projectRoot)}
             className="bg-peak text-text flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition hover:bg-white/[0.08] active:scale-[0.96]"
           >
@@ -205,10 +206,7 @@ export function RookieHomeView() {
     return [...projects]
       .map((projectRoot) => {
         const projectSessions = projectData.get(projectRoot) ?? [];
-        const lastUpdated = projectSessions.reduce(
-          (max, s) => Math.max(max, s.updatedAt),
-          0,
-        );
+        const lastUpdated = projectSessions.reduce((max, s) => Math.max(max, s.updatedAt), 0);
         return {
           projectRoot,
           sessionCount: projectSessions.length,

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("hermanExtension", () => {
   const originalEnv = { ...process.env };
@@ -40,7 +40,13 @@ describe("hermanExtension", () => {
     const registeredTools: { name: string; description: string }[] = [];
     const toolExecutors = new Map<
       string,
-      (toolCallId: string, params: unknown, signal: unknown, onUpdate: unknown, ctx: unknown) => Promise<unknown>
+      (
+        toolCallId: string,
+        params: unknown,
+        signal: unknown,
+        onUpdate: unknown,
+        ctx: unknown,
+      ) => Promise<unknown>
     >();
 
     const mockUi = {
@@ -98,7 +104,16 @@ describe("hermanExtension", () => {
     return { mockApi, mockUi };
   }
 
-  function mockFetch(models: { id: string; name: string; api?: string; contextWindow?: number; maxTokens?: number }[], ok = true) {
+  function mockFetch(
+    models: {
+      id: string;
+      name: string;
+      api?: string;
+      contextWindow?: number;
+      maxTokens?: number;
+    }[],
+    ok = true,
+  ) {
     return vi.fn().mockResolvedValue({
       ok,
       status: ok ? 200 : 500,
@@ -144,7 +159,7 @@ describe("hermanExtension", () => {
       { id: "glm-4.5", name: "GLM 4.5", api: "openai-completions" },
     ]) as unknown as typeof fetch;
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
-    const { mockApi, mockUi } = createMockApi();
+    const { mockApi, mockUi: _mockUi } = createMockApi();
 
     await hermanExtension(mockApi as never);
 
@@ -160,7 +175,7 @@ describe("hermanExtension", () => {
       { id: "glm-4.5", name: "GLM 4.5", api: "openai-completions" },
     ]) as unknown as typeof fetch;
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
-    const { mockApi, mockUi } = createMockApi();
+    const { mockApi, mockUi: _mockUi } = createMockApi();
 
     await hermanExtension(mockApi as never);
 
@@ -173,7 +188,7 @@ describe("hermanExtension", () => {
   it("defaults model api to openai-completions when the server omits it", async () => {
     globalThis.fetch = mockFetch([{ id: "glm-4.5", name: "GLM 4.5" }]) as unknown as typeof fetch;
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
-    const { mockApi, mockUi } = createMockApi();
+    const { mockApi, mockUi: _mockUi } = createMockApi();
 
     await hermanExtension(mockApi as never);
 
@@ -186,7 +201,9 @@ describe("hermanExtension", () => {
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
 
     // First run: server is reachable, populate the cache.
-    globalThis.fetch = mockFetch([{ id: "kimi-k2.7-code", name: "Kimi K2.7 Code" }]) as unknown as typeof fetch;
+    globalThis.fetch = mockFetch([
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+    ]) as unknown as typeof fetch;
     await hermanExtension(createMockApi().mockApi as never);
 
     // Second run: server is down, but the cache should still be used.
@@ -270,7 +287,7 @@ describe("hermanExtension", () => {
   it("registers an empty provider when the server returns no models", async () => {
     globalThis.fetch = mockFetch([]) as unknown as typeof fetch;
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
-    const { mockApi, mockUi } = createMockApi();
+    const { mockApi, mockUi: _mockUi } = createMockApi();
 
     await hermanExtension(mockApi as never);
 
@@ -281,7 +298,7 @@ describe("hermanExtension", () => {
   it("registers an empty provider when fetching models fails", async () => {
     globalThis.fetch = mockFetch([], false) as unknown as typeof fetch;
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
-    const { mockApi, mockUi } = createMockApi();
+    const { mockApi, mockUi: _mockUi } = createMockApi();
 
     await hermanExtension(mockApi as never);
 
@@ -292,7 +309,7 @@ describe("hermanExtension", () => {
   it("throws when a local provider key is present", async () => {
     process.env.OPENAI_API_KEY = "sk-local";
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
-    const { mockApi, mockUi } = createMockApi();
+    const { mockApi, mockUi: _mockUi } = createMockApi();
     await expect(hermanExtension(mockApi as never)).rejects.toThrow("OPENAI_API_KEY");
     delete process.env.OPENAI_API_KEY;
   });
@@ -350,7 +367,8 @@ describe("hermanExtension", () => {
       model: undefined,
       ui: mockUi,
       modelRegistry: {
-        find: (_provider: string, id: string) => (id === "kimi-k2.7-code" ? kimiModel : id === "glm-4.5" ? glmModel : undefined),
+        find: (_provider: string, id: string) =>
+          id === "kimi-k2.7-code" ? kimiModel : id === "glm-4.5" ? glmModel : undefined,
         getAvailable: () => [kimiModel, glmModel],
       },
     };
@@ -444,7 +462,13 @@ describe("hermanExtension", () => {
 
   it("includes model metadata in models_sync when contextWindow is available", async () => {
     globalThis.fetch = mockFetch([
-      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", api: "openai-completions", contextWindow: 128000, maxTokens: 8192 },
+      {
+        id: "kimi-k2.7-code",
+        name: "Kimi K2.7 Code",
+        api: "openai-completions",
+        contextWindow: 128000,
+        maxTokens: 8192,
+      },
     ]) as unknown as typeof fetch;
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
     const { mockApi, mockUi } = createMockApi();
@@ -488,7 +512,10 @@ describe("hermanExtension", () => {
     }
   }
 
-  function writeSharedCatalog(models: { id: string; name?: string }[], custom: Record<string, string[]> = {}) {
+  function writeSharedCatalog(
+    models: { id: string; name?: string }[],
+    custom: Record<string, string[]> = {},
+  ) {
     writeFileSync(
       join(cacheDir, "model-catalog.json"),
       JSON.stringify({
@@ -507,7 +534,10 @@ describe("hermanExtension", () => {
     // Background refresh stays pending until we resolve it manually.
     let resolveFetch: ((value: unknown) => void) | undefined;
     globalThis.fetch = vi.fn().mockImplementation(
-      () => new Promise((resolve) => { resolveFetch = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
     ) as unknown as typeof fetch;
 
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
@@ -519,7 +549,7 @@ describe("hermanExtension", () => {
     expect(mockApi._registered[0].config.models?.map((m) => m.id)).toEqual(["cached-model"]);
 
     // Let the background refresh land with a fresh list.
-    resolveFetch!({
+    resolveFetch?.({
       ok: true,
       status: 200,
       json: async () => ({ models: [{ id: "fresh-model", name: "Fresh" }] }),
@@ -570,7 +600,9 @@ describe("hermanExtension", () => {
           text: async () => "",
         });
       }
-      return new Promise((resolve) => { resolveFetch = resolve; });
+      return new Promise((resolve) => {
+        resolveFetch = resolve;
+      });
     }) as unknown as typeof fetch;
 
     const { default: hermanExtension } = await import("../../src/extensions/herman-extension.js");
@@ -593,7 +625,7 @@ describe("hermanExtension", () => {
     await handlers[0]({}, ctx);
 
     // Now the background refresh completes with a new model list.
-    resolveFetch!({
+    resolveFetch?.({
       ok: true,
       status: 200,
       json: async () => ({ models: [{ id: "fresh-model", name: "Fresh" }] }),

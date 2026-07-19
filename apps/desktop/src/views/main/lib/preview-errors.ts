@@ -45,7 +45,8 @@ export function buildAskHermanPrompt(
   error: string,
   context: "preview" | "save" | "runtime",
 ): string {
-  const logHint = "Recent preview logs are available via the `herman_get_preview_logs` tool (environment: 'server' and 'console') — use it for full context before and after the error.";
+  const logHint =
+    "Recent preview logs are available via the `herman_get_preview_logs` tool (environment: 'server' and 'console') — use it for full context before and after the error.";
   if (context === "preview") {
     return `The preview server for this project failed to start or crashed with this error:
 

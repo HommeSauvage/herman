@@ -1,5 +1,5 @@
-import { motion } from "motion/react";
 import { AlertTriangle, CheckCircle2, Circle, Loader2, Wrench } from "lucide-react";
+import { motion } from "motion/react";
 import { useState } from "react";
 
 import type { SessionSetupStepSnapshot } from "../../../shared/rpc.js";
@@ -48,9 +48,7 @@ export function NewSessionView() {
   const isThinking = useAgentStore((s) =>
     s.activeTabId ? (s.tabs[s.activeTabId]?.isThinking ?? false) : false,
   );
-  const setup = useAgentStore((s) =>
-    s.activeTabId ? s.tabs[s.activeTabId]?.setup : undefined,
-  );
+  const setup = useAgentStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.setup : undefined));
   const [retrying, setRetrying] = useState(false);
 
   if (!tabId) return null;
@@ -84,7 +82,7 @@ export function NewSessionView() {
       setupError ?? "Unknown error",
       ...(setupOutput ? ["", "Output:", setupOutput.slice(-2000)] : []),
       "",
-      "Please investigate and fix the project setup so it can complete. The full setup logs are available via the preview logs tool (serverId: \"setup\").",
+      'Please investigate and fix the project setup so it can complete. The full setup logs are available via the preview logs tool (serverId: "setup").',
     ].join("\n");
     useAgentStore.getState().setComposerValue(tabId, promptText);
   };
@@ -132,20 +130,18 @@ export function NewSessionView() {
             <div className="flex items-center gap-2 pt-1">
               {setupRetryable && (
                 <button
+                  type="button"
                   onClick={() => void handleRetry()}
                   disabled={retrying}
                   className="bg-signal/90 hover:bg-signal text-void flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:opacity-50"
                 >
-                  {retrying ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <Wrench size={12} />
-                  )}
+                  {retrying ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
                   Retry setup
                 </button>
               )}
               {hasWorkspace && (
                 <button
+                  type="button"
                   onClick={handleAskHerman}
                   className="text-dim hover:text-text flex items-center gap-1.5 rounded-lg border border-white/[0.08] px-3 py-1.5 text-xs transition hover:bg-white/[0.04]"
                 >

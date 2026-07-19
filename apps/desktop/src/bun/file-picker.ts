@@ -1,5 +1,5 @@
-import { basename, extname } from "node:path";
 import { stat } from "node:fs/promises";
+import { basename, extname } from "node:path";
 
 import { Utils } from "electrobun/bun";
 
@@ -29,13 +29,7 @@ const EXTENSION_MIME: Record<string, string> = {
   txt: "text/plain",
 };
 
-const IMAGE_MIMES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-  "image/bmp",
-]);
+const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"]);
 
 /** Best-effort mime detection: trust the OS hint, then fall back to a
  *  well-known extension table.  We avoid full content sniffing because
@@ -52,7 +46,11 @@ function detectMime(filePath: string, osMime: string): string {
 /** Read a small image file and return a `data:` URL suitable for use as
  *  an `<img src>`.  Returns undefined for non-image files or files
  *  larger than {@link PREVIEW_MAX_BYTES}. */
-async function readPreviewDataUrl(filePath: string, mime: string, size: number): Promise<string | undefined> {
+async function readPreviewDataUrl(
+  filePath: string,
+  mime: string,
+  size: number,
+): Promise<string | undefined> {
   if (!IMAGE_MIMES.has(mime)) return undefined;
   if (size > PREVIEW_MAX_BYTES) return undefined;
   try {
@@ -74,11 +72,7 @@ async function readPreviewDataUrl(filePath: string, mime: string, size: number):
  *  because the renderer doesn't need their contents — pi-agent
  *  will read them by path. */
 export async function openFilePicker(options: OpenFilePickerOptions = {}): Promise<PickedFile[]> {
-  const {
-    multiple = true,
-    title = "Attach files",
-    defaultPath,
-  } = options;
+  const { multiple = true, defaultPath } = options;
 
   let paths: string[];
   try {

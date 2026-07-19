@@ -84,12 +84,12 @@ async function saveSetupStamp(workspace: string, stamp: SetupStamp): Promise<voi
 
 // ── Env file helpers ───────────────────────────────────────────────────────
 
-const ENV_LINE_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/;
+const ENV_LINE_RE = /^\s*(?:export\s+)?([A-Za-z_]\w*)\s*=\s*(.*)$/;
 
 function unquoteEnvValue(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.length >= 2) {
-    const quote = trimmed[0]!;
+    const quote = trimmed[0];
     if ((quote === '"' || quote === "'") && trimmed[trimmed.length - 1] === quote) {
       const inner = trimmed.slice(1, -1);
       return quote === '"' ? inner.replace(/\\n/g, "\n").replace(/\\"/g, '"') : inner;
@@ -104,7 +104,7 @@ export function parseEnvContent(content: string): Map<string, string> {
   for (const line of content.split(/\r?\n/)) {
     const match = line.match(ENV_LINE_RE);
     if (!match) continue;
-    const key = match[1]!;
+    const key = match[1] as string;
     if (out.has(key)) continue;
     out.set(key, unquoteEnvValue(match[2] ?? ""));
   }
@@ -127,9 +127,9 @@ export function mergeEnvContent(existing: string, vars: Record<string, string>):
   for (const line of lines) {
     const match = line.match(ENV_LINE_RE);
     if (match) {
-      const key = match[1]!;
+      const key = match[1] as string;
       if (key in vars) {
-        out.push(`${key}=${quoteEnvValue(vars[key]!)}`);
+        out.push(`${key}=${quoteEnvValue(vars[key] as string)}`);
         seen.add(key);
         continue;
       }
@@ -151,11 +151,7 @@ export function mergeEnvContent(existing: string, vars: Record<string, string>):
  * workspace instead (absolute DB_DATABASE, log paths, …). Only values that
  * START WITH the main root path are touched; every rewrite is logged.
  */
-export function rewriteMainRootPaths(
-  content: string,
-  mainRoot: string,
-  workspace: string,
-): string {
+export function rewriteMainRootPaths(content: string, mainRoot: string, workspace: string): string {
   if (!mainRoot || mainRoot === workspace) return content;
   const out: string[] = [];
   for (const line of content.split(/\r?\n/)) {
@@ -164,7 +160,7 @@ export function rewriteMainRootPaths(
       out.push(line);
       continue;
     }
-    const key = match[1]!;
+    const key = match[1] as string;
     const rawValue = (match[2] ?? "").trim();
     const unquoted = unquoteEnvValue(rawValue);
     let next: string | undefined;
@@ -247,10 +243,7 @@ function sessionValue(
 }
 
 /** Replace ${HERMAN_*} placeholders with their computed values. */
-export function interpolateHermanVars(
-  value: string,
-  hermanEnv: Record<string, string>,
-): string {
+export function interpolateHermanVars(value: string, hermanEnv: Record<string, string>): string {
   return value.replace(/\$\{(HERMAN_[A-Z0-9_]+)\}/g, (match, name: string) => {
     return hermanEnv[name] ?? match;
   });
@@ -311,13 +304,13 @@ export async function runSetupCommand(opts: {
           const trimmed = line.replace(/\r$/, "");
           if (trimmed.length === 0) continue;
           opts.onLine?.(source, trimmed);
-          appendTail(trimmed + "\n");
+          appendTail(`${trimmed}\n`);
         }
       }
       const rest = buffer.replace(/\r$/, "").trimEnd();
       if (rest.trim().length > 0) {
         opts.onLine?.(source, rest);
-        appendTail(rest + "\n");
+        appendTail(`${rest}\n`);
       }
     } catch {
       // Ignore read errors on process exit.
@@ -401,7 +394,11 @@ export class WorkspaceSetupRunner {
 
     const emitSteps = () => {
       this.deps.onSteps?.(
-        stepOrder.map((s) => ({ id: s.id, label: s.label, status: stepStates.get(s.id)! })),
+        stepOrder.map((s) => ({
+          id: s.id,
+          label: s.label,
+          status: stepStates.get(s.id) ?? "pending",
+        })),
       );
     };
 
@@ -409,11 +406,7 @@ export class WorkspaceSetupRunner {
       await saveSetupStamp(workspace, { version: 1, planHash: hash, completed });
     };
 
-    const fail = async (
-      stepId: string,
-      error: string,
-      output: string,
-    ): Promise<SetupRunResult> => {
+    const fail = async (stepId: string, error: string, output: string): Promise<SetupRunResult> => {
       stepStates.set(stepId, "failed");
       emitSteps();
       await saveSetupStamp(workspace, {
@@ -435,7 +428,9 @@ export class WorkspaceSetupRunner {
     if (envFilesMissing && completed[ENV_BASE_STEP_ID]) {
       logger.info("Declared env file missing; re-provisioning env-base", {
         workspace,
-        missing: plan.envFiles.filter((f) => !existsSync(join(workspace, f.path))).map((f) => f.path),
+        missing: plan.envFiles
+          .filter((f) => !existsSync(join(workspace, f.path)))
+          .map((f) => f.path),
       });
       delete completed[ENV_BASE_STEP_ID];
     }
@@ -467,7 +462,7 @@ export class WorkspaceSetupRunner {
         delete completed[step.id];
       }
       if (completed[step.id]) {
-        stepStates.set(step.id, completed[step.id]!.warning ? "warning" : "skipped");
+        stepStates.set(step.id, completed[step.id]?.warning ? "warning" : "skipped");
         emitSteps();
         continue;
       }
@@ -543,7 +538,12 @@ export class WorkspaceSetupRunner {
    * force-applied (they are Herman-owned per-session values).
    */
   private async provisionEnvBase(
-    ctx: { workspace: string; mainRoot: string; plan: ResolvedSetupPlan; bindings: SessionBindingValues },
+    ctx: {
+      workspace: string;
+      mainRoot: string;
+      plan: ResolvedSetupPlan;
+      bindings: SessionBindingValues;
+    },
     opts: { sessionBindingsOnly: boolean },
   ): Promise<void> {
     const { workspace, mainRoot, plan, bindings } = ctx;
@@ -667,7 +667,10 @@ export class WorkspaceSetupRunner {
           continue;
         }
         // stdout of the generate command is the value (last non-empty line).
-        const lines = result.tail.split("\n").map((l) => l.trim()).filter(Boolean);
+        const lines = result.tail
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
         updates[key] = lines[lines.length - 1] ?? "";
       }
 
@@ -675,7 +678,11 @@ export class WorkspaceSetupRunner {
         const next = mergeEnvContent(content, updates);
         await mkdir(dirname(absPath), { recursive: true });
         await writeFile(absPath, next, "utf-8");
-        logger.info("Wrote generated env values", { workspace, path: file.path, keys: Object.keys(updates) });
+        logger.info("Wrote generated env values", {
+          workspace,
+          path: file.path,
+          keys: Object.keys(updates),
+        });
       }
     }
 

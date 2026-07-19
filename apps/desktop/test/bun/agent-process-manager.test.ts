@@ -3,14 +3,9 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
-import type { AgentEvent } from "../../src/shared/agent-protocol.js";
 import type { PersistedSession } from "../../src/bun/window-state.js";
+import type { AgentEvent } from "../../src/shared/agent-protocol.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
 
 let tempDir: string;
 let mockInstances: MockAgentBridge[] = [];
@@ -18,10 +13,7 @@ const originalFetch = globalThis.fetch;
 /** ≥20-char UUID so extractPiSessionIdFromFilePath accepts it. */
 const DEFAULT_PI_SESSION_ID = "019f442d-33f0-75c3-a71e-54e95c3e27fe";
 
-const mockSessionMessages = new Map<
-  string,
-  Array<Record<string, unknown>>
->();
+const mockSessionMessages = new Map<string, Array<Record<string, unknown>>>();
 const mockGetStateSessionIds = new Map<string, string>();
 const mockGetMessagesDelays = new Map<string, { emptyAttempts: number }>();
 const mockGetMessagesFailures = new Set<string>();
@@ -41,7 +33,7 @@ class MockAgentBridge {
 
   constructor(
     tabId: string,
-    sendToRenderer: (tabId: string, event: AgentEvent) => void,
+    _sendToRenderer: (tabId: string, event: AgentEvent) => void,
     onStatusChange: (tabId: string, state: string, stderr?: string) => void,
     onEvent?: (tabId: string, event: AgentEvent) => void,
   ) {
@@ -74,7 +66,12 @@ class MockAgentBridge {
     mockSessionMessages.delete(this.tabId);
   }
 
-  async sendCommand(command: { type?: string; message?: string; provider?: string; modelId?: string }) {
+  async sendCommand(command: {
+    type?: string;
+    message?: string;
+    provider?: string;
+    modelId?: string;
+  }) {
     if (command.type === "set_model") {
       this.setModelCalls.push({
         provider: command.provider ?? "",
@@ -205,7 +202,7 @@ function writePiSessionFile(
   mkdirSync(sessionsDir, { recursive: true });
   writeFileSync(
     join(sessionsDir, `2026-07-09T00-00-00-000Z_${sessionId}.jsonl`),
-    lines.join("\n") + "\n",
+    `${lines.join("\n")}\n`,
   );
 }
 
@@ -308,7 +305,10 @@ describe("AgentProcessManager", () => {
 
   it("creates a worktree for every rookie tab on a git project", async () => {
     const { git } = await import("../../src/bun/rewind-core.js");
-    writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }));
+    writeFileSync(
+      join(tempDir, "package.json"),
+      JSON.stringify({ name: "test", scripts: { dev: "echo dev" } }),
+    );
     writeFileSync(
       join(tempDir, ".gitignore"),
       "node_modules\npackage-lock.json\nbun.lock\nbun.lockb\n",
@@ -352,7 +352,10 @@ describe("AgentProcessManager", () => {
     );
     await git("init -b main", tempDir);
     await git("add -A", tempDir);
-    await git("-c user.email=herman@local -c user.name=Herman commit -m \"Initial project\"", tempDir);
+    await git(
+      '-c user.email=herman@local -c user.name=Herman commit -m "Initial project"',
+      tempDir,
+    );
 
     const manager = await createManager({ getMode: () => "rookie" });
     // The wizard committed everything, so a worktree from HEAD carries the
@@ -409,9 +412,9 @@ describe("AgentProcessManager", () => {
     const tab = await manager.openSession("legacy-direct");
     expect(tab).toBeTruthy();
     // Still direct: no worktree, no pending setup — the tab opens on main.
-    expect(tab!.setup.phase).toBe("none");
-    expect(tab!.worktree).toBeUndefined();
-    expect(tab!.folderPath).toBe(tempDir);
+    expect(tab?.setup.phase).toBe("none");
+    expect(tab?.worktree).toBeUndefined();
+    expect(tab?.folderPath).toBe(tempDir);
   });
 
   it("closeTab preserves session archive and history", async () => {
@@ -483,9 +486,7 @@ describe("AgentProcessManager", () => {
     const restoredManager = await createManager();
     const restored = await restoredManager.restore();
     expect(restored.tabs).toHaveLength(1);
-    expect(restored.tabs[0]?.messages).toEqual([
-      { id: "u1", role: "user", content: "hello" },
-    ]);
+    expect(restored.tabs[0]?.messages).toEqual([{ id: "u1", role: "user", content: "hello" }]);
     expect(restoredManager.getMessageHydrationResult(tab.id)?.status).toBe("success");
   });
 
@@ -493,7 +494,7 @@ describe("AgentProcessManager", () => {
     const projectDir = join(tempDir, "deleted-project");
     mkdirSync(projectDir, { recursive: true });
     const manager = await createManager();
-    const tab = await manager.createTab(projectDir);
+    const _tab = await manager.createTab(projectDir);
     await drainAgent(manager);
     const instancesBefore = mockInstances.length;
 
@@ -749,7 +750,7 @@ describe("AgentProcessManager", () => {
 
   it("updates the assistant message even after tool messages", async () => {
     const manager = await createManager();
-    const tab = await manager.createTab("/project");
+    const _tab = await manager.createTab("/project");
     mockInstances[0].emitEvent({
       type: "message_start",
       message: { role: "assistant" },
@@ -1010,13 +1011,13 @@ describe("AgentProcessManager", () => {
     const sessionsDir = join(tempDir, "agent", "sessions");
     writeFileSync(
       join(sessionsDir, "2026-07-10T00-00-00-000Z_empty-new.jsonl"),
-      JSON.stringify({
+      `${JSON.stringify({
         type: "session",
         version: 3,
         id: "empty-new",
         timestamp: "2026-07-10T00:00:00.000Z",
         cwd: "/project",
-      }) + "\n",
+      })}\n`,
     );
 
     const { sessions } = manager.getProjectsAndSessions();
@@ -1031,7 +1032,7 @@ describe("AgentProcessManager", () => {
 
   it("opens a new tab quickly with no messages when no cache exists", async () => {
     const manager = await createManager();
-    const tab = await manager.createTab("/project");
+    const _tab = await manager.createTab("/project");
     await drainAgent(manager);
 
     expect(manager.getTabs().tabs[0]?.messages).toEqual([]);
@@ -1059,16 +1060,20 @@ describe("AgentProcessManager", () => {
     await manager.sendCommand(first.id, { type: "prompt", message: "hello" });
     await manager.sendCommand(second.id, { type: "prompt", message: "world" });
 
-    const store = (manager as unknown as { store: { tabs: Map<string, { folderPath: string }> } }).store;
+    const store = (manager as unknown as { store: { tabs: Map<string, { folderPath: string }> } })
+      .store;
     const secondTab = store.tabs.get(second.id);
     if (secondTab) {
       // Force a shared folderPath conflict (stale createTab() return is still the project root).
-      secondTab.folderPath = firstReady.folderPath!;
+      if (!firstReady.folderPath) throw new Error("test precondition: expected folderPath");
+      secondTab.folderPath = firstReady.folderPath;
     }
 
     const firstMessages = manager.getTabs().tabs.find((t) => t.id === first.id)?.messages ?? [];
     const userIndex = firstMessages.findIndex((m) => m.role === "user");
-    await expect(manager.revertTab(first.id, userIndex)).rejects.toBeInstanceOf(RevertConflictError);
+    await expect(manager.revertTab(first.id, userIndex)).rejects.toBeInstanceOf(
+      RevertConflictError,
+    );
   });
 
   it("unrevert restores files from the safety checkpoint", async () => {
@@ -1095,14 +1100,16 @@ describe("AgentProcessManager", () => {
     await drainAgent(manager);
 
     const sessionUuid = "019f3f64-46f5-7f30-82f1-c78e8d4a2e2e";
-    const appDir = process.env.HERMAN_APP_DIR!;
+    if (!process.env.HERMAN_APP_DIR) throw new Error("test precondition: HERMAN_APP_DIR");
+    const appDir = process.env.HERMAN_APP_DIR;
     const piSessionDir = join(appDir, "agent", "sessions");
     mkdirSync(piSessionDir, { recursive: true });
     writeFileSync(join(piSessionDir, `2026-07-08T00-00-00-000Z_${sessionUuid}.jsonl`), "");
     mockGetStateSessionIds.set(tab.id, sessionUuid);
     await manager.restartTabAgent(tab.id);
 
-    const worktreePath = ready.folderPath!;
+    if (!ready.folderPath) throw new Error("test precondition: expected folderPath");
+    const worktreePath = ready.folderPath;
     const repoRoot = await getRepoRoot(worktreePath);
     await rewindManager.init(tab.id, worktreePath, sessionUuid);
     await createCheckpoint({
@@ -1133,7 +1140,7 @@ describe("AgentProcessManager", () => {
 
 describe("AgentProcessManager model selection", () => {
   function emitModelsSync(
-    tabId: string,
+    _tabId: string,
     models: string[],
     currentModel?: string,
     instanceIndex = 0,

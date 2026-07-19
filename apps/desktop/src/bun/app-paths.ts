@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /**
  * Returns the herman application data directory.
@@ -71,6 +72,11 @@ export function credentialsPath(): string {
   return join(hermanDir(), "credentials.enc.json");
 }
 
+/** Herman-managed SSH keys (deploy keys for publishing). */
+export function sshDir(): string {
+  return join(hermanDir(), "ssh");
+}
+
 /** Desktop-managed skills (SKILL.md directories). */
 export function skillsDir(): string {
   return join(agentDir(), "skills");
@@ -84,4 +90,20 @@ export function agentSessionsDir(): string {
 /** Shared pi agent runtime directory (config, extensions, sessions). */
 export function agentDir(): string {
   return join(hermanDir(), "agent");
+}
+
+/**
+ * Resolve a read-only asset directory bundled with the app (templates,
+ * rookie-docs, bundled-skills, …).
+ *
+ * - Production (bundled): `app/bun/index.js` → `app/<name>`
+ * - Local dev: `apps/desktop/src/bun` → `apps/desktop/<name>`
+ *
+ * This helper lives directly in `src/bun/` so the relative depths match the
+ * bundled layout — do not move the resolution into a nested folder.
+ */
+export function bundledAssetDir(name: string): string {
+  const bundledPath = resolve(import.meta.dir, "..", name);
+  if (existsSync(bundledPath)) return bundledPath;
+  return resolve(import.meta.dir, "..", "..", name);
 }

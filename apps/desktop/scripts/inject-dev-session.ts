@@ -1,7 +1,7 @@
-import { dispose, getLogger } from "@logtape/logtape";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { dispose, getLogger } from "@logtape/logtape";
 
 import { configureLogging } from "../src/logging.js";
 

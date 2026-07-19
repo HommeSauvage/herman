@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 // We test the migration and query logic without depending on electrobun.
 // The actual persistence.ts imports Utils.paths.userData, so we test the
@@ -75,12 +74,12 @@ describe("persistence (migrations)", () => {
     runMigrations(db);
     const countBefore = db
       .query<{ count: number }, []>("SELECT COUNT(*) as count FROM migration")
-      .get()!.count;
+      .get()?.count;
 
     runMigrations(db);
     const countAfter = db
       .query<{ count: number }, []>("SELECT COUNT(*) as count FROM migration")
-      .get()!.count;
+      .get()?.count;
 
     expect(countAfter).toBe(countBefore);
   });
@@ -100,7 +99,7 @@ describe("persistence (migrations)", () => {
         "SELECT provider_id FROM provider_pins WHERE tab_id = ? AND model_name = ?",
       )
       .get("tab-1", "kimi-k2.7-code");
-    expect(first!.provider_id).toBe("kimi-primary");
+    expect(first?.provider_id).toBe("kimi-primary");
 
     // Update to a different provider
     db.run(
@@ -115,7 +114,7 @@ describe("persistence (migrations)", () => {
         "SELECT provider_id FROM provider_pins WHERE tab_id = ? AND model_name = ?",
       )
       .get("tab-1", "kimi-k2.7-code");
-    expect(second!.provider_id).toBe("kimi-fallback");
+    expect(second?.provider_id).toBe("kimi-fallback");
   });
 
   it("stores pins per tab independently", () => {

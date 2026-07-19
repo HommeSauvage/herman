@@ -2,8 +2,8 @@
  * Strip ANSI escape codes so terminal color sequences don't leak into JSON.
  */
 function stripAnsi(str: string): string {
-  // eslint-disable-next-line no-control-regex
-  return str.replace(/\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+  const ESC = String.fromCharCode(27);
+  return str.replace(new RegExp(`${ESC}(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])`, "g"), "");
 }
 
 /**

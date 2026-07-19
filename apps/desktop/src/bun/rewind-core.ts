@@ -5,11 +5,11 @@
  * Independently testable, safe to import from anywhere.
  */
 
-import { spawn } from "child_process";
-import { statSync, readdirSync } from "fs";
-import { mkdtemp, rm } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import { spawn } from "node:child_process";
+import { readdirSync, statSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // ============================================================================
 // Constants & Types
@@ -130,7 +130,10 @@ function parseArgs(cmd: string): string[] {
     if (c === "'" && !dq) sq = !sq;
     else if (c === '"' && !sq) dq = !dq;
     else if (c === " " && !sq && !dq) {
-      if (cur) { args.push(cur); cur = ""; }
+      if (cur) {
+        args.push(cur);
+        cur = "";
+      }
     } else cur += c;
   }
   if (cur) args.push(cur);
@@ -138,10 +141,11 @@ function parseArgs(cmd: string): string[] {
 }
 
 export const isGitRepo = (cwd: string) =>
-  git("rev-parse --is-inside-work-tree", cwd).then(() => true).catch(() => false);
+  git("rev-parse --is-inside-work-tree", cwd)
+    .then(() => true)
+    .catch(() => false);
 
-export const getRepoRoot = (cwd: string) =>
-  git("rev-parse --show-toplevel", cwd);
+export const getRepoRoot = (cwd: string) => git("rev-parse --show-toplevel", cwd);
 
 // ============================================================================
 // Path filtering
@@ -157,7 +161,9 @@ export function isLargeFile(root: string, rel: string): boolean {
   try {
     const s = statSync(join(root, rel));
     return s.isFile() && s.size > MAX_UNTRACKED_FILE_SIZE;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 /** Returns true if directory contains >= MAX_UNTRACKED_DIR_FILES files */
@@ -167,7 +173,9 @@ export function isLargeDirectory(root: string, rel: string): boolean {
     const s = statSync(full);
     if (!s.isDirectory()) return false;
     return countFiles(full, MAX_UNTRACKED_DIR_FILES) >= MAX_UNTRACKED_DIR_FILES;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 function countFiles(dir: string, max: number): number {
@@ -180,7 +188,9 @@ function countFiles(dir: string, max: number): number {
         if (e.isDirectory()) walk(join(d, e.name));
         else if (e.isFile()) n++;
       }
-    } catch { /* permission errors */ }
+    } catch {
+      /* permission errors */
+    }
   };
   walk(dir);
   return n;
@@ -247,9 +257,16 @@ async function captureStatusSnapshot(root: string): Promise<StatusSnapshot> {
       if (!raw || shouldIgnoreForSnapshot(raw)) continue;
 
       let st: ReturnType<typeof statSync> | null = null;
-      try { st = statSync(join(root, raw)); } catch { st = null; }
+      try {
+        st = statSync(join(root, raw));
+      } catch {
+        st = null;
+      }
 
-      if (st?.isDirectory()) { snap.untrackedDirs.push(raw); continue; }
+      if (st?.isDirectory()) {
+        snap.untrackedDirs.push(raw);
+        continue;
+      }
 
       snap.untrackedFiles.push(raw);
       const large = st?.isFile() ? st.size > MAX_UNTRACKED_FILE_SIZE : false;
@@ -287,14 +304,18 @@ function detectLargeDirs(files: string[], dirs: string[], threshold: number): st
   const counts = new Map<string, number>();
 
   const sortedDirs = [...dirs].sort((a, b) => {
-    const da = a.split("/").length, db = b.split("/").length;
+    const da = a.split("/").length,
+      db = b.split("/").length;
     return da !== db ? db - da : a.localeCompare(b);
   });
 
   for (const f of files) {
     let bucket: string | null = null;
     for (const d of sortedDirs) {
-      if (isPathWithin(f, d)) { bucket = d; break; }
+      if (isPathWithin(f, d)) {
+        bucket = d;
+        break;
+      }
     }
     if (!bucket) {
       const parts = f.split("/");
@@ -325,14 +346,16 @@ async function getFilesToAdd(root: string): Promise<FilesToAddResult> {
   );
   const largeDirsSet = new Set(largeDirs);
 
-  const untrackedForIndex = status.untrackedFilesForIndex
-    .filter((p) => !isPathWithinAny(p, largeDirsSet));
-  const skippedLargeFiles = status.skippedLargeFiles
-    .filter((p) => !isPathWithinAny(p, largeDirsSet));
+  const untrackedForIndex = status.untrackedFilesForIndex.filter(
+    (p) => !isPathWithinAny(p, largeDirsSet),
+  );
+  const skippedLargeFiles = status.skippedLargeFiles.filter(
+    (p) => !isPathWithinAny(p, largeDirsSet),
+  );
 
   const all = new Set<string>();
-  status.trackedPaths.forEach((p) => all.add(p));
-  untrackedForIndex.forEach((p) => all.add(p));
+  for (const p of status.trackedPaths) all.add(p);
+  for (const p of untrackedForIndex) all.add(p);
 
   return {
     filtered: [...all],
@@ -419,7 +442,9 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
       `untracked ${JSON.stringify(preexistingUntrackedFiles)}`,
       `largeFiles ${JSON.stringify(skippedLargeFiles)}`,
       `largeDirs ${JSON.stringify(skippedLargeDirs)}`,
-    ].filter(Boolean).join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     const commitEnv = {
       ...process.env,
@@ -470,7 +495,7 @@ export async function restoreCheckpoint(root: string, cp: CheckpointData): Promi
     if (currentBranch !== cp.branch) {
       throw new Error(
         `Branch mismatch: checkpoint was created on "${cp.branch}" but you are on "${currentBranch}". ` +
-        `Switch to "${cp.branch}" first, or this restore could corrupt your worktree.`
+          `Switch to "${cp.branch}" first, or this restore could corrupt your worktree.`,
       );
     }
   }
@@ -540,8 +565,7 @@ export async function loadCheckpointFromRef(
     const commitSha = await git(`rev-parse --verify ${REF_BASE}/${refName}`, root);
     const msg = await git(`cat-file commit ${commitSha}`, root);
 
-    const get = (key: string) =>
-      msg.match(new RegExp(`^${key} (.+)$`, "m"))?.[1]?.trim();
+    const get = (key: string) => msg.match(new RegExp(`^${key} (.+)$`, "m"))?.[1]?.trim();
 
     const sid = get("sessionId");
     const turn = get("turn");
@@ -556,7 +580,9 @@ export async function loadCheckpointFromRef(
       try {
         const arr = JSON.parse(raw);
         return arr.length > 0 ? arr : undefined;
-      } catch { return undefined; }
+      } catch {
+        return undefined;
+      }
     };
 
     return {
@@ -570,7 +596,7 @@ export async function loadCheckpointFromRef(
       headSha: head,
       indexTreeSha: idx,
       worktreeTreeSha: wt,
-      timestamp: get("created") ? new Date(get("created")!).getTime() : 0,
+      timestamp: get("created") ? new Date(get("created") as string).getTime() : 0,
       preexistingUntrackedFiles: parseJson("untracked"),
       skippedLargeFiles: parseJson("largeFiles"),
       skippedLargeDirs: parseJson("largeDirs"),
@@ -585,7 +611,10 @@ export async function listCheckpointRefs(root: string): Promise<string[]> {
   try {
     const prefix = `${REF_BASE}/`;
     const out = await git(`for-each-ref --format=%(refname) ${prefix}`, root);
-    return out.split("\n").filter(Boolean).map((r) => r.replace(prefix, ""));
+    return out
+      .split("\n")
+      .filter(Boolean)
+      .map((r) => r.replace(prefix, ""));
   } catch {
     return [];
   }
@@ -599,8 +628,7 @@ export async function loadAllCheckpoints(
   const refs = await listCheckpointRefs(root);
   const results = await Promise.all(refs.map((r) => loadCheckpointFromRef(root, r)));
   return results.filter(
-    (cp): cp is CheckpointData =>
-      cp !== null && (!sessionId || cp.sessionId === sessionId),
+    (cp): cp is CheckpointData => cp !== null && (!sessionId || cp.sessionId === sessionId),
   );
 }
 
@@ -663,15 +691,16 @@ export async function pruneOldSessions(
     if (!sessionId || sessionId === currentSessionId) continue;
 
     if (!bySession.has(sessionId)) bySession.set(sessionId, []);
-    bySession.get(sessionId)!.push(ref);
+    bySession.get(sessionId)?.push(ref);
   }
 
   for (const [_sid, sessionRefs] of bySession) {
     // Sort by ref name (contains timestamp at end) — oldest first
     sessionRefs.sort();
-    const toDelete = keepPerOldSession > 0
-      ? sessionRefs.slice(0, Math.max(0, sessionRefs.length - keepPerOldSession))
-      : sessionRefs;
+    const toDelete =
+      keepPerOldSession > 0
+        ? sessionRefs.slice(0, Math.max(0, sessionRefs.length - keepPerOldSession))
+        : sessionRefs;
 
     for (const ref of toDelete) {
       const id = ref.replace("refs/pi-checkpoints/", "");

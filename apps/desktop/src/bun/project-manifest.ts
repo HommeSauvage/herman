@@ -9,11 +9,7 @@ import type {
   ProjectManifestView,
   ResolvedManifest,
 } from "../shared/herman-manifest.js";
-import {
-  HermanYamlSchema,
-  isV1Manifest,
-  migrateV1Manifest,
-} from "../shared/herman-manifest.js";
+import { HermanYamlSchema, isV1Manifest, migrateV1Manifest } from "../shared/herman-manifest.js";
 import { dumpFrontmatterYaml, parseHermanMd, yamlString } from "./herman-md.js";
 import { initProjectRepo } from "./worktree.js";
 
@@ -30,8 +26,7 @@ function toManifestView(parsed: {
   requirements?: HermanFrontmatter["requirements"];
 }): ProjectManifestView {
   const servers = parsed.servers ?? [];
-  const primary =
-    servers.find((s) => s.primary) ?? (servers.length > 0 ? servers[0] : undefined);
+  const primary = servers.find((s) => s.primary) ?? (servers.length > 0 ? servers[0] : undefined);
   return {
     servers,
     ...(primary ? { primary } : {}),
@@ -101,9 +96,7 @@ export async function readProjectManifest(
 }
 
 /** Parse a herman.yaml file into a ProjectManifestView with zod validation. */
-async function readHermanYaml(
-  yamlPath: string,
-): Promise<ProjectManifestView> {
+async function readHermanYaml(yamlPath: string): Promise<ProjectManifestView> {
   const raw = await readFile(yamlPath, "utf-8");
   const parsedRaw: unknown = Bun.YAML.parse(raw);
   const migrated = isV1Manifest(parsedRaw) ? migrateV1Manifest(parsedRaw) : parsedRaw;
@@ -131,7 +124,7 @@ export function serializeHermanYaml(manifest: ResolvedManifest): string {
     ...(fm.requirements?.length ? { requirements: fm.requirements } : {}),
   };
 
-  let yaml = dumpFrontmatterYaml(cleaned) + "\n";
+  let yaml = `${dumpFrontmatterYaml(cleaned)}\n`;
 
   // Append guidance as a YAML key (not a markdown section).
   const guidance = manifest.sections.guidance?.trim();

@@ -1,5 +1,5 @@
 import { cn } from "@herman/ui/lib/utils";
-import { Download, FolderOpen, Search, Terminal, Trash2, Power, PowerOff } from "lucide-react";
+import { Download, FolderOpen, Power, PowerOff, Search, Terminal, Trash2 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import type { SkillInfo, SkillSearchResult } from "../../../../shared/rpc.js";
@@ -85,37 +85,43 @@ export function SkillsTab() {
     setSearchError(null);
   }, []);
 
-  const handleModeChange = useCallback((nextMode: InstallMode) => {
-    setMode(nextMode);
-    resetMessages();
-  }, [resetMessages]);
+  const handleModeChange = useCallback(
+    (nextMode: InstallMode) => {
+      setMode(nextMode);
+      resetMessages();
+    },
+    [resetMessages],
+  );
 
-  const validateSkillContent = useCallback((content: string): { name?: string; description?: string } => {
-    if (!content.startsWith("---")) {
-      throw new Error("File does not appear to be a valid SKILL.md (missing frontmatter)");
-    }
-    const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    const endIndex = normalized.indexOf("\n---", 3);
-    if (endIndex === -1) {
-      throw new Error("File does not appear to be a valid SKILL.md (unclosed frontmatter)");
-    }
-    const yamlString = normalized.slice(4, endIndex);
-    const result: { name?: string; description?: string } = {};
-    for (const line of yamlString.split("\n")) {
-      const match = line.match(/^(\w[\w-]*):\s*(.*)$/);
-      if (match) {
-        const key = match[1];
-        const value = match[2].trim().replace(/^['"](.*)['"]$/, "$1");
-        if (key === "name" || key === "description") {
-          result[key] = value;
+  const validateSkillContent = useCallback(
+    (content: string): { name?: string; description?: string } => {
+      if (!content.startsWith("---")) {
+        throw new Error("File does not appear to be a valid SKILL.md (missing frontmatter)");
+      }
+      const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const endIndex = normalized.indexOf("\n---", 3);
+      if (endIndex === -1) {
+        throw new Error("File does not appear to be a valid SKILL.md (unclosed frontmatter)");
+      }
+      const yamlString = normalized.slice(4, endIndex);
+      const result: { name?: string; description?: string } = {};
+      for (const line of yamlString.split("\n")) {
+        const match = line.match(/^(\w[\w-]*):\s*(.*)$/);
+        if (match) {
+          const key = match[1];
+          const value = match[2].trim().replace(/^['"](.*)['"]$/, "$1");
+          if (key === "name" || key === "description") {
+            result[key] = value;
+          }
         }
       }
-    }
-    if (!result.description?.trim()) {
-      throw new Error("SKILL.md is missing a description in its frontmatter");
-    }
-    return result;
-  }, []);
+      if (!result.description?.trim()) {
+        throw new Error("SKILL.md is missing a description in its frontmatter");
+      }
+      return result;
+    },
+    [],
+  );
 
   const buildSkillFetchUrl = useCallback((rawUrl: string): string[] => {
     const urlObj = new URL(rawUrl);
@@ -453,13 +459,9 @@ export function SkillsTab() {
           </h2>
         </div>
 
-        {loading && (
-          <div className="text-ghost py-12 text-center text-sm">Loading skills…</div>
-        )}
+        {loading && <div className="text-ghost py-12 text-center text-sm">Loading skills…</div>}
 
-        {error && (
-          <div className="text-red-400 py-12 text-center text-sm">{error}</div>
-        )}
+        {error && <div className="text-red-400 py-12 text-center text-sm">{error}</div>}
 
         {!loading && !error && skills.length === 0 && (
           <div className="border-white/[0.06] bg-surface/20 flex flex-col items-center gap-3 rounded-xl border py-12 text-center">
@@ -469,8 +471,8 @@ export function SkillsTab() {
             <div>
               <p className="text-dim text-sm font-medium">No skills installed</p>
               <p className="text-ghost mt-1 text-xs">
-                Install skills above or add SKILL.md files to ~/.agents/skills/ or
-                your project's .agents/skills/ directory.
+                Install skills above or add SKILL.md files to ~/.agents/skills/ or your project's
+                .agents/skills/ directory.
               </p>
             </div>
           </div>
@@ -484,7 +486,8 @@ export function SkillsTab() {
               className={cn(
                 "border-white/[0.06] hover:border-white/[0.12] mb-2 flex items-start gap-3 rounded-lg border p-3 transition",
                 skill.disabled && "opacity-50",
-              )}>
+              )}
+            >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-text text-sm font-medium">{skill.name}</span>
@@ -496,16 +499,12 @@ export function SkillsTab() {
                   >
                     {sourceLabel(skill.source)}
                   </span>
-                  {skill.disabled && (
-                    <span className="text-ghost text-[10px]">(disabled)</span>
-                  )}
+                  {skill.disabled && <span className="text-ghost text-[10px]">(disabled)</span>}
                 </div>
                 <p className="text-dim mt-1 text-xs leading-relaxed line-clamp-2">
                   {skill.description}
                 </p>
-                <p className="text-ghost mt-1 truncate text-[10px] font-mono">
-                  {skill.filePath}
-                </p>
+                <p className="text-ghost mt-1 truncate text-[10px] font-mono">{skill.filePath}</p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 {skill.source === "herman" && (

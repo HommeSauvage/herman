@@ -60,6 +60,11 @@ src/
 │   │   ├── bootstrapper.ts plan → provision (worktree) → reserve ports → setup → agent → preview
 │   │   ├── setup-runner.ts Manifest setup recipe: env files, ordered steps, stamp + resume
 │   │   └── worktree-gc.ts  Startup GC for orphaned worktrees/branches (24h guard)
+│   ├── publishing/       Publishing domain (Hetzner + Coolify)
+│   │   ├── store.ts      Per-project config in SQLite; API token in the encrypted credential store; status only advances
+│   │   ├── ssh-keygen.ts Deploy key generation/discovery (keys under sshDir())
+│   │   ├── coolify-install.ts  Herman installs Coolify over SSH (preflight + streamed progress)
+│   │   └── skill-seed.ts Seeds the bundled coolify-ops skill (hash-stamped re-seed)
 │   └── persistence/      SQLite-based persistence (tab history, composer drafts)
 ├── shared/               Types and utilities shared between main and renderer
 │   ├── rpc.ts            Electrobun RPC contract
@@ -114,6 +119,18 @@ Each open tab has its own agent subprocess, spawned via `agent-bridge.ts`. The s
 Communication between the main process and the agent uses JSON-RPC over stdin/stdout. Events flow through `agent-process-manager.ts`, which persists messages, manages session archives, and broadcasts state changes to the renderer.
 
 All tabs/wizards/headless runs share **one pi config root** (`~/.herman/agent`): `auth.json`, `models.json`, `settings.json`, and `npm/node_modules/` (bundled extensions). `syncAgentConfig()` writes it once at startup (serialized, single-flight) and on credential/settings changes; tab spawn awaits it but does no per-tab config writing. A tab is just a pi session (new or resumed by UUID) in the shared `sessions/` dir. Closing a tab with no conversation deletes only its JSONL file. Projects (folders) → sessions is handled natively via pi session JSONL headers (each carries `cwd`), surfaced by `pi-sessions.ts` (worktree cwds are mapped back to their owning project via `WorktreeIndex`).
+
+## Rookie wizard
+
+The onboarding wizard (`src/bun/wizard-session.ts`) runs five agent phases, each a fresh pi session:
+
+1. **planning** — interview + clone + interview digest (`HERMAN_PLAN.md`)
+2. **design** — `HERMAN_DESIGN.md` + milestone plan with acceptance criteria
+3. **coding** — one `/goal` session **per milestone**, each gated by `wizard-verify.ts`
+4. **qa** — managed preview under `wizard:<id>` + Playwright browser walkthrough; hard gate
+5. **docs** — `herman-docs/` tutorials
+
+Coding/QA completion uses a `__herman_gate__` editor round-trip (not the host-bridge HTTP API) so verification can take minutes. Browser tools (`herman_browse`) and preview logs work for wizard ids via `PreviewContextService.resolve`.
 
 ## Sessions, workspaces & previews
 

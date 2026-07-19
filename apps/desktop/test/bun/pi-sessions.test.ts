@@ -2,17 +2,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
 import {
   getProjectFoldersFromPiSessions,
   listPiSessionsForProject,
 } from "../../src/bun/pi-sessions.js";
 import { WorktreeIndex } from "../../src/bun/worktree.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
 
 let appDir: string;
 
@@ -35,10 +30,7 @@ function writeSession(id: string, cwd: string, firstMessage = "hello"): void {
       message: { role: "user", content: firstMessage },
     }),
   ];
-  writeFileSync(
-    join(sessionsDir, `2026-07-09T00-00-00-000Z_${id}.jsonl`),
-    lines.join("\n") + "\n",
-  );
+  writeFileSync(join(sessionsDir, `2026-07-09T00-00-00-000Z_${id}.jsonl`), `${lines.join("\n")}\n`);
 }
 
 beforeEach(() => {
@@ -80,10 +72,7 @@ describe("pi session listing normalization (D5)", () => {
 
   it("never surfaces worktree directories as projects", async () => {
     writeSession("sess-a-0000-0000-0000-0000-00000000001", "/Users/test/alpha");
-    writeSession(
-      "sess-b-0000-0000-0000-0000-00000000002",
-      "/Users/test/Herman/.worktrees/tab-xyz",
-    );
+    writeSession("sess-b-0000-0000-0000-0000-00000000002", "/Users/test/Herman/.worktrees/tab-xyz");
 
     const folders = await getProjectFoldersFromPiSessions();
     expect(folders).toContain("/Users/test/alpha");

@@ -1,9 +1,7 @@
 import type { OutgoingMessages } from "../../../shared/rpc.js";
 
 type MessageName = keyof OutgoingMessages;
-type MessageHandler<N extends MessageName = MessageName> = (
-  payload: OutgoingMessages[N],
-) => void;
+type MessageHandler<N extends MessageName = MessageName> = (payload: OutgoingMessages[N]) => void;
 
 type PendingEntry = {
   name: MessageName;
@@ -13,14 +11,8 @@ type PendingEntry = {
 };
 
 export type MessageListenerFacade = {
-  addMessageListener: <N extends MessageName>(
-    name: N,
-    handler: MessageHandler<N>,
-  ) => void;
-  removeMessageListener: <N extends MessageName>(
-    name: N,
-    handler: MessageHandler<N>,
-  ) => void;
+  addMessageListener: <N extends MessageName>(name: N, handler: MessageHandler<N>) => void;
+  removeMessageListener: <N extends MessageName>(name: N, handler: MessageHandler<N>) => void;
 };
 
 /**

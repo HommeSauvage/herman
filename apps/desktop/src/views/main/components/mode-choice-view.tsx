@@ -1,5 +1,5 @@
+import { Code, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
-import { Sparkles, Code } from "lucide-react";
 import { useCallback } from "react";
 
 import { useAgentStore } from "../lib/agent-store.js";

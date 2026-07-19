@@ -4,9 +4,9 @@ import type { PreviewServerSnapshot } from "../../src/shared/preview.js";
 import { useAgentStore } from "../../src/views/main/lib/agent-store.js";
 import {
   createPreviewStore,
+  type PreviewRpcDeps,
   selectPreviewStage,
   selectShowRuntimeBanner,
-  type PreviewRpcDeps,
 } from "../../src/views/main/lib/preview-store.js";
 
 const getProjectManifest = mock(() => Promise.resolve(undefined));
@@ -295,7 +295,7 @@ describe("preview-store", () => {
     store.getState().__resetForTests({ folderPath: "/a", generation: 1 });
 
     store.getState().acceptClientError({ message: "x".repeat(3000) });
-    expect(store.getState().runtimeErrors[0]!.message.length).toBe(2000);
+    expect(store.getState().runtimeErrors[0]?.message.length).toBe(2000);
 
     store.getState().acceptClientError({ message: "same" });
     store.getState().acceptClientError({ message: "same" });
@@ -354,7 +354,9 @@ describe("preview-store", () => {
     const mockSetComposerValue = mock(() => {});
     const mockSetView = mock(() => {});
     try {
+      // biome-ignore lint/suspicious/noExplicitAny: test mock override
       (state as any).setComposerValue = mockSetComposerValue;
+      // biome-ignore lint/suspicious/noExplicitAny: test mock override
       (state as any).setView = mockSetView;
 
       store.getState().__resetForTests({
@@ -371,7 +373,9 @@ describe("preview-store", () => {
       expect(mockSetView).toHaveBeenCalledTimes(1);
       expect(mockSetView.mock.calls[0]?.[0]).toBe("session");
     } finally {
+      // biome-ignore lint/suspicious/noExplicitAny: test mock restore
       (state as any).setComposerValue = origSetComposerValue;
+      // biome-ignore lint/suspicious/noExplicitAny: test mock restore
       (state as any).setView = origSetView;
     }
   });

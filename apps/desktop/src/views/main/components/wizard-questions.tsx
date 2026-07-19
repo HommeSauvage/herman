@@ -1,8 +1,12 @@
-import { motion, AnimatePresence } from "motion/react";
 import { ArrowRight, Check } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
-import type { WizardAskEnvelope, WizardAskQuestion, WizardOption } from "../../../shared/wizard-protocol.js";
+import type {
+  WizardAskEnvelope,
+  WizardAskQuestion,
+  WizardOption,
+} from "../../../shared/wizard-protocol.js";
 import { ContentWidth, SignalButton } from "./ui/index.js";
 
 /**
@@ -47,7 +51,7 @@ export function WizardQuestions({
     return typeof a === "string" && a.trim().length > 0;
   }
 
-  function allAnswered(): boolean {
+  function _allAnswered(): boolean {
     return questions.every(isAnswered);
   }
 
@@ -81,7 +85,9 @@ export function WizardQuestions({
           <span className="text-dim text-xs">
             Step {index + 1} of {total}
           </span>
-          <span className="text-ghost text-xs">{answeredCount}/{total} answered</span>
+          <span className="text-ghost text-xs">
+            {answeredCount}/{total} answered
+          </span>
         </div>
         <div className="bg-white/[0.06] h-1 overflow-hidden rounded-full">
           <motion.div
@@ -109,6 +115,7 @@ export function WizardQuestions({
 
       <div className="mt-5 flex items-center justify-between">
         <button
+          type="button"
           onClick={onCancel}
           className="text-ghost hover:text-dim text-xs transition"
         >
@@ -117,17 +124,14 @@ export function WizardQuestions({
         <div className="flex gap-2">
           {index > 0 && (
             <button
+              type="button"
               onClick={() => setIndex((i) => Math.max(0, i - 1))}
               className="text-dim hover:text-text rounded-xl border border-white/[0.08] px-4 py-2 text-sm transition"
             >
               Back
             </button>
           )}
-          <SignalButton
-            size="sm"
-            disabled={!canAdvance || submitting}
-            onClick={handleNext}
-          >
+          <SignalButton size="sm" disabled={!canAdvance || submitting} onClick={handleNext}>
             {isLast ? (submitting ? "Submitting…" : "Submit") : "Next"}
             <ArrowRight size={14} />
           </SignalButton>
@@ -219,9 +223,12 @@ function TextQuestion({
       transition={{ type: "spring", stiffness: 400, damping: 30 }}
       className="w-full"
     >
-      <label className="text-text mb-3 block text-sm font-medium">{question.prompt}</label>
+      <label htmlFor={question.id} className="text-text mb-3 block text-sm font-medium">
+        {question.prompt}
+      </label>
       {question.secret ? (
         <input
+          id={question.id}
           ref={inputRef as React.RefObject<HTMLInputElement>}
           type="password"
           value={value}
@@ -254,7 +261,6 @@ function ChoiceQuestion({
   value,
   onChange,
   onNext,
-  canAdvance,
   isLast,
 }: {
   question: WizardAskQuestion;
@@ -288,12 +294,15 @@ function ChoiceQuestion({
       transition={{ type: "spring", stiffness: 400, damping: 30 }}
       className="w-full"
     >
-      <label className="text-text mb-3 block text-sm font-medium">{question.prompt}</label>
+      <label htmlFor={question.id} className="text-text mb-3 block text-sm font-medium">
+        {question.prompt}
+      </label>
       <div className="space-y-2">
         {options.map((opt) => {
           const selected = multiple ? value.includes(opt.value) : value[0] === opt.value;
           return (
             <button
+              type="button"
               key={opt.value}
               onClick={() => toggle(opt)}
               className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition ${
@@ -309,16 +318,16 @@ function ChoiceQuestion({
                     : "border-white/[0.14] text-transparent"
                 }`}
               >
-                {multiple ? (
-                  selected && <Check size={13} strokeWidth={3} />
-                ) : (
-                  selected && <div className="bg-primary-foreground h-2 w-2 rounded-full" />
-                )}
+                {multiple
+                  ? selected && <Check size={13} strokeWidth={3} />
+                  : selected && <div className="bg-primary-foreground h-2 w-2 rounded-full" />}
               </div>
               <div className="min-w-0">
                 <div className={`text-sm ${selected ? "text-text" : "text-dim"}`}>{opt.label}</div>
                 {opt.description && (
-                  <div className="text-ghost mt-0.5 text-[11px] leading-snug">{opt.description}</div>
+                  <div className="text-ghost mt-0.5 text-[11px] leading-snug">
+                    {opt.description}
+                  </div>
                 )}
               </div>
             </button>

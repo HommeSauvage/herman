@@ -1,5 +1,5 @@
-import { useCallback, useRef } from "react";
 import { Gauge, GitCompare } from "lucide-react";
+import { useCallback, useRef } from "react";
 
 import { useAgentStore } from "../lib/agent-store.js";
 import { AdSidebar } from "./ad-sidebar.js";
@@ -104,7 +104,11 @@ export function RightSidebar() {
 
         {/* Tab content */}
         <div className="flex-1 overflow-hidden">
-          {sidebarTab === "changes" ? <ChangesPanel /> : sidebarTab === "context" ? <ContextPanel /> : null}
+          {sidebarTab === "changes" ? (
+            <ChangesPanel />
+          ) : sidebarTab === "context" ? (
+            <ContextPanel />
+          ) : null}
         </div>
       </div>
     </div>

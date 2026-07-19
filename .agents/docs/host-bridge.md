@@ -20,6 +20,19 @@ going through a UI dialog.
 | GET | `/v1/tabs/:tabId/session-info` | ✅ | Full session info (project path, worktree, preview servers, current page URL). |
 | GET | `/v1/tabs/:tabId/preview/state` | ✅ | Compact preview state for per-turn prompt injection. |
 | GET | `/v1/tabs/:tabId/preview/logs?environment=console\|server` | ✅ | Recent browser console or dev-server terminal logs. |
+| POST | `/v1/tabs/:tabId/browser/goto` | ✅ | Headless browser navigate (`{ url? }` or `{ path? }` relative to primary preview). |
+| GET | `/v1/tabs/:tabId/browser/screenshot` | ✅ | JPEG screenshot of the current page (query `fullPage=true` optional). |
+| POST | `/v1/tabs/:tabId/browser/act` | ✅ | Click/fill/press/scroll steps (`{ steps: BrowserActionStep[] }`). |
+| GET | `/v1/tabs/:tabId/publishing/config` | ✅ | Full publishing config for the tab's project (server IP, SSH key path, Coolify URL + API token, recorded project/app IDs). 404 `no_publishing_config` when unset. |
+| POST | `/v1/tabs/:tabId/publishing/config` | ✅ | Agent write-back of deployment results (`{ coolifyProjectId?, coolifyProjectName?, coolifyApplicationId?, domain?, status? }`; `null` clears, absent keeps, `status` only advances). |
+
+`:tabId` may be a normal tab id **or** a wizard session id (`wizard-…`). Preview
+context resolves wizard ids to `wizard:<id>` scopes so QA agents can read logs
+and drive the browser without a UI tab.
+
+Wizard coding/QA **completion gates** do **not** use the host bridge (HTTP
+timeouts are too short). They ride the editor sentinel channel
+(`__herman_gate__`) so verification can take minutes.
 
 ### Logs query parameters
 

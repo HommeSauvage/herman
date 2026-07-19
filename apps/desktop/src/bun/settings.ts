@@ -1,11 +1,11 @@
-import { getLogger } from "@logtape/logtape";
 import { dirname } from "node:path";
+import { getLogger } from "@logtape/logtape";
 
 import { config } from "../env.js";
+import { logStorageError } from "../logging-shared.js";
 import type { DesktopSettings, HermanProviderSettings, ProviderSettings } from "../shared/rpc.js";
 import { settingsPath } from "./app-paths.js";
 import { ensureDir } from "./fs-utils.js";
-import { logStorageError } from "../logging-shared.js";
 
 const logger = getLogger(["herman-desktop", "storage"]);
 
@@ -47,9 +47,7 @@ function migrateProviders(
   return { herman, custom };
 }
 
-function migrateModels(
-  models?: Partial<DesktopSettings["models"]>,
-): DesktopSettings["models"] {
+function migrateModels(models?: Partial<DesktopSettings["models"]>): DesktopSettings["models"] {
   const migrated: DesktopSettings["models"] = {
     ...defaultSettings().models,
     ...models,

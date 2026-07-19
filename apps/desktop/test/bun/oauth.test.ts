@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import type { OAuthCredential } from "../../src/shared/rpc.js";
 import {
   cancelOAuthLogin,
   getOAuthProvider,
@@ -9,6 +7,7 @@ import {
   registerOAuthProvider,
   startOAuthLogin,
 } from "../../src/bun/oauth.js";
+import type { OAuthCredential } from "../../src/shared/rpc.js";
 
 describe("oauth", () => {
   beforeEach(async () => {

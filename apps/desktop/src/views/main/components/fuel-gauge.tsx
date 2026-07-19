@@ -2,11 +2,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/t
 import { cn } from "@herman/ui/lib/utils";
 
 import type { ContextStats } from "../../../shared/context-stats.js";
-import {
-  clampPercentage,
-  formatCost,
-  formatTokenCount,
-} from "../../../shared/context-stats.js";
+import { clampPercentage, formatCost, formatTokenCount } from "../../../shared/context-stats.js";
 
 export type FuelGaugeProps = {
   stats?: ContextStats;
@@ -89,7 +85,10 @@ export function FuelGauge({
               className="h-full w-full"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
+              role="img"
+              aria-label={`Context usage: ${percentage}%`}
             >
+              <title>Context usage: {percentage}%</title>
               {/* Outer arc from E to F across the top of the gauge */}
               <path
                 d={arcPath}
@@ -107,22 +106,12 @@ export function FuelGauge({
                 className="text-red-500/70"
               />
               {/* Needle pivot cap */}
-              <circle
-                cx={cx}
-                cy={cy}
-                r="2.5"
-                className="text-text"
-                fill="currentColor"
-              />
+              <circle cx={cx} cy={cy} r="2.5" className="text-text" fill="currentColor" />
               {/* Needle rotates around the pivot point */}
               <g
                 className={cn(
                   "transition-transform duration-500 ease-out",
-                  isCritical
-                    ? "text-red-400"
-                    : isHigh
-                      ? "text-amber-400"
-                      : "text-signal",
+                  isCritical ? "text-red-400" : isHigh ? "text-amber-400" : "text-signal",
                 )}
                 style={{
                   transformOrigin: `${cx}px ${cy}px`,
@@ -140,12 +129,8 @@ export function FuelGauge({
                 />
               </g>
             </svg>
-            <span className="absolute bottom-[2px] left-1 text-[7px] font-medium text-dim">
-              E
-            </span>
-            <span className="absolute bottom-[2px] right-1 text-[7px] font-medium text-dim">
-              F
-            </span>
+            <span className="absolute bottom-[2px] left-1 text-[7px] font-medium text-dim">E</span>
+            <span className="absolute bottom-[2px] right-1 text-[7px] font-medium text-dim">F</span>
           </button>
         }
       />
@@ -156,18 +141,15 @@ export function FuelGauge({
           </div>
           {mode === "rookie" ? (
             <div className="text-dim text-[10px] leading-relaxed">
-              {percentage >= 75 ? (
-                "Your conversation is getting full. The agent will soon compact the session to make room for more context, so you can keep working."
-              ) : (
-                "As your conversation grows, the agent has more to keep in mind. When this gets too high, it may start to perform less well — starting a new session can help keep things running smoothly."
-              )}
+              {percentage >= 75
+                ? "Your conversation is getting full. The agent will soon compact the session to make room for more context, so you can keep working."
+                : "As your conversation grows, the agent has more to keep in mind. When this gets too high, it may start to perform less well — starting a new session can help keep things running smoothly."}
             </div>
           ) : stats ? (
             <div className="text-dim text-[10px] leading-relaxed">
               <div>
-                {formatTokenCount(stats.totalTokens)} total ·{" "}
-                {formatTokenCount(stats.inputTokens)} in ·{" "}
-                {formatTokenCount(stats.outputTokens)} out
+                {formatTokenCount(stats.totalTokens)} total · {formatTokenCount(stats.inputTokens)}{" "}
+                in · {formatTokenCount(stats.outputTokens)} out
               </div>
               {(stats.reasoningTokens > 0 ||
                 stats.cacheReadTokens > 0 ||

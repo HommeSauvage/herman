@@ -10,9 +10,9 @@ import type {
   PreviewServerSnapshot,
   SpawnChildOpts,
 } from "../../../src/bun/preview/types.js";
+import type { DevServer } from "../../../src/shared/herman-manifest.js";
 import type { PreviewLogEvent } from "../../../src/shared/preview.js";
 import { tabScope } from "../../../src/shared/preview.js";
-import type { DevServer } from "../../../src/shared/herman-manifest.js";
 
 function createFakeChild(opts?: {
   exitCode?: number;
@@ -27,7 +27,7 @@ function createFakeChild(opts?: {
   let killed = false;
 
   const encode = (lines: string[]) => {
-    const text = lines.map((l) => l + "\n").join("");
+    const text = lines.map((l) => `${l}\n`).join("");
     return new ReadableStream<Uint8Array>({
       start(controller) {
         if (text) controller.enqueue(new TextEncoder().encode(text));
@@ -71,7 +71,7 @@ function createDeps(overrides?: Partial<PreviewManagerDeps>): {
       spawns.push(opts);
       return createFakeChild();
     },
-    probe: async () => ({ ok: false } satisfies PreviewProbeResult),
+    probe: async () => ({ ok: false }) satisfies PreviewProbeResult,
     findFreePort: async (start) => Math.max(start, nextPort++),
     emitStatus: (s) => statuses.push(s),
     emitLog: (e) => logs.push(e),
@@ -297,7 +297,15 @@ describe("PreviewManager", () => {
       serverId: "web",
       command: "echo",
       reservedPorts: new Map([
-        ["web", { port: 8200, release: async () => { order.push("release"); } }],
+        [
+          "web",
+          {
+            port: 8200,
+            release: async () => {
+              order.push("release");
+            },
+          },
+        ],
       ]),
     });
     await manager.awaitStartFlight(scope, "web", false);
@@ -338,7 +346,9 @@ describe("PreviewManager", () => {
     expect(spawns.length).toBe(2);
     expect(spawns[0]?.port).toBe(8300);
     expect(spawns[1]?.port).toBe(8301);
-    expect(statuses.some((s) => s.phase === "failed" && /EADDRINUSE/.test(s.error ?? ""))).toBe(false);
+    expect(statuses.some((s) => s.phase === "failed" && /EADDRINUSE/.test(s.error ?? ""))).toBe(
+      false,
+    );
     await manager.stopAll();
   });
 
@@ -350,8 +360,18 @@ describe("PreviewManager", () => {
     const scopeA = tabScope("tab-a");
     const scopeB = tabScope("tab-b");
 
-    await manager.ensureStarted({ scope: scopeA, folderPath: "/shared", serverId: "web", command: "echo" });
-    await manager.ensureStarted({ scope: scopeB, folderPath: "/shared", serverId: "web", command: "echo" });
+    await manager.ensureStarted({
+      scope: scopeA,
+      folderPath: "/shared",
+      serverId: "web",
+      command: "echo",
+    });
+    await manager.ensureStarted({
+      scope: scopeB,
+      folderPath: "/shared",
+      serverId: "web",
+      command: "echo",
+    });
     await manager.awaitStartFlight(scopeA, "web", false);
     await manager.awaitStartFlight(scopeB, "web", false);
     expect(spawns.length).toBe(2);
@@ -512,7 +532,9 @@ describe("PreviewManager", () => {
     expect(killIdx).toBeGreaterThanOrEqual(0);
     expect(exitedIdx).toBeGreaterThan(killIdx);
     expect(findIndices.length).toBeGreaterThanOrEqual(2);
-    expect(findIndices[1]!).toBeGreaterThan(exitedIdx);
+    const secondFind = findIndices[1];
+    if (secondFind === undefined) throw new Error("test precondition: expected second find index");
+    expect(secondFind).toBeGreaterThan(exitedIdx);
     await manager.stopAll();
   });
 });

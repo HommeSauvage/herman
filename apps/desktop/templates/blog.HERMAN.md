@@ -11,9 +11,12 @@ setup_goal: Seeding works, dev server starts without issues and open the page, t
 
 ## Setup
 - Turn this starter into a blog. Remove teams, passkeys, and other non-essential functionality. Auth is necessary for the admin.
+- Prefer simple content models, clear reading experiences, and avoid introducing unnecessary infrastructure.
+- Use Eloquent models, Laravel migrations, and Inertia pages. Keep controllers thin — push logic to actions, models, or service classes.
 - Create the database structure for the blog. Use `php artisan make:model` to generate models and migrations. Include common tables such as posts, comments (if requested), tags (for posts).
 - Make the UI for the blog posts in the web app, mimic the structure and layouts of Ghost or Medium blogs.
 - Include a draft mode for the articles.
+- If the starter ships a reference "Note" (or similar) module marked for deletion, remove it once the blog features cover the same patterns.
 
 ## Important: Rendering markdown for the posts
 - Use shadcn typeset: https://ui.shadcn.com/docs/typeset for the styles
@@ -25,13 +28,10 @@ setup_goal: Seeding works, dev server starts without issues and open the page, t
 - In the full fledged UI, the editor should be a markdown editor with preview on the right (split the screen in half).
 - Add versions for the blog post with who edited the post and timestamp.
 - For tags, allow the admin to search by typing in an input (use shadcn and search the registries to load the combination of components to allow for the search of tags and creating new ones, you can do this with react-select as well).
+- Comments admin (when enabled): list with status filter; each row opens a detail page with the full comment text and approve/reject/spam actions — never a truncated-only table.
 
 ## Questions
 - Ask the user roughly what they'll write about (topics, niche, audience)
 - Ask them whether they want to have comments enabled or not (this will help you decide to create the comments table or not)
 - Ask them about the homepage: titles only minimalist or show previews (in case of previews, you may have to save the preview texts in a new field and make sure to not load the full content for the home page)
 - Numbered pagination or auto load as we scroll down?
-
-## Guidance
-This is a blog project. Prefer simple content models, clear reading experiences, and avoid introducing unnecessary infrastructure.
-Use Eloquent models, Laravel migrations, and Inertia pages. Keep controllers thin — push logic to actions, models, or service classes.

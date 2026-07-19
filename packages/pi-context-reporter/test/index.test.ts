@@ -5,7 +5,7 @@ import { CONTEXT_REPORT_EVENT, REPORT_THROTTLE_MS } from "../src/payload.js";
 
 type Handler = (event: unknown, ctx: unknown) => unknown | Promise<unknown>;
 
-type MockApi = {
+type _MockApi = {
   on: (event: string, handler: Handler) => void;
   _handlers: Map<string, Handler[]>;
   _emit: (event: string, payload: unknown, ctx: unknown) => Promise<void>;
@@ -57,6 +57,18 @@ function parseReport(notification: string) {
   return JSON.parse(notification) as Record<string, unknown>;
 }
 
+function last<T>(arr: T[]): T {
+  const val = arr[arr.length - 1];
+  if (val === undefined) throw new Error("test precondition: expected array element");
+  return val;
+}
+
+function first<T>(arr: T[]): T {
+  const val = arr[0];
+  if (val === undefined) throw new Error("test precondition: expected array element");
+  return val;
+}
+
 /** Wait past the throttle window (REPORT_THROTTLE_MS) so any pending
  *  debounced emit fires. Uses real timers so the test works under both
  *  bun test and vitest. */
@@ -65,7 +77,6 @@ async function waitForThrottle() {
 }
 
 describe("contextReporterExtension", () => {
-
   test("emits a baseline context_report on session_start with the model window", async () => {
     const notifications: string[] = [];
     const api = createMockApi();
@@ -78,7 +89,7 @@ describe("contextReporterExtension", () => {
     await api._emit("session_start", {}, ctx);
 
     expect(notifications).toHaveLength(1);
-    const report = parseReport(notifications[0]!);
+    const report = parseReport(first(notifications));
     expect(report.type).toBe(CONTEXT_REPORT_EVENT);
     expect(report.schema).toBe(1);
     expect(report.modelKey).toBe("anthropic/claude-sonnet-4.6");
@@ -97,7 +108,7 @@ describe("contextReporterExtension", () => {
     contextReporterExtension(api as never);
     await api._emit("session_start", {}, ctx);
 
-    const report = parseReport(notifications[0]!);
+    const report = parseReport(first(notifications));
     expect((report.context as Record<string, unknown>).tokens).toBe(12_345);
   });
 
@@ -118,7 +129,7 @@ describe("contextReporterExtension", () => {
     await api._emit("context", { messages: [] }, ctx);
 
     await waitForThrottle();
-    const report = parseReport(notifications[notifications.length - 1]!);
+    const report = parseReport(last(notifications));
     expect((report.context as Record<string, unknown>).tokens).toBe(12_345);
   });
 
@@ -135,11 +146,7 @@ describe("contextReporterExtension", () => {
     await api._emit("session_start", {}, ctx);
     await api._emit("agent_start", {}, ctx);
     await api._emit("context", { messages: [] }, ctx);
-    await api._emit(
-      "message_start",
-      { message: { role: "assistant", id: "a1" } },
-      ctx,
-    );
+    await api._emit("message_start", { message: { role: "assistant", id: "a1" } }, ctx);
     await api._emit(
       "message_end",
       {
@@ -160,10 +167,10 @@ describe("contextReporterExtension", () => {
     );
     await api._emit("agent_end", {}, ctx);
 
-    const last = parseReport(notifications[notifications.length - 1]!);
-    expect((last.totals as Record<string, unknown>).input).toBe(1000);
-    expect((last.totals as Record<string, unknown>).output).toBe(50);
-    expect((last.isStreaming as boolean)).toBe(false);
+    const lastReport = parseReport(last(notifications));
+    expect((lastReport.totals as Record<string, unknown>).input).toBe(1000);
+    expect((lastReport.totals as Record<string, unknown>).output).toBe(50);
+    expect(lastReport.isStreaming as boolean).toBe(false);
     // The context snapshot must survive the agent_end: the anchor set
     // by the pre-LLM `context` event should still be the source of truth
     // for the gauge. We add the last `usage.input` to it (the gauge
@@ -188,7 +195,9 @@ describe("contextReporterExtension", () => {
       notify: (m) => notifications.push(m),
       model: { provider: "anthropic", id: "claude-sonnet-4.6", contextWindow: 200_000 },
       contextUsage: { tokens: 10_000, contextWindow: 200_000, percent: 5 },
-    }) as ReturnType<typeof createMockContext> & { getContextUsage: () => { tokens: number; contextWindow: number; percent: number } };
+    }) as ReturnType<typeof createMockContext> & {
+      getContextUsage: () => { tokens: number; contextWindow: number; percent: number };
+    };
     ctx.getContextUsage = () => {
       usageRound++;
       if (usageRound === 1) return { tokens: 10_000, contextWindow: 200_000, percent: 5 };
@@ -202,20 +211,32 @@ describe("contextReporterExtension", () => {
     await api._emit("agent_start", {}, ctx);
     await api._emit("context", { messages: [] }, ctx);
     await api._emit("message_start", { message: { role: "assistant", id: "a1" } }, ctx);
-    await api._emit("message_update", {
-      message: { role: "assistant", id: "a1" },
-      assistantMessageEvent: { type: "text_delta", delta: "hi" },
-    }, ctx);
-    await api._emit("message_end", {
-      message: {
-        role: "assistant",
-        id: "a1",
-        usage: {
-          input: 100, output: 30, cacheRead: 0, cacheWrite: 0, totalTokens: 130,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    await api._emit(
+      "message_update",
+      {
+        message: { role: "assistant", id: "a1" },
+        assistantMessageEvent: { type: "text_delta", delta: "hi" },
+      },
+      ctx,
+    );
+    await api._emit(
+      "message_end",
+      {
+        message: {
+          role: "assistant",
+          id: "a1",
+          usage: {
+            input: 100,
+            output: 30,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 130,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
         },
       },
-    }, ctx);
+      ctx,
+    );
     await api._emit("agent_end", {}, ctx);
 
     // Second turn.
@@ -225,10 +246,10 @@ describe("contextReporterExtension", () => {
     // calls `emit(ctx)` which schedules). Wait for the throttle window
     // to elapse so we read the right notification.
     await waitForThrottle();
-    const last = parseReport(notifications[notifications.length - 1]!);
+    const lastReport = parseReport(last(notifications));
     // After the second `context` event, the gauge should be just the
     // new anchor (15_000), not anchor + stale last turn's output.
-    expect((last.context as Record<string, unknown>).tokens).toBe(15_000);
+    expect((lastReport.context as Record<string, unknown>).tokens).toBe(15_000);
   });
 
   test("throttles streaming updates but flushes on message_end", async () => {
@@ -267,7 +288,7 @@ describe("contextReporterExtension", () => {
     // accumulated output estimate.
     await waitForThrottle();
     expect(notifications).toHaveLength(1);
-    const intermediate = parseReport(notifications[0]!);
+    const intermediate = parseReport(first(notifications));
     expect((intermediate.context as Record<string, unknown>).tokens).toBeGreaterThan(5000);
     expect((intermediate.currentTurn as Record<string, unknown>).output).toBeGreaterThan(0);
     notifications.length = 0;
@@ -293,7 +314,7 @@ describe("contextReporterExtension", () => {
     );
 
     expect(notifications).toHaveLength(1);
-    const final = parseReport(notifications[0]!);
+    const final = parseReport(first(notifications));
     expect((final.totals as Record<string, unknown>).input).toBe(500);
     expect((final.totals as Record<string, unknown>).output).toBe(30);
   });
@@ -333,7 +354,7 @@ describe("contextReporterExtension", () => {
     notifications.length = 0;
 
     await api._emit("session_compact", {}, ctx);
-    const report = parseReport(notifications[notifications.length - 1]!);
+    const report = parseReport(last(notifications));
     expect((report.context as Record<string, unknown>).tokens).toBeNull();
     expect((report.context as Record<string, unknown>).percent).toBeNull();
     expect(report.isCompacted).toBe(true);
@@ -361,7 +382,7 @@ describe("contextReporterExtension", () => {
       ctx,
     );
 
-    const report = parseReport(notifications[notifications.length - 1]!);
+    const report = parseReport(last(notifications));
     expect(report.modelKey).toBe("anthropic/claude-haiku-4.5");
     expect((report.context as Record<string, unknown>).contextWindow).toBe(100_000);
   });

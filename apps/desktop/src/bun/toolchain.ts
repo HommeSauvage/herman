@@ -26,20 +26,20 @@ import { join } from "node:path";
 import { getLogger } from "@logtape/logtape";
 
 import type {
+  ToolchainEvent,
+  ToolchainToolStatus,
   ToolInstallItem,
   ToolInstallResult,
   ToolRegistryEntry,
   ToolStrategy,
-  ToolchainEvent,
-  ToolchainToolStatus,
 } from "../shared/tool-registry.js";
 import {
-  TOOL_REGISTRY,
   currentToolPlatform,
   getRequiredTier0Ids,
   getStrategy,
   getToolEntry,
   orderByDependency,
+  TOOL_REGISTRY,
 } from "../shared/tool-registry.js";
 import { augmentProcessPath, invalidateShellEnvCache } from "./shell-env.js";
 
@@ -78,7 +78,11 @@ async function run(
     }
   }, timeoutMs);
 
-  const readStream = async (stream: ReadableStream, isErr: boolean, acc: string[]): Promise<void> => {
+  const readStream = async (
+    stream: ReadableStream,
+    isErr: boolean,
+    acc: string[],
+  ): Promise<void> => {
     const decoder = new TextDecoder();
     let buffer = "";
     const reader = stream.getReader();
@@ -90,11 +94,12 @@ async function run(
       else acc.push(chunk);
       buffer += chunk;
       // Emit complete lines as log events.
-      let idx: number;
-      while ((idx = buffer.indexOf("\n")) >= 0) {
+      let idx = buffer.indexOf("\n");
+      while (idx >= 0) {
         const line = buffer.slice(0, idx).trimEnd();
         buffer = buffer.slice(idx + 1);
         if (line.trim()) onLog?.(line.slice(0, 300));
+        idx = buffer.indexOf("\n");
       }
     }
     if (buffer.trim()) onLog?.(buffer.trim().slice(0, 300));
@@ -130,7 +135,9 @@ function sleep(ms: number): Promise<void> {
  * to PATH (covers "installed after Herman launched / login shell never
  * picked it up") and retry once.
  */
-export async function detectTool(entry: ToolRegistryEntry): Promise<{ installed: boolean; detail: string }> {
+export async function detectTool(
+  entry: ToolRegistryEntry,
+): Promise<{ installed: boolean; detail: string }> {
   const first = await run(entry.check, { timeoutMs: 15_000 });
   if (first.code === 0) {
     return { installed: true, detail: first.stdout.trim().split("\n")[0]?.slice(0, 200) ?? "" };
@@ -313,7 +320,9 @@ async function installBrewBootstrap(ctx: StrategyContext): Promise<void> {
 
   const verify = await run("brew --version", { timeoutMs: 30_000 });
   if (verify.code !== 0) {
-    throw new Error("Homebrew was extracted but `brew --version` still fails. Try restarting Herman.");
+    throw new Error(
+      "Homebrew was extracted but `brew --version` still fails. Try restarting Herman.",
+    );
   }
 }
 
@@ -355,7 +364,9 @@ async function installBrewFormula(
     onLog: log,
   });
   if (result.code !== 0) {
-    throw new Error(`Installing ${entry.label} via Homebrew failed. Retry — brew is usually self-healing.`);
+    throw new Error(
+      `Installing ${entry.label} via Homebrew failed. Retry — brew is usually self-healing.`,
+    );
   }
 
   if (entry.probeDirs?.length) {
@@ -396,7 +407,11 @@ export function installTools(
   if (activeRun) {
     return Promise.resolve({
       ok: false,
-      results: items.map((i) => ({ toolId: i.toolId, ok: false, error: "Another install is already running" })),
+      results: items.map((i) => ({
+        toolId: i.toolId,
+        ok: false,
+        error: "Another install is already running",
+      })),
     });
   }
 
@@ -417,7 +432,8 @@ async function doInstallTools(
   const failed = new Set<string>();
 
   for (const toolId of orderedIds) {
-    const item = itemById.get(toolId)!;
+    const item = itemById.get(toolId);
+    if (!item) continue;
     const entry = getToolEntry(toolId);
     const label = item.label ?? entry?.label ?? toolId;
 

@@ -23,7 +23,9 @@ type UndoConfirmDialogProps = {
 
 function countChangedFiles(diffSummary: string): number {
   if (!diffSummary.trim()) return 0;
-  return diffSummary.split("\n").filter((line) => line.startsWith("diff ") || line.startsWith("--- ")).length;
+  return diffSummary
+    .split("\n")
+    .filter((line) => line.startsWith("diff ") || line.startsWith("--- ")).length;
 }
 
 export function UndoConfirmDialog({
@@ -75,8 +77,7 @@ export function UndoConfirmDialog({
   }, [open, tabId, messageIndex]);
 
   const fileCount = countChangedFiles(diffSummary);
-  const messageLabel =
-    messageCount === 1 ? "1 message" : `${messageCount} messages`;
+  const messageLabel = messageCount === 1 ? "1 message" : `${messageCount} messages`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -84,8 +85,8 @@ export function UndoConfirmDialog({
         <DialogHeader>
           <DialogTitle>Undo from here?</DialogTitle>
           <DialogDescription className="text-left leading-relaxed">
-            Herman will hide {messageLabel} after this point and roll back file
-            changes made in this session.
+            Herman will hide {messageLabel} after this point and roll back file changes made in this
+            session.
           </DialogDescription>
         </DialogHeader>
 
@@ -104,8 +105,8 @@ export function UndoConfirmDialog({
             <p className="text-red-400 text-xs leading-relaxed">{error}</p>
           ) : fileCount > 0 ? (
             <p className="text-dim text-xs leading-relaxed">
-              About {fileCount} {fileCount === 1 ? "file" : "files"} will be
-              restored to an earlier version.
+              About {fileCount} {fileCount === 1 ? "file" : "files"} will be restored to an earlier
+              version.
             </p>
           ) : (
             <p className="text-dim text-xs leading-relaxed">
@@ -114,9 +115,9 @@ export function UndoConfirmDialog({
           )}
 
           <p className="text-faint text-xs leading-relaxed">
-            This only affects this session&apos;s preview copy of your project.
-            You can bring everything back with &ldquo;Keep my messages &amp;
-            files&rdquo; until you confirm the undo.
+            This only affects this session&apos;s preview copy of your project. You can bring
+            everything back with &ldquo;Keep my messages &amp; files&rdquo; until you confirm the
+            undo.
           </p>
         </div>
 

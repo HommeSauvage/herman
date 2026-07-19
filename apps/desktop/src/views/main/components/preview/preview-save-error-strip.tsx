@@ -6,7 +6,11 @@ type PreviewSaveErrorStripProps = {
   askDisabled: boolean;
 };
 
-export function PreviewSaveErrorStrip({ error, onAskFix, askDisabled }: PreviewSaveErrorStripProps) {
+export function PreviewSaveErrorStrip({
+  error,
+  onAskFix,
+  askDisabled,
+}: PreviewSaveErrorStripProps) {
   return (
     <div className="shrink-0 border-b border-mist bg-fog px-3 py-2">
       <PreviewErrorBox

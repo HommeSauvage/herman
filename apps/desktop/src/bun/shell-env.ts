@@ -91,7 +91,7 @@ export function resolveShellEnv(): boolean {
   logger.info("Resolving shell environment");
   const shellEnv = extractShellEnv();
 
-  if (!shellEnv || !shellEnv.PATH) {
+  if (!shellEnv?.PATH) {
     logger.warning("Could not extract PATH from login shell");
     cachedShellEnv = null;
     return false;

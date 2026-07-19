@@ -52,6 +52,7 @@ export function FileMentionPopover({
   const showEmpty = !loading && hasProject && visible.length === 0;
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: popover container — prevents blur on mousedown
     <div
       className="bg-surface absolute inset-x-0 bottom-full z-20 mb-2 max-h-80 overflow-y-auto rounded-xl border border-white/[0.06] p-1.5 shadow-2xl"
       onMouseDown={(event) => event.preventDefault()}

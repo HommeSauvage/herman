@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { getLogger } from "@logtape/logtape";
 
 import type { SessionWorktree, Tab, TabId } from "../shared/rpc.js";
-import { git, getRepoRoot, isGitRepo } from "./rewind-core.js";
+import { getRepoRoot, git, isGitRepo } from "./rewind-core.js";
 
 const logger = getLogger(["herman-desktop", "worktree"]);
 
@@ -57,7 +57,7 @@ export async function initProjectRepo(projectPath: string): Promise<void> {
   await git("init -b main", projectPath);
   await git("add -A", projectPath);
   await git(
-    "-c user.email=herman@local -c user.name=Herman commit -m \"Initial project\"",
+    '-c user.email=herman@local -c user.name=Herman commit -m "Initial project"',
     projectPath,
   );
 }
@@ -99,7 +99,10 @@ export function sessionWorktreesDir(): string {
  * migrations) is the session bootstrapper's job — this creates the worktree
  * and branch, and makes sure the repo ignores the `.herman/` stamp dir.
  */
-export async function createSessionWorktree(mainFolderPath: string, tabId: TabId): Promise<{
+export async function createSessionWorktree(
+  mainFolderPath: string,
+  tabId: TabId,
+): Promise<{
   folderPath: string;
   worktree: SessionWorktree;
 }> {
@@ -153,7 +156,11 @@ async function ensureHermanDirExcluded(repoRoot: string): Promise<void> {
       existing = "";
     }
     if (existing.split("\n").some((line) => line.trim() === ".herman/")) return;
-    await appendFile(excludePath, `${existing.endsWith("\n") || existing === "" ? "" : "\n"}.herman/\n`, "utf-8");
+    await appendFile(
+      excludePath,
+      `${existing.endsWith("\n") || existing === "" ? "" : "\n"}.herman/\n`,
+      "utf-8",
+    );
   } catch (error) {
     logger.debug("Failed to add .herman/ to git exclude", {
       repoRoot,
@@ -162,20 +169,27 @@ async function ensureHermanDirExcluded(repoRoot: string): Promise<void> {
   }
 }
 
-export async function ensureSessionWorktree(tab: Pick<Tab, "id" | "worktree" | "folderPath">): Promise<string> {
+export async function ensureSessionWorktree(
+  tab: Pick<Tab, "id" | "worktree" | "folderPath">,
+): Promise<string> {
   if (!tab.worktree) return tab.folderPath;
   if (existsSync(tab.folderPath)) return tab.folderPath;
   const created = await createSessionWorktree(tab.worktree.mainFolderPath, tab.id);
   return created.folderPath;
 }
 
-export async function removeSessionWorktree(tab: Pick<Tab, "folderPath" | "worktree">): Promise<void> {
+export async function removeSessionWorktree(
+  tab: Pick<Tab, "folderPath" | "worktree">,
+): Promise<void> {
   if (!tab.worktree) return;
   const repoRoot = await getRepoRoot(tab.worktree.mainFolderPath);
   try {
     await git(`worktree remove --force "${tab.folderPath}"`, repoRoot);
   } catch (error) {
-    logger.warning("Failed to remove worktree folder", { error: String(error), path: tab.folderPath });
+    logger.warning("Failed to remove worktree folder", {
+      error: String(error),
+      path: tab.folderPath,
+    });
   }
   try {
     await git(`branch -D "${tab.worktree.branch}"`, repoRoot);
@@ -202,10 +216,9 @@ export async function getSessionChanges(
 
   const [porcelainOutput, committedOutput] = await Promise.all([
     git("status --porcelain", worktreePath).catch(() => ""),
-    git(
-      `diff --name-only "${tab.worktree.baseBranch}...${tab.worktree.branch}"`,
-      repoRoot,
-    ).catch(() => ""),
+    git(`diff --name-only "${tab.worktree.baseBranch}...${tab.worktree.branch}"`, repoRoot).catch(
+      () => "",
+    ),
   ]);
 
   const uncommittedPaths = parsePorcelainPaths(porcelainOutput);
@@ -231,7 +244,7 @@ export function buildSessionSyncPrompt(opts: {
     `- Draft branch: ${opts.sessionBranch}`,
     "",
     "Do all of the following without asking me questions:",
-    "1. Commit any uncommitted changes in the draft copy with message \"Session changes\".",
+    '1. Commit any uncommitted changes in the draft copy with message "Session changes".',
     "2. In the draft copy, merge the latest changes from the real project branch into the draft. Resolve any conflicts carefully using your knowledge of this session.",
     "3. Commit conflict resolutions in the draft if needed.",
     "4. In the real project folder, merge the draft branch into the real project branch (use git -C with the real project path). Resolve any conflicts.",
@@ -266,7 +279,9 @@ export class WorktreeIndex {
   }
 
   static isWorktreePath(cwd: string): boolean {
-    return WorktreeIndex.worktreeTabId(cwd) != null || cwd.replace(/\\/g, "/").includes("/.worktrees/");
+    return (
+      WorktreeIndex.worktreeTabId(cwd) != null || cwd.replace(/\\/g, "/").includes("/.worktrees/")
+    );
   }
 
   /** The project root that owns this cwd, when it is a known session worktree. */

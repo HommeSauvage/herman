@@ -1,9 +1,8 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-
+import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
 import { getLogger } from "@logtape/logtape";
 import { BrowserView, Utils } from "electrobun/bun";
-import { HERMAN_REFRESH_MODELS_MESSAGE } from "@herman/rpc/agent";
 
 import type { AgentCommand, AgentEvent, AgentResponse } from "../shared/agent-protocol.js";
 import {
@@ -13,14 +12,25 @@ import {
   isAgentEndCurrent,
   syncMessageCounter,
 } from "../shared/apply-agent-event.js";
-import type { AgentStatus, ContextStats, Message, ModelMetadata, OutgoingMessages, SessionIsolation, Tab, TabId, TabMessagesHydrated, TabMessageHydrationStatus } from "../shared/rpc.js";
-import type { PreviewServerLogLine } from "../shared/preview.js";
 import {
   modelApplyFingerprint,
   normalizeModelId,
   parseModelRef,
   shouldApplyDesiredModel,
 } from "../shared/model-selection.js";
+import type { PreviewServerLogLine } from "../shared/preview.js";
+import type {
+  AgentStatus,
+  ContextStats,
+  Message,
+  ModelMetadata,
+  OutgoingMessages,
+  SessionIsolation,
+  Tab,
+  TabId,
+  TabMessageHydrationStatus,
+  TabMessagesHydrated,
+} from "../shared/rpc.js";
 import {
   createTabId,
   getProjectColor,
@@ -31,18 +41,26 @@ import {
 import { AgentBridge } from "./agent-bridge.js";
 import { AgentRuntime } from "./agent-runtime.js";
 import { deleteComposerDraft, loadComposerDraft, saveComposerDraft } from "./composer-drafts.js";
-import {
-  extractMessagesFromAgentPayload,
-} from "./pi-messages.js";
-import { contextStatsFromContextReport, readPiSessionModel as readPiSessionModelFromFile } from "./session-snapshot.js";
-import { stopPreviewsForScope, tabScope } from "./preview-server.js";
-import { previewPortRegistry } from "./preview/port-registry.js";
+import { extractMessagesFromAgentPayload } from "./pi-messages.js";
+import { deletePiSessionFile, resolvePiSessionFile } from "./pi-session.js";
 import { ensurePreviewStarted } from "./preview/index.js";
-import { rewindManager, getUserMessageIds, readPiSessionId, RevertConflictError } from "./rewind-manager.js";
+import { previewPortRegistry } from "./preview/port-registry.js";
+import { stopPreviewsForScope, tabScope } from "./preview-server.js";
+import {
+  getUserMessageIds,
+  RevertConflictError,
+  readPiSessionId,
+  rewindManager,
+} from "./rewind-manager.js";
+import { resolveIsolationPolicy, SessionBootstrapper } from "./session-bootstrap/bootstrapper.js";
+import {
+  contextStatsFromContextReport,
+  readPiSessionModel as readPiSessionModelFromFile,
+} from "./session-snapshot.js";
 import { deleteTabHistory, saveTabHistory } from "./tab-history.js";
 import { loadInstantHydration } from "./tab-message-hydration.js";
-import { resolvePiSessionFile, deletePiSessionFile } from "./pi-session.js";
-import { SessionBootstrapper, resolveIsolationPolicy } from "./session-bootstrap/bootstrapper.js";
+import { TabSessionStore } from "./tab-session-store.js";
+import { loadWindowState, type PersistedSession, saveWindowState } from "./window-state.js";
 import {
   buildSessionSyncPrompt,
   getSessionChanges,
@@ -50,8 +68,6 @@ import {
   resolveProjectRoot,
   WorktreeIndex,
 } from "./worktree.js";
-import { TabSessionStore } from "./tab-session-store.js";
-import { loadWindowState, saveWindowState, type PersistedSession } from "./window-state.js";
 
 const logger = getLogger(["herman-desktop", "agent-process-manager"]);
 
@@ -232,7 +248,7 @@ export class AgentProcessManager {
         const root =
           persisted.projectRoot ??
           persisted.worktree?.mainFolderPath ??
-          await resolveProjectRoot(persisted.folderPath);
+          (await resolveProjectRoot(persisted.folderPath));
         persisted.projectRoot = root;
         if (root && !this.store.projects.includes(root)) {
           this.store.projects.push(root);
@@ -240,7 +256,7 @@ export class AgentProcessManager {
       }
 
       // Build project list from legacy state, skipping stale worktree paths.
-      for (const legacyProject of (state.projects ?? [])) {
+      for (const legacyProject of state.projects ?? []) {
         if (legacyProject.includes("/.worktrees/")) continue;
         const root = await resolveProjectRoot(legacyProject);
         if (root && !this.store.projects.includes(root)) {
@@ -345,7 +361,12 @@ export class AgentProcessManager {
 
     await this.registerAndOpenTab(tab, this.toPersistedSession(tab, isolation), projectRoot);
     this.bootstrapForTab(tab.id, "create");
-    logger.debug("Created tab", { tabId: tab.id, folderPath: tab.folderPath, projectRoot, isolation });
+    logger.debug("Created tab", {
+      tabId: tab.id,
+      folderPath: tab.folderPath,
+      projectRoot,
+      isolation,
+    });
     return tab;
   }
 
@@ -371,7 +392,7 @@ export class AgentProcessManager {
       // surface why this session could not be isolated.
       void this.bootstrapper.bootstrap(tab.id, { kind: "create" }).then(() => {
         const current = this.store.tabs.get(tab.id);
-        if (!current || current.setup.phase !== "none") return;
+        if (current?.setup.phase !== "none") return;
         const updated = this.patchTab(current, {
           setup: {
             phase: "error",
@@ -418,12 +439,19 @@ export class AgentProcessManager {
     const composerValue = await loadComposerDraft(sessionId);
     const now = Date.now();
     const instant = await loadInstantHydration(sessionId, persisted);
-    const tab = { ...this.materializeTabFromHydration(persisted, instant, composerValue), updatedAt: now };
+    const tab = {
+      ...this.materializeTabFromHydration(persisted, instant, composerValue),
+      updatedAt: now,
+    };
     // The persisted isolation policy is final — reopening never upgrades
     // direct → worktree (no silent migration).
     const isolation = persisted.isolation ?? (persisted.worktree ? "worktree" : "direct");
 
-    await this.registerAndOpenTab(tab, { ...persisted, isolation, updatedAt: now }, tab.projectRoot);
+    await this.registerAndOpenTab(
+      tab,
+      { ...persisted, isolation, updatedAt: now },
+      tab.projectRoot,
+    );
     this.bootstrapForTab(sessionId, "open");
     return this.store.tabs.get(sessionId);
   }
@@ -449,10 +477,20 @@ export class AgentProcessManager {
       tab.setup = { phase: "pending", label: "Preparing your session…" };
     }
 
-    const persisted = { ...this.toPersistedSession(tab, isolation), piSessionId, updatedAt: Date.now() };
+    const persisted = {
+      ...this.toPersistedSession(tab, isolation),
+      piSessionId,
+      updatedAt: Date.now(),
+    };
     await this.registerAndOpenTab(tab, persisted, projectRoot);
     this.bootstrapForTab(tab.id, "create");
-    logger.info("Opened pi session as tab", { tabId: tab.id, folderPath, projectRoot, piSessionId, isolation });
+    logger.info("Opened pi session as tab", {
+      tabId: tab.id,
+      folderPath,
+      projectRoot,
+      piSessionId,
+      isolation,
+    });
     return tab;
   }
 
@@ -510,7 +548,8 @@ export class AgentProcessManager {
     void this.bootstrapper.dispose(tabId).catch(() => undefined);
 
     if (this.store.activeTabId === tabId) {
-      this.store.activeTabId = this.store.openTabIds[openIndex - 1] ?? this.store.openTabIds[openIndex] ?? undefined;
+      this.store.activeTabId =
+        this.store.openTabIds[openIndex - 1] ?? this.store.openTabIds[openIndex] ?? undefined;
     }
 
     await this.persist();
@@ -597,7 +636,8 @@ export class AgentProcessManager {
   }
 
   private async applyFolderToTab(tabId: TabId, path: string) {
-    const tab = this.store.tabs.get(tabId)!;
+    const tab = this.store.tabs.get(tabId);
+    if (!tab) return;
     const projectRoot = await resolveProjectRoot(path);
     const mode = this.getMode();
     const isolation = await resolveIsolationPolicy(mode, projectRoot);
@@ -645,7 +685,10 @@ export class AgentProcessManager {
 
     const bridge = this.bridges.get(tabId);
     if (bridge) {
-      await bridge.restart(path, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
+      await bridge.restart(path, {
+        piSessionId: this.resolvePiSessionId(tabId),
+        mode: this.getMode(),
+      });
     } else {
       this.agentRuntime.schedule(tabId);
     }
@@ -703,7 +746,10 @@ export class AgentProcessManager {
   async refreshSession(): Promise<void> {
     for (const [tabId, bridge] of this.bridges) {
       const folderPath = this.store.tabs.get(tabId)?.folderPath;
-      await bridge.restart(folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
+      await bridge.restart(folderPath, {
+        piSessionId: this.resolvePiSessionId(tabId),
+        mode: this.getMode(),
+      });
     }
   }
 
@@ -718,9 +764,7 @@ export class AgentProcessManager {
     return bridge.sendCommand(command);
   }
 
-  async syncSessionToMain(
-    tabId: TabId,
-  ): Promise<{ status: "applied" | "error"; error?: string }> {
+  async syncSessionToMain(tabId: TabId): Promise<{ status: "applied" | "error"; error?: string }> {
     const tab = this.store.tabs.get(tabId);
     if (!tab?.worktree) {
       return { status: "error", error: "No draft session found" };
@@ -739,7 +783,7 @@ export class AgentProcessManager {
     }
 
     let bridge = this.bridges.get(tabId);
-    if (!bridge || bridge.getState() !== "running") {
+    if (bridge?.getState() !== "running") {
       await this.startBridge(tabId, tab.folderPath);
       bridge = this.bridges.get(tabId);
     }
@@ -837,7 +881,10 @@ export class AgentProcessManager {
     if (bridge) {
       // The restarted agent re-applies the tab's model via its first models_sync.
       this.resetModelStateForFreshAgent(tabId);
-      await bridge.restart(tab.folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
+      await bridge.restart(tab.folderPath, {
+        piSessionId: this.resolvePiSessionId(tabId),
+        mode: this.getMode(),
+      });
       await this.capturePiSessionId(tabId);
     } else {
       await this.startBridge(tabId, tab.folderPath);
@@ -849,11 +896,14 @@ export class AgentProcessManager {
     // Re-sync the model state after restart.
     const updated = this.store.tabs.get(tabId);
     if (updated) {
-      this.store.tabs.set(tabId, this.patchTab(updated, {
-        connectionState: "running",
-        connectionError: undefined,
-        connectionStderr: undefined,
-      }));
+      this.store.tabs.set(
+        tabId,
+        this.patchTab(updated, {
+          connectionState: "running",
+          connectionError: undefined,
+          connectionStderr: undefined,
+        }),
+      );
     }
   }
 
@@ -950,12 +1000,14 @@ export class AgentProcessManager {
     const boundaryMessage = tab.messages[messageIndex];
     if (boundaryMessage) {
       const userMessageIds = getUserMessageIds(tab.messages);
-      void rewindManager.pruneAfterMessage(tabId, boundaryMessage.id, userMessageIds).catch((err) => {
-        logger.warning("Failed to prune rewind checkpoints", {
-          tabId,
-          error: err instanceof Error ? err.message : String(err),
+      void rewindManager
+        .pruneAfterMessage(tabId, boundaryMessage.id, userMessageIds)
+        .catch((err) => {
+          logger.warning("Failed to prune rewind checkpoints", {
+            tabId,
+            error: err instanceof Error ? err.message : String(err),
+          });
         });
-      });
     }
 
     // Keep only messages before the boundary.
@@ -1076,7 +1128,10 @@ export class AgentProcessManager {
       // applied once the new agent advertises its list (models_sync).
       this.resetModelStateForFreshAgent(tabId);
 
-      await bridge.start(folderPath, { piSessionId: this.resolvePiSessionId(tabId), mode: this.getMode() });
+      await bridge.start(folderPath, {
+        piSessionId: this.resolvePiSessionId(tabId),
+        mode: this.getMode(),
+      });
       await this.capturePiSessionId(tabId);
       // Enable pi's built-in auto-retry. Transient API errors (proxied
       // through the Herman server) are handled inside the agent with
@@ -1158,7 +1213,7 @@ export class AgentProcessManager {
     if (!tab || !desired) return false;
 
     const bridge = this.bridges.get(tabId);
-    if (!bridge || bridge.getState() !== "running") return false;
+    if (bridge?.getState() !== "running") return false;
 
     // The agent already has the desired model — nothing to do.
     if (this.agentConfirmedModels.get(tabId) === desired) return false;
@@ -1488,7 +1543,11 @@ export class AgentProcessManager {
     // Older sessions predate persisted.currentModel — recover the model the
     // session was actually using from the pi JSONL stats so reopening keeps
     // the session's model instead of falling back to the agent default.
-    if (!persisted.currentModel && instant.contextStats?.providerId && instant.contextStats?.modelId) {
+    if (
+      !persisted.currentModel &&
+      instant.contextStats?.providerId &&
+      instant.contextStats?.modelId
+    ) {
       const recovered = normalizeModelId(
         `${instant.contextStats.providerId}/${instant.contextStats.modelId}`,
       );

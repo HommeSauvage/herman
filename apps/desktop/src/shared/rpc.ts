@@ -1,12 +1,12 @@
-import { type RPCSchema } from "electrobun/bun";
 import type { PreviewConsoleEntry } from "@herman/rpc/host-bridge";
+import type { RPCSchema } from "electrobun/bun";
 
 import type {
+  AdCampaign,
+  AdPlacement,
   AgentCommand,
   AgentEvent,
   AgentResponse,
-  AdCampaign,
-  AdPlacement,
   WizardSessionEvent,
 } from "./agent-protocol.js";
 import type {
@@ -15,20 +15,16 @@ import type {
   RequirementCheckResult,
   ResolvedManifest,
 } from "./herman-manifest.js";
-import type {
-  ToolchainEvent,
-  ToolchainToolStatus,
-  ToolInstallItem,
-} from "./tool-registry.js";
+import type { ModelCatalogSnapshot } from "./model-selection.js";
 import type {
   PreviewFleetSnapshot,
   PreviewLogEvent,
   PreviewServerSnapshot,
   PreviewStartResponse,
 } from "./preview.js";
+import type { PublishingConfigUpdate, PublishingConfigView } from "./publishing.js";
+import type { ToolchainEvent, ToolchainToolStatus, ToolInstallItem } from "./tool-registry.js";
 import type { WizardAskEnvelope } from "./wizard-protocol.js";
-
-import type { ModelCatalogSnapshot, ModelMetadata } from "./model-selection.js";
 
 export type { ModelCatalogSnapshot, ModelMetadata } from "./model-selection.js";
 
@@ -51,7 +47,7 @@ export type WizardRecoveryPayload = {
   templateId?: string;
   description?: string;
   preferredModel?: string;
-  phase?: "planning" | "coding" | "qa" | "docs";
+  phase?: "planning" | "design" | "coding" | "qa" | "docs";
   projectPath?: string;
   progressLines: string[];
   lastError?: string;
@@ -509,6 +505,8 @@ export type OutgoingMessages = {
   /** Complete snapshot — renderer reduces one event atomically. */
   previewStatusChanged: PreviewServerSnapshot;
   previewLog: PreviewLogEvent;
+  /** Live output lines from a Coolify install running over SSH. */
+  publishingInstallProgress: { projectPath: string; stream: "stdout" | "stderr"; line: string };
 };
 
 export type HermanDesktopRPC = {
@@ -664,7 +662,7 @@ export type HermanDesktopRPC = {
       getDiff: {
         params: { tabId: TabId; scope: DiffScope };
         response: { diffs: FileDiff[] };
-      },
+      };
       getAgentStatus: {
         params: { tabId: TabId };
         response: AgentStatus;
@@ -932,6 +930,40 @@ export type HermanDesktopRPC = {
         params: { name: string; enabled: boolean };
         response: undefined;
       };
+      /** Get publishing config for a project (secrets excluded). */
+      getPublishingConfig: {
+        params: { projectPath: string };
+        response: { config: PublishingConfigView | null };
+      };
+      /** Save/update publishing config for a project. */
+      savePublishingConfig: {
+        params: { projectPath: string; update: PublishingConfigUpdate };
+        response: { config: PublishingConfigView };
+      };
+      /** Delete publishing config for a project. */
+      deletePublishingConfig: {
+        params: { projectPath: string };
+        response: { deleted: boolean };
+      };
+      /** Generate an ED25519 SSH key pair for deployment. */
+      generatePublishingSshKey: {
+        params: { keyName?: string };
+        response: { privateKeyPath: string; publicKey: string };
+      };
+      /** Discover existing SSH keys in ~/.ssh. */
+      discoverSshKeys: {
+        params: undefined;
+        response: { keys: { name: string; path: string; publicKey: string }[] };
+      };
+      /**
+       * Install Coolify on the project's server over SSH (Herman does it for
+       * the user). Streams progress via the `publishingInstallProgress`
+       * message. Requires serverIp + sshKeyPath to be saved first.
+       */
+      installCoolify: {
+        params: { projectPath: string };
+        response: { ok: boolean; coolifyUrl?: string; verified?: boolean; error?: string };
+      };
     };
     messages: {
       requestActivation: undefined;
@@ -943,7 +975,12 @@ export type HermanDesktopRPC = {
       downloadUpdate: undefined;
       applyUpdate: undefined;
       openProject: undefined;
-      previewConsoleBatch: { tabId: TabId; folderPath: string; entries: PreviewConsoleEntry[]; dropped: number };
+      previewConsoleBatch: {
+        tabId: TabId;
+        folderPath: string;
+        entries: PreviewConsoleEntry[];
+        dropped: number;
+      };
       previewNavigated: { tabId: TabId; folderPath: string; url: string };
     };
   }>;
@@ -972,9 +1009,8 @@ export type DesktopRpc = {
     handler: (payload: HermanDesktopRPC["webview"]["messages"][K]) => void,
   ) => void;
   send: {
-    [K in keyof HermanDesktopRPC["bun"]["messages"]]:
-      HermanDesktopRPC["bun"]["messages"][K] extends undefined
-        ? () => void
-        : (payload: HermanDesktopRPC["bun"]["messages"][K]) => void;
+    [K in keyof HermanDesktopRPC["bun"]["messages"]]: HermanDesktopRPC["bun"]["messages"][K] extends undefined
+      ? () => void
+      : (payload: HermanDesktopRPC["bun"]["messages"][K]) => void;
   };
 };

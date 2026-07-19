@@ -65,7 +65,7 @@ export function ProviderAuthDialog({ provider, open, onOpenChange }: ProviderAut
   }
 
   async function handleSubmit() {
-    if (!selectedMethod || selectedMethod.type !== "apiKey") return;
+    if (selectedMethod?.type !== "apiKey") return;
     setIsSubmitting(true);
 
     const prevSettings = settings;
@@ -137,7 +137,10 @@ export function ProviderAuthDialog({ provider, open, onOpenChange }: ProviderAut
     setSettings(next);
     try {
       await desktopRpc.request.saveSettings({ settings: next });
-      await desktopRpc.request.removeProviderCredentials({ providerId: provider.id, skipRefresh: true });
+      await desktopRpc.request.removeProviderCredentials({
+        providerId: provider.id,
+        skipRefresh: true,
+      });
       handleClose(false);
     } catch {
       setSettings(prevSettings);
@@ -249,6 +252,7 @@ export function ProviderAuthDialog({ provider, open, onOpenChange }: ProviderAut
           <div className="space-y-2">
             {provider.authMethods.map((method) => (
               <button
+                type="button"
                 key={method.type}
                 onClick={() =>
                   method.type === "oauth"

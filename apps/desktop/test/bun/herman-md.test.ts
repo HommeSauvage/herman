@@ -6,7 +6,11 @@ import {
   parseHermanMd,
   serializeHermanMd,
 } from "../../src/bun/herman-md.js";
-import { clearTemplateRegistryCache, getGalleryTemplates, resolveTemplateManifest } from "../../src/bun/template-registry.js";
+import {
+  clearTemplateRegistryCache,
+  getGalleryTemplates,
+  resolveTemplateManifest,
+} from "../../src/bun/template-registry.js";
 
 describe("herman-md parser", () => {
   it("parses v2 frontmatter and known sections", () => {
@@ -157,10 +161,7 @@ servers:
 `,
       "api",
     );
-    expect(asArray.frontmatter.servers?.[0]?.exportUrlAs).toEqual([
-      "API_SERVER",
-      "API_URL",
-    ]);
+    expect(asArray.frontmatter.servers?.[0]?.exportUrlAs).toEqual(["API_SERVER", "API_URL"]);
     expect(asArray.frontmatter.servers?.[0]?.portEnv).toEqual(["SERVER_PORT", "PORT"]);
 
     const serialized = serializeHermanMd(asArray.frontmatter, asArray.sections);
@@ -211,7 +212,7 @@ setup:
     expect(reparsed.frontmatter.setup).toEqual(parsed.frontmatter.setup);
   });
 
-  it("merge: child replaces setup/env/servers arrays wholesale", () => {
+  it("merge: child replaces setup/env/servers/checks arrays wholesale", () => {
     const base = parseHermanMd(
       `---
 version: 2
@@ -236,6 +237,10 @@ servers:
     command: bun run dev
     port: 3000
     primary: true
+checks:
+  - id: lint
+    label: Lint
+    run: bun run lint
 ---
 `,
       "base",
@@ -269,15 +274,18 @@ Child setup
     expect(fm.env?.files).toHaveLength(1);
     expect(fm.env?.files?.[0]?.path).toBe(".env.local");
     expect(Object.keys(fm.env?.files?.[0]?.vars ?? {}).sort()).toEqual(["B", "C"]);
-    // setup/servers: child did not declare them → base kept.
+    // setup/servers/checks: child did not declare them → base kept.
     expect(fm.setup?.[0]?.id).toBe("deps");
     expect(fm.servers?.[0]?.port).toBe(3000);
+    expect(fm.checks?.[0]?.id).toBe("lint");
     expect(sections.setup).toContain("Child setup");
 
     const serialized = serializeHermanMd(fm, sections);
     expect(serialized).toContain("name: Child");
     expect(serialized).not.toContain("extends:");
     expect(serialized).toContain("## Setup");
+    expect(serialized).toContain("checks:");
+    expect(serialized).toContain("run: bun run lint");
   });
 });
 
@@ -297,6 +305,8 @@ describe("template registry", () => {
     expect(resolved.frontmatter.servers?.[0]?.port).toBe(8000);
     expect(resolved.frontmatter.servers?.[0]?.portEnv).toBe("SERVER_PORT");
     expect(resolved.frontmatter.setup?.length).toBeGreaterThan(0);
+    expect(resolved.frontmatter.checks?.map((c) => c.id)).toEqual(["pint", "types", "tests"]);
+    expect(resolved.sections.guidance).toContain("Quality bar");
     expect(resolved.serialized).toContain("## Setup");
     expect(resolved.serialized).not.toContain("extends:");
   });

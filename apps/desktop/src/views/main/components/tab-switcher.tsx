@@ -83,10 +83,12 @@ export function TabSwitcher() {
   if (!isOpen) return null;
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: overlay backdrop - click/keyboard handled
     <div
       data-herman-overlay=""
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={() => setIsOpen(false)}
+      onKeyDown={(e) => e.key === "Escape" && setIsOpen(false)}
     >
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }}

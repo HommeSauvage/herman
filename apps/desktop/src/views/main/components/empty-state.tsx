@@ -1,7 +1,7 @@
+import { Bug, FileSearch, FlaskConical, Sparkles, Wand2 } from "lucide-react";
 import { motion } from "motion/react";
-import { Sparkles, Wand2, FileSearch, Bug, FlaskConical } from "lucide-react";
-import { useAgentStore } from "../lib/agent-store.js";
 import { sendPrompt } from "../lib/agent-actions.js";
+import { useAgentStore } from "../lib/agent-store.js";
 
 const SUGGESTIONS = [
   { label: "Refactor this function", icon: Wand2 },
@@ -54,29 +54,26 @@ export function EmptyState() {
           <Sparkles size={26} strokeWidth={1.5} />
         </motion.div>
 
-        <motion.h2
-          variants={item}
-          className="mb-2 text-lg font-semibold tracking-tight text-text"
-        >
+        <motion.h2 variants={item} className="mb-2 text-lg font-semibold tracking-tight text-text">
           What should Herman do?
         </motion.h2>
 
-        <motion.p
-          variants={item}
-          className="mb-7 max-w-xs text-sm leading-relaxed text-dim"
-        >
-          Ask a question, paste code, or describe a task. Herman works in your
-          project folder.
+        <motion.p variants={item} className="mb-7 max-w-xs text-sm leading-relaxed text-dim">
+          Ask a question, paste code, or describe a task. Herman works in your project folder.
         </motion.p>
 
         <motion.div variants={item} className="flex flex-wrap justify-center gap-2">
           {SUGGESTIONS.map((suggestion) => (
             <button
+              type="button"
               key={suggestion.label}
               onClick={() => activeTabId && void sendPrompt(activeTabId, suggestion.label)}
               className="group flex items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.04] px-3.5 py-2 text-xs text-dim transition hover:border-signal/20 hover:bg-signal/5 hover:text-text active:scale-[0.96]"
             >
-              <suggestion.icon size={13} className="text-faint transition group-hover:text-signal" />
+              <suggestion.icon
+                size={13}
+                className="text-faint transition group-hover:text-signal"
+              />
               {suggestion.label}
             </button>
           ))}

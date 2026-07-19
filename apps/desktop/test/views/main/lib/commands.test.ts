@@ -133,17 +133,20 @@ describe("resolveShortcutCommand", () => {
 
 describe("formatShortcutLabel", () => {
   it("formats mac shortcuts with symbols", () => {
-    const shortcut = parseKeybindingShortcut("mod+shift+m")!;
+    const shortcut = parseKeybindingShortcut("mod+shift+m");
+    if (!shortcut) throw new Error("test precondition: expected shortcut");
     expect(formatShortcutLabel(shortcut, "MacIntel")).toBe("⇧⌘M");
   });
 
   it("formats windows shortcuts with text", () => {
-    const shortcut = parseKeybindingShortcut("mod+shift+m")!;
+    const shortcut = parseKeybindingShortcut("mod+shift+m");
+    if (!shortcut) throw new Error("test precondition: expected shortcut");
     expect(formatShortcutLabel(shortcut, "Win32")).toBe("Ctrl+Shift+M");
   });
 
   it("formats simple keys", () => {
-    const shortcut = parseKeybindingShortcut("mod+1")!;
+    const shortcut = parseKeybindingShortcut("mod+1");
+    if (!shortcut) throw new Error("test precondition: expected shortcut");
     expect(formatShortcutLabel(shortcut, "MacIntel")).toBe("⌘1");
   });
 });

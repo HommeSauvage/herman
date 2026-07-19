@@ -1,14 +1,10 @@
-import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { ContextStats, Message } from "../shared/rpc.js";
 import type { TabId } from "../shared/tab-utils.js";
-import { loadMessagesFromPiSessionFile, normalizePiMessage } from "./pi-messages.js";
-import {
-  extractPiSessionIdFromFilePath,
-  piSessionDir,
-  resolvePiSessionFile,
-} from "./pi-session.js";
+import { loadMessagesFromPiSessionFile } from "./pi-messages.js";
+import { extractPiSessionIdFromFilePath, resolvePiSessionFile } from "./pi-session.js";
 
 export type SessionSnapshot = {
   messages: Message[];
@@ -102,10 +98,7 @@ type BranchEntry = {
   message?: unknown;
 };
 
-function buildContextStatsFromBranch(
-  branch: BranchEntry[],
-  messages: Message[],
-): ContextStats {
+function buildContextStatsFromBranch(branch: BranchEntry[], messages: Message[]): ContextStats {
   let input = 0;
   let output = 0;
   let cacheRead = 0;
@@ -113,7 +106,7 @@ function buildContextStatsFromBranch(
   let reasoning = 0;
   let cost = 0;
   let modelKey: string | undefined;
-  let contextWindow = 0;
+  const contextWindow = 0;
 
   for (const entry of branch) {
     if (entry.type === "model_change" && entry.provider && entry.modelId) {
@@ -188,7 +181,10 @@ function buildContextStatsFromMessages(messages: Message[]): ContextStats | unde
 
 /** Map a live `herman/context_report` agent event to desktop `ContextStats`. */
 export function contextStatsFromContextReport(
-  event: Extract<import("../shared/agent-protocol.js").AgentEvent, { type: "herman/context_report" }>,
+  event: Extract<
+    import("../shared/agent-protocol.js").AgentEvent,
+    { type: "herman/context_report" }
+  >,
   messages: Message[],
 ): ContextStats {
   const [providerId, modelId] = event.modelKey.includes("/")

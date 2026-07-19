@@ -54,7 +54,7 @@ describe("computePacingStep", () => {
     // The displayed text should end at a word/sentence boundary.
     const next = computePacingStep(0, text.length, 0, /[\s.,!?;:)\]>]/, text);
     // Should end on a boundary character
-    expect(/[\s.,!?;:)\]>]/.test(text[next - 1]!)).toBe(true);
+    expect(/[\s.,!?;:)\]>]/.test(text[next - 1] ?? "")).toBe(true);
     // Should be past the step point (at least step=4 characters)
     expect(next).toBeGreaterThanOrEqual(4);
   });
@@ -63,13 +63,13 @@ describe("computePacingStep", () => {
     const text = "First sentence. Second sentence is here now.";
     // Start at 0, step should snap to a boundary
     const next = computePacingStep(0, text.length, 0, /[\s.,!?;:)\]>]/, text);
-    expect(/[\s.,!?;:)\]>]/.test(text[next - 1]!)).toBe(true);
+    expect(/[\s.,!?;:)\]>]/.test(text[next - 1] ?? "")).toBe(true);
 
     // Continue from halfway through, still snaps to boundaries
     const mid = Math.floor(text.length / 2);
     const next2 = computePacingStep(mid, text.length, 0, /[\s.,!?;:)\]>]/, text);
     expect(next2).toBeGreaterThan(mid);
-    expect(/[\s.,!?;:)\]>]/.test(text[next2 - 1]!)).toBe(true);
+    expect(/[\s.,!?;:)\]>]/.test(text[next2 - 1] ?? "")).toBe(true);
   });
 
   it("does not snap when no boundary exists within 8 chars", () => {

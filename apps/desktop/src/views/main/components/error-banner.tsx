@@ -1,12 +1,10 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/tooltip";
-import { AlertTriangle, RefreshCcw, X, ChevronDown, ChevronRight } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, RefreshCcw, X } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-
-import { formatErrorMessage } from "../lib/format-error.js";
-
 import type { TabId } from "../../../shared/rpc.js";
 import { retryAgent } from "../lib/agent-actions.js";
 import { useAgentStore } from "../lib/agent-store.js";
+import { formatErrorMessage } from "../lib/format-error.js";
 
 /**
  * Max error length before truncation in the display card. Messages longer
@@ -44,9 +42,7 @@ export const ErrorBanner = memo(function ErrorBanner({
   const [manualRetrying, setManualRetrying] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
-  const connectionStderr = useAgentStore(
-    (s) => s.tabs[tabId]?.connectionStderr,
-  );
+  const connectionStderr = useAgentStore((s) => s.tabs[tabId]?.connectionStderr);
 
   // Generate a stable key for this error instance so we can detect new errors
   // vs. the same error the user already dismissed.
@@ -107,12 +103,12 @@ export const ErrorBanner = memo(function ErrorBanner({
 
   // Build display message.
   const rawMessage = isRetrying
-    ? retryState!.message
-    : connectionError ?? "Agent process stopped unexpectedly";
+    ? retryState?.message
+    : (connectionError ?? "Agent process stopped unexpectedly");
   const message = formatErrorMessage(rawMessage);
 
   const truncated = message.length > MAX_ERROR_LENGTH;
-  const displayMessage = truncated ? message.slice(0, MAX_ERROR_LENGTH) + "…" : message;
+  const displayMessage = truncated ? `${message.slice(0, MAX_ERROR_LENGTH)}…` : message;
 
   const isRetryDisabled = manualRetrying;
   const retryLabel = manualRetrying
@@ -137,7 +133,7 @@ export const ErrorBanner = memo(function ErrorBanner({
             <div className="flex items-center gap-2">
               <p className="text-sm font-medium text-red-300">
                 {isRetrying
-                  ? `Agent error — auto-retrying (attempt ${retryState!.attempt})`
+                  ? `Agent error — auto-retrying (attempt ${retryState?.attempt})`
                   : "Agent error"}
               </p>
               {isRetrying && (
@@ -176,10 +172,7 @@ export const ErrorBanner = memo(function ErrorBanner({
                 disabled={isRetryDisabled}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-300 transition hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <RefreshCcw
-                  size={12}
-                  className={manualRetrying ? "animate-spin" : undefined}
-                />
+                <RefreshCcw size={12} className={manualRetrying ? "animate-spin" : undefined} />
                 {retryLabel}
               </button>
 

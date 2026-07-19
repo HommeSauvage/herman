@@ -1,5 +1,5 @@
+import { AlertCircle, CheckCircle, Download, Info, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { X, Download, CheckCircle, AlertCircle, Info } from "lucide-react";
 
 type UpdateStatus = { status: string; message: string };
 
@@ -31,19 +31,15 @@ export function UpdateBanner({
       <span className={colorClass}>{icon}</span>
       <div className="flex-1">
         <div className="text-xs font-medium text-[#f2f2f2]">{title}</div>
-        {status.message && (
-          <div className="text-[11px] text-[#a0a0a0]">{status.message}</div>
-        )}
+        {status.message && <div className="text-[11px] text-[#a0a0a0]">{status.message}</div>}
         {status.status === "downloading" && (
           <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.06]">
-            <div
-              className="h-full bg-[#22C55E] transition-all"
-              style={{ width: `${progress}%` }}
-            />
+            <div className="h-full bg-[#22C55E] transition-all" style={{ width: `${progress}%` }} />
           </div>
         )}
       </div>
       <button
+        type="button"
         onClick={onDismiss}
         className="rounded p-1 text-[#737373] transition hover:bg-white/[0.06] hover:text-[#f2f2f2] active:scale-[0.96]"
       >

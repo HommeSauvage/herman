@@ -2,12 +2,16 @@ import { getLogger } from "@logtape/logtape";
 
 import type { TabId } from "../../../shared/rpc.js";
 import { useAgentStore } from "./agent-store.js";
-import { desktopRpc } from "./desktop-rpc.js";
 import { formatAttachmentsForPrompt } from "./attachment-format.js";
+import { desktopRpc } from "./desktop-rpc.js";
 
 const logger = getLogger(["herman-desktop", "view", "agent-actions"]);
 
-export async function sendPrompt(tabId: TabId, text: string, options?: { keepComposer?: boolean; skipAttachments?: boolean }) {
+export async function sendPrompt(
+  tabId: TabId,
+  text: string,
+  options?: { keepComposer?: boolean; skipAttachments?: boolean },
+) {
   const store = useAgentStore.getState();
   const tab = store.tabs[tabId];
 

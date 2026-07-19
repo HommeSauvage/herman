@@ -1,15 +1,18 @@
+import { getLogger } from "@logtape/logtape";
 import { spawn } from "bun";
 
-import { getLogger } from "@logtape/logtape";
-
 import { waitForSubprocessExit } from "../subprocess-exit.js";
-import { appendStderrTail, looksLikeServerError, truncateErrorMessage } from "./preview-log-filter.js";
+import {
+  appendStderrTail,
+  looksLikeServerError,
+  truncateErrorMessage,
+} from "./preview-log-filter.js";
 import {
   MAX_ERROR_MESSAGE_CHARS,
   MAX_STDERR_CHARS,
-  wrapBunSubprocess,
   type PreviewChildProcess,
   type SpawnChildOpts,
+  wrapBunSubprocess,
 } from "./types.js";
 
 const logger = getLogger(["herman-desktop", "preview", "process"]);
@@ -105,10 +108,7 @@ export function attachLineReaders(
     if (alive === 0) onLine.flush?.();
   };
 
-  const attach = (
-    stream: ReadableStream<Uint8Array> | null,
-    source: "stdout" | "stderr",
-  ) => {
+  const attach = (stream: ReadableStream<Uint8Array> | null, source: "stdout" | "stderr") => {
     if (!stream) return;
     alive++;
     const reader = stream.getReader();
@@ -179,7 +179,9 @@ type PendingContext = {
  * The returned handler exposes a `flush()` method so callers can drain an
  * in-progress context window before the process exits.
  */
-export function createInstanceLineHandler(sink: InstanceLogSink): LineHandler & { flush: () => void } {
+export function createInstanceLineHandler(
+  sink: InstanceLogSink,
+): LineHandler & { flush: () => void } {
   // Sliding window of recent log lines used for "before" context snapshots.
   const ring: string[] = [];
   let pending: PendingContext | null = null;
@@ -187,21 +189,14 @@ export function createInstanceLineHandler(sink: InstanceLogSink): LineHandler & 
   function flushPending() {
     if (!pending) return;
     clearTimeout(pending.timer);
-    const fullMessage = [
-      ...pending.before,
-      pending.errorLine,
-      ...pending.after,
-    ].join("\n");
-    sink.onErrorLine(
-      pending.source,
-      truncateErrorMessage(fullMessage, MAX_ERROR_MESSAGE_CHARS),
-    );
+    const fullMessage = [...pending.before, pending.errorLine, ...pending.after].join("\n");
+    sink.onErrorLine(pending.source, truncateErrorMessage(fullMessage, MAX_ERROR_MESSAGE_CHARS));
     pending = null;
   }
 
   const handler: LineHandler = (source, line) => {
     if (source === "stderr") {
-      sink.onStderrChunk(line + "\n");
+      sink.onStderrChunk(`${line}\n`);
       // Always log stderr at info level — most build tools route errors here.
       logger.info(`[preview stderr]`, { msg: line });
     } else {

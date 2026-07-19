@@ -3,10 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { PendingAttachment } from "../../../../src/shared/rpc.js";
 import { formatAttachmentsForPrompt } from "../../../../src/views/main/lib/attachment-format.js";
 
-function attachment(
-  path: string,
-  overrides: Partial<PendingAttachment> = {},
-): PendingAttachment {
+function attachment(path: string, overrides: Partial<PendingAttachment> = {}): PendingAttachment {
   return {
     path,
     name: path.split("/").pop() ?? path,
@@ -24,16 +21,12 @@ describe("formatAttachmentsForPrompt", () => {
   });
 
   it("returns only the attachment block when the user typed nothing", () => {
-    const result = formatAttachmentsForPrompt("", [
-      attachment("/a/b/foo.txt"),
-    ]);
+    const result = formatAttachmentsForPrompt("", [attachment("/a/b/foo.txt")]);
     expect(result).toBe("attachment 1: /a/b/foo.txt");
   });
 
   it("appends the attachment block below the user's text, separated by a blank line", () => {
-    const result = formatAttachmentsForPrompt("explain these", [
-      attachment("/a/b/foo.txt"),
-    ]);
+    const result = formatAttachmentsForPrompt("explain these", [attachment("/a/b/foo.txt")]);
     expect(result).toBe("explain these\n\nattachment 1: /a/b/foo.txt");
   });
 
@@ -52,9 +45,7 @@ describe("formatAttachmentsForPrompt", () => {
   });
 
   it("trims trailing whitespace from the user text before appending", () => {
-    const result = formatAttachmentsForPrompt("  hi there   \n\n", [
-      attachment("/a.txt"),
-    ]);
+    const result = formatAttachmentsForPrompt("  hi there   \n\n", [attachment("/a.txt")]);
     // Trim only the trailing edge so the blank-line separator we add
     // doesn't become three newlines.
     expect(result).toBe("  hi there\n\nattachment 1: /a.txt");

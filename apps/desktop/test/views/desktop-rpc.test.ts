@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
 import {
-  PendingMessageListenerRegistry,
   type MessageListenerFacade,
+  PendingMessageListenerRegistry,
 } from "../../src/views/main/lib/pending-message-listeners.js";
 
 type Call = [string, unknown];

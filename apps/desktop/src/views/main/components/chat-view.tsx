@@ -1,4 +1,4 @@
-import { motion, AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -8,9 +8,9 @@ import { useAgentStore } from "../lib/agent-store.js";
 import { useIsHermanProvider } from "../lib/model-utils.js";
 import { EmptyState, HydrationPendingState } from "./empty-state.js";
 import { ErrorBanner } from "./error-banner.js";
-import { ProjectToolsBanner } from "./project-tools-banner.js";
 import { MessageList } from "./message-list.js";
 import { ProgressBar } from "./progress-bar.js";
+import { ProjectToolsBanner } from "./project-tools-banner.js";
 import { RevertDock } from "./revert-dock.js";
 import { ThinkingBanner } from "./thinking-banner.js";
 
@@ -113,8 +113,7 @@ export function ChatView() {
         </div>
         {/* Error banner — shown once, below the message flow */}
         {activeTabId &&
-          ((connectionError && connectionError !== connectionErrorDismissed) ||
-            retryState) && (
+          ((connectionError && connectionError !== connectionErrorDismissed) || retryState) && (
             <div className="pb-6">
               <ErrorBanner
                 tabId={activeTabId}

@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { WizardPhaseId } from "../lib/agent-store/types.js";
 import { ProgressLog } from "./progress-log.js";
@@ -8,6 +8,7 @@ import { ProgressLog } from "./progress-log.js";
 
 const PHASE_HEADER_TEXTS: Record<WizardPhaseId, string> = {
   planning: "Give me a moment, I'm preparing the ground...",
+  design: "Give me a moment, I'm preparing the ground...",
   coding: "Hang on there, I'm coding now, this will take some time...",
   qa: "Now I'm verifying that the code is well setup...",
   docs: "All done, now I'm generating some docs, this won't take much...",
@@ -167,7 +168,11 @@ export function WizardLoading({
 
         {/* Text column */}
         <div className="min-w-0 flex-1 pt-0.5">
-          <p className={isRetrying ? "text-sm font-medium text-amber-300" : "text-text text-sm font-medium"}>
+          <p
+            className={
+              isRetrying ? "text-sm font-medium text-amber-300" : "text-text text-sm font-medium"
+            }
+          >
             {resolvedHeader}
           </p>
           <p className="text-dim mt-1 text-sm leading-relaxed">{cyclingText}</p>

@@ -262,7 +262,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   [data-component="spinner"] rect {
-    animation: none !important;
+    animation: none;
     opacity: 0.6;
   }
 }
@@ -377,14 +377,14 @@ body {
   }
 
   [data-component="text-shimmer"] [data-slot="text-shimmer-char-shimmer"] {
-    animation: none !important;
+    animation: none;
     color: inherit;
     -webkit-text-fill-color: currentColor;
     background-image: none;
   }
 
   [data-component="text-shimmer"] [data-slot="text-shimmer-char-base"] {
-    opacity: 1 !important;
+    opacity: 1;
   }
 }
 
@@ -392,12 +392,12 @@ body {
 .herman-toast {
   --toast-bg: var(--color-surface);
   --toast-border: var(--color-mist);
-  background: var(--color-surface) !important;
-  border: 1px solid var(--color-mist) !important;
-  border-radius: var(--radius) !important;
+  background: var(--color-surface);
+  border: 1px solid var(--color-mist);
+  border-radius: var(--radius);
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.03),
-    0 25px 50px -12px rgba(0, 0, 0, 0.6) !important;
+    0 25px 50px -12px rgba(0, 0, 0, 0.6);
   font-family: var(--font-sans);
   color: var(--color-text);
 }
@@ -468,7 +468,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   [data-component="session-progress-bar"] {
-    animation: none !important;
-    clip-path: inset(0 0 0 0 round 999px) !important;
+    animation: none;
+    clip-path: inset(0 0 0 0 round 999px);
   }
 }

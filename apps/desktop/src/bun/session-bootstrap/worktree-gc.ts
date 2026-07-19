@@ -39,9 +39,7 @@ export type WorktreeGcReport = {
  * Anything owned by a known session — or younger than 24h — is never
  * touched. Designed to run in the background; errors are warnings.
  */
-export async function collectOrphanWorktrees(
-  opts: WorktreeGcOptions,
-): Promise<WorktreeGcReport> {
+export async function collectOrphanWorktrees(opts: WorktreeGcOptions): Promise<WorktreeGcReport> {
   const report: WorktreeGcReport = { removedWorktrees: [], deletedBranches: [], errors: [] };
   const dir = opts.worktreesDir ?? defaultWorktreesDir();
   const now = opts.now ?? Date.now();
@@ -148,7 +146,12 @@ async function checkedOutBranches(projectRoot: string): Promise<Set<string>> {
     const porcelain = await git("worktree list --porcelain", projectRoot);
     for (const line of porcelain.split("\n")) {
       if (line.startsWith("branch ")) {
-        out.add(line.slice("branch ".length).replace(/^refs\/heads\//, "").trim());
+        out.add(
+          line
+            .slice("branch ".length)
+            .replace(/^refs\/heads\//, "")
+            .trim(),
+        );
       }
     }
   } catch {

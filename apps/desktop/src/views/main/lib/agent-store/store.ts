@@ -1,22 +1,36 @@
 import { create } from "zustand";
-
 import {
   createMessageId,
   finalizeStreamingMessages,
   syncMessageCounter,
 } from "../../../../shared/apply-agent-event.js";
-import type { AdPlacement } from "../../../../shared/agent-protocol.js";
 import type { ContextStats, Message, PersistedSession } from "../../../../shared/rpc.js";
-import { getProjectColor, getProjectName, hasUserOrAssistantMessage, truncateTitle } from "../../../../shared/tab-utils.js";
 import type { TabId } from "../../../../shared/tab-utils.js";
-import { applyAgentEvent, mergeModelMetadata } from "./apply-agent-event.js";
-import { emptyContextStats, INITIAL_ADS_STATE, INITIAL_UI_STATE, makeTab, syncSessionFromTab } from "./defaults.js";
+import {
+  getProjectColor,
+  getProjectName,
+  hasUserOrAssistantMessage,
+  truncateTitle,
+} from "../../../../shared/tab-utils.js";
 import { desktopRpc } from "../desktop-rpc.js";
+import { applyAgentEvent } from "./apply-agent-event.js";
+import {
+  arraysEqual,
+  contextStatsEqual,
+  messagesEqualish,
+  queuedMessagesEqual,
+} from "./compare.js";
+import {
+  emptyContextStats,
+  INITIAL_ADS_STATE,
+  INITIAL_UI_STATE,
+  makeTab,
+  syncSessionFromTab,
+} from "./defaults.js";
 import { rebuildDerived } from "./derive.js";
-import { arraysEqual, contextStatsEqual, messagesEqualish, queuedMessagesEqual } from "./compare.js";
-import { computeRetryState, getTodayKey, MAX_RETRY_ATTEMPTS } from "./utils.js";
 import type { AgentActions, AgentState, Tab } from "./types.js";
 import { INITIAL_WIZARD_STATE } from "./types.js";
+import { computeRetryState, getTodayKey, MAX_RETRY_ATTEMPTS } from "./utils.js";
 
 /**
  * Merge a fresh `emptyContextStats` (which always has correct message
@@ -99,7 +113,10 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     }
 
     set((state) => {
-      const tabs = { ...state.tabs, [tab.id]: { ...tab, contextStats: emptyContextStats(tab.messages, tab.currentModel) } };
+      const tabs = {
+        ...state.tabs,
+        [tab.id]: { ...tab, contextStats: emptyContextStats(tab.messages, tab.currentModel) },
+      };
       const tabOrder = [...state.tabOrder, tab.id];
       const nextState: AgentState = { ...state, tabs, tabOrder, activeTabId: tab.id };
       return { ...nextState, ...rebuildDerived(nextState, tabs) };
@@ -176,8 +193,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         ...tab,
         setup: tab.setup ?? { phase: "none" },
         nativeAds: tab.nativeAds ?? [],
-        contextStats:
-          tab.contextStats ?? emptyContextStats(tab.messages, tab.currentModel),
+        contextStats: tab.contextStats ?? emptyContextStats(tab.messages, tab.currentModel),
         messagesHydrationStatus:
           tab.messages.length > 0 ? "success" : tab.folderPath ? "pending" : undefined,
       };
@@ -252,11 +268,15 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       const k = key as keyof typeof partial;
       const a = partial[k];
       const b = tab[k];
-      if (k === "contextStats") return !contextStatsEqual(a as ContextStats | undefined, b as ContextStats | undefined);
+      if (k === "contextStats")
+        return !contextStatsEqual(a as ContextStats | undefined, b as ContextStats | undefined);
       if (Array.isArray(a) && Array.isArray(b)) {
         if (k === "availableModels") return !arraysEqual(a as string[], b as string[]);
         if (k === "queuedMessages")
-          return !queuedMessagesEqual(a as typeof tab.queuedMessages, b as typeof tab.queuedMessages);
+          return !queuedMessagesEqual(
+            a as typeof tab.queuedMessages,
+            b as typeof tab.queuedMessages,
+          );
         if (k === "messages") return !messagesEqualish(a as Message[], b as Message[]);
         if (a.length !== b.length) return true;
         const indices = [0, Math.floor(a.length / 2), a.length - 1];
@@ -542,9 +562,13 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
 
       // Start auto-retry on crash if we haven't exceeded max attempts and the
       // tab was actively working (has isThinking or streaming messages).
-      const wasWorking = tab.isThinking || tab.messages.some(
-        (m) => (m.role === "assistant" && m.isStreaming) || (m.role === "tool" && m.status === "running"),
-      );
+      const wasWorking =
+        tab.isThinking ||
+        tab.messages.some(
+          (m) =>
+            (m.role === "assistant" && m.isStreaming) ||
+            (m.role === "tool" && m.status === "running"),
+        );
       let retryState = tab.retryState;
       if (status.state === "crashed" && wasWorking) {
         if (!retryState || retryState.attempt < MAX_RETRY_ATTEMPTS) {
@@ -563,7 +587,10 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
         messages,
         connectionState: status.state,
         connectionStderr: status.state === "crashed" ? status.stderr : undefined,
-        connectionError: status.state === "crashed" ? (status.stderr ?? "Agent process stopped unexpectedly") : undefined,
+        connectionError:
+          status.state === "crashed"
+            ? (status.stderr ?? "Agent process stopped unexpectedly")
+            : undefined,
         isThinking: status.state === "running" ? tab.isThinking : false,
         retryState,
         updatedAt: Date.now(),
@@ -670,7 +697,10 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
       if (shouldAutoOpen) {
         ui = { ...state.ui, sidebarOpen: true };
       }
-      if ((event.type === "models_sync" || event.type === "herman/models_sync") && event.modelMetadata) {
+      if (
+        (event.type === "models_sync" || event.type === "herman/models_sync") &&
+        event.modelMetadata
+      ) {
         ui = { ...ui, modelMetadata: { ...ui.modelMetadata, ...event.modelMetadata } };
       }
 
@@ -702,7 +732,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
   setComposerValue: ((tabIdOrValue: string, value?: string) => {
     const hasTabId = typeof tabIdOrValue === "string" && value !== undefined;
     const tabId = hasTabId ? (tabIdOrValue as TabId) : get().activeTabId;
-    const nextValue = hasTabId ? value! : (tabIdOrValue as string);
+    const nextValue = hasTabId ? (value as string) : (tabIdOrValue as string);
     if (!tabId) return;
 
     set((state) => {
@@ -755,8 +785,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
   setSidebarTab: (tab: "changes" | "context" | "ads") =>
     set((state) => ({ ui: { ...state.ui, sidebarTab: tab } })),
 
-  setDiffScope: (scope) =>
-    set((state) => ({ ui: { ...state.ui, diffScope: scope } })),
+  setDiffScope: (scope) => set((state) => ({ ui: { ...state.ui, diffScope: scope } })),
 
   fetchDiff: async (tabId, scope) => {
     set((state) => ({
@@ -920,9 +949,9 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     })),
   setView: (view) =>
     set((state) => {
-      // Guard: never allow "session" view without a valid active tab that has
-      // a project folder. If no project is associated, redirect to home.
-      if (view === "session") {
+      // Guard: "session" and "publishing" views require a valid active tab
+      // with a project folder. If no project is associated, redirect to home.
+      if (view === "session" || view === "publishing") {
         const activeTab = state.activeTabId ? state.tabs[state.activeTabId] : undefined;
         if (!activeTab?.folderPath) {
           return { ui: { ...state.ui, view: "home" } };
@@ -1029,10 +1058,7 @@ export const useAgentStore = create<AgentState & AgentActions>((set, get) => ({
     set((state) => {
       const tab = state.tabs[tabId];
       if (!tab) return state;
-      const queuedMessages = [
-        ...tab.queuedMessages,
-        { id: crypto.randomUUID(), text },
-      ];
+      const queuedMessages = [...tab.queuedMessages, { id: crypto.randomUUID(), text }];
       const updated = { ...tab, queuedMessages, updatedAt: Date.now() };
       const tabs = { ...state.tabs, [tabId]: updated };
       return { tabs, ...rebuildDerived({ ...state, tabs }, tabs) };

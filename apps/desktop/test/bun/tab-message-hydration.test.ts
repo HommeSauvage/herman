@@ -2,14 +2,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  clearHermantAppDir,
-  createTestTempDir,
-  setHermantAppDir,
-} from "../helpers/temp-dir.js";
 import { saveTabHistory } from "../../src/bun/tab-history.js";
 import { loadInstantHydration } from "../../src/bun/tab-message-hydration.js";
+import { clearHermantAppDir, createTestTempDir, setHermantAppDir } from "../helpers/temp-dir.js";
 
 let tempDir: string;
 
@@ -48,7 +43,7 @@ describe("loadInstantHydration", () => {
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
       join(sessionsDir, "2026-07-09T00-00-00-000Z_sess-1.jsonl"),
-      [
+      `${[
         JSON.stringify({
           type: "session",
           version: 3,
@@ -70,7 +65,7 @@ describe("loadInstantHydration", () => {
           timestamp: "2026-07-09T00:00:02.000Z",
           message: { id: "a1", role: "assistant", content: "pi reply" },
         }),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
 
     const instant = await loadInstantHydration(tabId, {

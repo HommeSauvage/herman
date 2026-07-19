@@ -1,8 +1,8 @@
+import { finalizeStreamingMessages } from "../shared/apply-agent-event.js";
 import type { SessionIsolation, Tab, TabId } from "../shared/rpc.js";
 import { getProjectColor } from "../shared/tab-utils.js";
-import { finalizeStreamingMessages } from "../shared/apply-agent-event.js";
 import { readPiSessionId } from "./rewind-manager.js";
-import { loadWindowState, saveWindowState, type PersistedSession } from "./window-state.js";
+import { loadWindowState, type PersistedSession, saveWindowState } from "./window-state.js";
 
 /** In-memory tab/session chrome + window-state persistence. No subprocess knowledge. */
 export class TabSessionStore {
@@ -55,8 +55,7 @@ export class TabSessionStore {
       // Isolation is fixed at creation: explicit on first persist, preserved
       // from the store afterwards (a pending worktree tab has no worktree
       // object yet, so tab state alone can't be the source of truth).
-      isolation:
-        isolation ?? previous?.isolation ?? (tab.worktree ? "worktree" : "direct"),
+      isolation: isolation ?? previous?.isolation ?? (tab.worktree ? "worktree" : "direct"),
       setupCompletedAt: previous?.setupCompletedAt,
       setupPlanHash: previous?.setupPlanHash,
       previewManuallyStopped: previous?.previewManuallyStopped,
@@ -73,11 +72,7 @@ export class TabSessionStore {
     return updated;
   }
 
-  hydrateTab(
-    persisted: PersistedSession,
-    messages: Tab["messages"],
-    composerValue = "",
-  ): Tab {
+  hydrateTab(persisted: PersistedSession, messages: Tab["messages"], composerValue = ""): Tab {
     const isolation = persisted.isolation ?? (persisted.worktree ? "worktree" : "direct");
     return {
       ...persisted,

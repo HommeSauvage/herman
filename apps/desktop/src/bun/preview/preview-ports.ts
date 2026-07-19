@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 
-import { normalizeExportUrlAs, type DevServer } from "../../shared/herman-manifest.js";
+import { type DevServer, normalizeExportUrlAs } from "../../shared/herman-manifest.js";
 
 /** Probe URL — same host as the webview display URL. */
 export function probeUrlForPort(port: number): string {

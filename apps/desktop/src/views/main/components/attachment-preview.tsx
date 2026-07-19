@@ -1,12 +1,6 @@
-import { cn } from "@herman/ui/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@herman/ui/components/tooltip";
-import {
-  File,
-  FileCode,
-  FileImage,
-  FileText,
-  X,
-} from "lucide-react";
+import { cn } from "@herman/ui/lib/utils";
+import { File, FileCode, FileImage, FileText, X } from "lucide-react";
 import { memo } from "react";
 
 import type { PendingAttachment } from "../../../shared/rpc.js";
@@ -44,11 +38,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-function AttachmentPreviewImpl({
-  attachment,
-  onRemove,
-  removeLabel,
-}: AttachmentPreviewProps) {
+function AttachmentPreviewImpl({ attachment, onRemove, removeLabel }: AttachmentPreviewProps) {
   const isImage = attachment.mime.startsWith("image/") && Boolean(attachment.previewDataUrl);
   const tooltipLabel = `${attachment.name} (${formatSize(attachment.size)})`;
 
@@ -56,8 +46,7 @@ function AttachmentPreviewImpl({
     <Tooltip>
       <TooltipTrigger
         render={
-          <div
-            role="group"
+          <fieldset
             aria-label={attachment.name}
             className={cn(
               "group/attachment relative flex h-9 max-w-[240px] items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.04] py-1.5 pr-1.5 pl-2 text-left transition",

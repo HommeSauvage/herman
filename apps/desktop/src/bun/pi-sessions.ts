@@ -1,6 +1,6 @@
-import { SessionManager, type SessionInfo } from "@earendil-works/pi-coding-agent";
-import { resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { type SessionInfo, SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { PiSessionSummary } from "../shared/rpc.js";
 import { agentSessionsDir } from "./app-paths.js";
@@ -50,9 +50,7 @@ export async function listPiSessionsForProject(
   const worktreeSessions = all.filter(
     (s) => !directIds.has(s.id) && worktreeIndex.projectRootFor(s.cwd) === resolvedCwd,
   );
-  return [...direct, ...worktreeSessions]
-    .map(toSummary)
-    .sort((a, b) => b.modified - a.modified);
+  return [...direct, ...worktreeSessions].map(toSummary).sort((a, b) => b.modified - a.modified);
 }
 
 /**

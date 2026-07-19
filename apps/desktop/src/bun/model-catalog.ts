@@ -1,19 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
-
-import { getLogger } from "@logtape/logtape";
 import {
-  LEGACY_HERMAN_MODELS_CACHE_FILENAME,
-  MODEL_CATALOG_FILENAME,
   type HermanModelEntry,
+  LEGACY_HERMAN_MODELS_CACHE_FILENAME,
   type LegacyHermanModelsCacheFile,
+  MODEL_CATALOG_FILENAME,
   type ModelCatalogFile,
 } from "@herman/rpc/agent";
+import { getLogger } from "@logtape/logtape";
 
 import {
-  mergeCatalogModels,
-  normalizeModelId,
   type ModelCatalogSnapshot,
   type ModelMetadata,
+  mergeCatalogModels,
+  normalizeModelId,
 } from "../shared/model-selection.js";
 import { hermanDir } from "./app-paths.js";
 import { writeFileAtomically } from "./fs-utils.js";
@@ -270,9 +269,7 @@ export class ModelCatalogService {
     const legacyPath = this.legacyCachePath();
     try {
       if (existsSync(legacyPath)) {
-        const legacy = JSON.parse(
-          readFileSync(legacyPath, "utf-8"),
-        ) as LegacyHermanModelsCacheFile;
+        const legacy = JSON.parse(readFileSync(legacyPath, "utf-8")) as LegacyHermanModelsCacheFile;
         if (Array.isArray(legacy.models)) {
           logger.info("Migrated legacy Herman models cache", { legacyPath });
           return {

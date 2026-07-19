@@ -1,17 +1,18 @@
-import { getLogger } from "@logtape/logtape";
-
 import type { HostBridgeErrorBody, HostBridgeErrorCode } from "@herman/rpc/host-bridge";
 import { HOST_BRIDGE_AUTH_SCHEME, HOST_BRIDGE_PROTOCOL_VERSION } from "@herman/rpc/host-bridge";
+import { getLogger } from "@logtape/logtape";
 
 const logger = getLogger(["herman-desktop", "host-bridge"]);
 
 export type HostBridgeRequest = {
-  params: Record<string, string>;   // from :segments in the pattern
+  params: Record<string, string>; // from :segments in the pattern
   query: URLSearchParams;
+  /** Parsed JSON body for POST; undefined for GET or unparseable bodies. */
+  body: unknown;
 };
 
 export type HostBridgeRoute = {
-  method: "GET";
+  method: "GET" | "POST";
   /** Path pattern, e.g. "/v1/tabs/:tabId/preview/logs". */
   pattern: string;
   handler: (req: HostBridgeRequest) => unknown | Promise<unknown>;
@@ -19,7 +20,13 @@ export type HostBridgeRoute = {
 
 /** Throw inside a handler to control status + error body. */
 export class HostBridgeError extends Error {
-  constructor(public status: number, public code: HostBridgeErrorCode, message: string) { super(message); }
+  constructor(
+    public status: number,
+    public code: HostBridgeErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export type HostBridgeServer = { url: string; token: string; stop(): Promise<void> };
@@ -41,8 +48,8 @@ function matchRoute(
     const params: Record<string, string> = {};
     let matches = true;
     for (let i = 0; i < patternSegments.length; i++) {
-      const pat = patternSegments[i]!;
-      const seg = segments[i]!;
+      const pat = patternSegments[i] as string;
+      const seg = segments[i] as string;
       if (pat.startsWith(":")) {
         try {
           params[pat.slice(1)] = decodeURIComponent(seg);
@@ -98,9 +105,12 @@ export async function startHostBridgeServer(routes: HostBridgeRoute[]): Promise<
       });
 
       try {
+        const body =
+          request.method === "POST" ? await request.json().catch(() => undefined) : undefined;
         const result = await match.route.handler({
           params: match.params,
           query: url.searchParams,
+          body,
         });
         return Response.json(result);
       } catch (err) {

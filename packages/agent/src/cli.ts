@@ -7,9 +7,10 @@ import { dirname, join, resolve } from "node:path";
 // CLI path resolves to a real writable location (packages/agent/.pi-agent,
 // same as dev). The desktop spawner always sets HERMAN_AGENT_DIR, so this
 // fallback only matters for standalone CLI use.
-const _scriptDir = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN")
-  ? dirname(process.execPath)
-  : import.meta.dir;
+const _scriptDir =
+  import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN")
+    ? dirname(process.execPath)
+    : import.meta.dir;
 
 const PI_AGENT_DIR = process.env.HERMAN_AGENT_DIR
   ? resolve(process.env.HERMAN_AGENT_DIR)
@@ -18,13 +19,15 @@ mkdirSync(PI_AGENT_DIR, { recursive: true });
 process.env.PI_CODING_AGENT_DIR = PI_AGENT_DIR;
 process.env.PI_CODING_AGENT_SESSION_DIR = join(PI_AGENT_DIR, "sessions");
 
-import { getLogger } from "@logtape/logtape";
 import { main } from "@earendil-works/pi-coding-agent";
 import contextReporterExtension from "@herman/pi-context-reporter";
+import { getLogger } from "@logtape/logtape";
 
 import { config } from "./env.js";
+import browserExtension from "./extensions/browser-extension.js";
 import hermanExtension from "./extensions/herman-extension.js";
 import previewContextExtension from "./extensions/preview-context-extension.js";
+import publishingExtension from "./extensions/publishing-extension.js";
 import { configureLogging } from "./logging.js";
 
 const logger = getLogger(["herman-agent", "cli"]);
@@ -52,13 +55,22 @@ const args = ensureRpcMode(process.argv.slice(2));
 
 try {
   await main(args, {
-    // The Herman extensions should be loaded as inline factories. 
+    // The Herman extensions should be loaded as inline factories.
     // Other bundled extensions are auto-discovered from the agent settings,
     // Which pi will install when it starts.
     // hermanExtension replaces the system prompt in before_agent_start.
     // previewContextExtension must register after so its before_agent_start
     // appends the preview state block on top.
-    extensionFactories: [hermanExtension, contextReporterExtension, previewContextExtension],
+    // browserExtension registers browse/interact tools after preview context.
+    // publishingExtension appends the publishing state block and registers
+    // the deploy config/write-back tools.
+    extensionFactories: [
+      hermanExtension,
+      contextReporterExtension,
+      previewContextExtension,
+      browserExtension,
+      publishingExtension,
+    ],
   });
   logger.info("Agent shutdown cleanly");
 } catch (error) {
